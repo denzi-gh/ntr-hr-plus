@@ -247,7 +247,7 @@ static const char *getReliableStreamDesc(enum ReliableStream reliableStream) {
         case ReliableStreamNone:
 			return "Off: Better compatibility and\nless latency; may drop frames.";
         case ReliableStreamOn:
-			return "On: Avoid dropping frames.\nNeed NTR Viewer HR.";
+			return "On: Avoid dropping frames.\nNeed NTRViewer-HR.";
         case ReliableStreamDelta:
 			return "Delta: Progressive delta encoding.";
     }
@@ -540,7 +540,6 @@ int remotePlayMenu(u32 localaddr) {
 				dstPort &= 0xffff;
 				if (keys == KEY_X) {
 					dstPort = rpConfig->dstPort;
-					dstFlag = dstPort & 0xffff0000;
 					dstPort &= 0xffff;
 				} else {
 					menu_adjust_value_with_key(&dstPort, keys, 10, 100);
@@ -559,9 +558,8 @@ int remotePlayMenu(u32 localaddr) {
 				int dstFlag = dstPort & 0xffff0000;
 				dstPort &= 0xffff;
 				if (keys == KEY_X) {
-					dstPort = rpConfig->dstPort;
+					int dstPort = rpConfig->dstPort;
 					dstFlag = dstPort & 0xffff0000;
-					dstPort &= 0xffff;
 				} else {
 					int options = getReliableStreamFromFlag(dstFlag);
 					menu_adjust_value_with_key(&options, keys, 1, 1);
