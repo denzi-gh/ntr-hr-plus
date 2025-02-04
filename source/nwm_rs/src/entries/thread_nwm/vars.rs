@@ -129,7 +129,7 @@ unsafe fn init_min_send_interval(qos: u32_) {
         core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_)
             as u32_;
     min_send_interval_ns =
-        (min_send_interval_tick as u64_ * 1000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_;
+        (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_;
 }
 
 pub unsafe fn reset_vars(dst_flags: u32, qos: u32) -> Option<()> {
@@ -865,7 +865,7 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                     return false;
                 }
                 if !(*kcp).session_established {
-                    rp_output_next_tick += min_send_interval_tick as s64 * 40;
+                    rp_output_next_tick += SYSCLOCK_ARM11 as s64 / 16;
                 }
             }
         }

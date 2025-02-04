@@ -17,10 +17,6 @@
 
 #include "3ds/os.h"
 
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wunused-variable"
-
 FecalEncoder rp_kcp_fecal_encoder;
 
 enum FEC_TYPE {
@@ -73,97 +69,12 @@ static u64 max_timing;
 static IUINT16 saved_fid;
 #endif
 
-
-//---------------------------------------------------------------------
-// encode / decode
-//---------------------------------------------------------------------
-
-/* encode 8 bits unsigned int */
-static inline char *ikcp_encode8u(char *p, unsigned char c)
-{
-	*(unsigned char*)p++ = c;
-	return p;
-}
-
-/* decode 8 bits unsigned int */
-static inline char *ikcp_decode8u(char *p, unsigned char *c)
-{
-	*c = *(unsigned char*)p++;
-	return p;
-}
-
-/* encode 16 bits unsigned int (lsb) */
-static inline char *ikcp_encode16u(char *p, unsigned short w)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*(unsigned char*)(p + 0) = (w & 255);
-	*(unsigned char*)(p + 1) = (w >> 8);
-#else
-	memcpy(p, &w, 2);
-#endif
-	p += 2;
-	return p;
-}
-
-/* decode 16 bits unsigned int (lsb) */
-static inline char *ikcp_decode16u(char *p, unsigned short *w)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*w = *(unsigned char*)(p + 1);
-	*w = *(unsigned char*)(p + 0) + (*w << 8);
-#else
-	memcpy(w, p, 2);
-#endif
-	p += 2;
-	return p;
-}
-
-/* encode 32 bits unsigned int (lsb) */
-static inline char *ikcp_encode32u(char *p, IUINT32 l)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*(unsigned char*)(p + 0) = (unsigned char)((l >>  0) & 0xff);
-	*(unsigned char*)(p + 1) = (unsigned char)((l >>  8) & 0xff);
-	*(unsigned char*)(p + 2) = (unsigned char)((l >> 16) & 0xff);
-	*(unsigned char*)(p + 3) = (unsigned char)((l >> 24) & 0xff);
-#else
-	memcpy(p, &l, 4);
-#endif
-	p += 4;
-	return p;
-}
-
-/* decode 32 bits unsigned int (lsb) */
-static inline char *ikcp_decode32u(char *p, IUINT32 *l)
-{
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*l = *(unsigned char*)(p + 3);
-	*l = *(unsigned char*)(p + 2) + (*l << 8);
-	*l = *(unsigned char*)(p + 1) + (*l << 8);
-	*l = *(unsigned char*)(p + 0) + (*l << 8);
-#else
-	memcpy(l, p, 4);
-#endif
-	p += 4;
-	return p;
-}
-
 static inline IUINT32 _imin_(IUINT32 a, IUINT32 b) {
 	return a <= b ? a : b;
 }
 
 static inline IUINT32 _imax_(IUINT32 a, IUINT32 b) {
 	return a >= b ? a : b;
-}
-
-static inline IUINT32 _ibound_(IUINT32 lower, IUINT32 middle, IUINT32 upper)
-{
-	return _imin_(_imax_(lower, middle), upper);
-}
-
-static inline IINT32 _itimediff(IUINT32 later, IUINT32 earlier)
-{
-	return ((IINT32)(later - earlier));
 }
 
 //---------------------------------------------------------------------
@@ -523,7 +434,7 @@ static int ikcp_input_handle_send_cur_nack(ikcpcb *kcp, struct IKCPSEG *seg, str
 	return 0;
 }
 
-static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, bool r)
+static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, __attribute__((unused)) bool r)
 {
 	for (struct IQUEUEHEAD *p = queue->next, *next = p->next; p != queue; p = next, next = p->next) {
 		struct IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
@@ -815,6 +726,7 @@ static int ikcp_insert_send_cur(ikcpcb *kcp, struct arq_seg_iter_t *iter)
 	return ikcp_insert_standalone_send_cur(kcp, iter->seg);
 }
 
+__attribute__((unused))
 static int ikcp_reset_send_wak(ikcpcb *kcp)
 {
 	IKCPSEG *seg;
