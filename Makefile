@@ -3,7 +3,7 @@
 # When compiling with clang libclang_rt.builtins-arm.a will need to be obtained elsewhere.
 # See https://llvm.org/docs/HowToCrossCompileBuiltinsOnArm.html
 
-# Need 2024-07-30 nightly rust for now
+# Need 2025-02-02 nightly rust for now
 
 DEV_BIN_DIR := $(DEVKITARM)/bin
 

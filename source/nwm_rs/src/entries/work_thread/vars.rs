@@ -15,6 +15,7 @@ pub struct BlitCtx {
 }
 
 impl BlitCtx {
+    #[allow(dead_code)]
     pub fn screen(&self) -> ScreenIndex {
         unsafe {
             if self.is_top {
@@ -392,6 +393,7 @@ impl ThreadDoVars {
         unsafe { crate::entries::thread_nwm::get_nwm_infos().get_mut(&self.v().work_index()) }
     }
 
+    #[allow(dead_code)]
     pub fn data_buf_hdr(&self) -> &mut crate::entries::thread_nwm::DataHdr {
         unsafe { crate::entries::thread_nwm::get_data_buf_hdrs().get_mut(&self.v().work_index()) }
     }

@@ -14,6 +14,7 @@ pub struct Fix(pub u64_);
 #[derive(Copy, Clone, ConstDefault, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fix32(pub u32_);
 
+#[allow(dead_code)]
 impl Fix {
     pub const fn fix(v: u32_) -> Self {
         Self((v as u64_) << SCALE_BITS)

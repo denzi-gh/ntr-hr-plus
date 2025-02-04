@@ -101,6 +101,7 @@ where
         Self(BEG)
     }
 
+    #[allow(dead_code)]
     pub fn init_val<const N: u32_>() -> Self
     where
         [(); { N >= BEG } as usize - 1]:,
@@ -221,18 +222,11 @@ where
         self.0.as_mut_ptr()
     }
 
-    pub fn get(&self, i: &Ranged<N>) -> &T
-    where
-        [(); { N - 1 } as usize]:,
-    {
+    pub fn get(&self, i: &Ranged<N>) -> &T {
         unsafe { self.0.get_unchecked(i.0 as usize) }
     }
 
-    pub fn get_mut<const N2: u32_>(&mut self, i: &Ranged<N2>) -> &mut T
-    where
-        [(); { N - N2 } as usize]:,
-        [(); { N2 - 1 } as usize]:,
-    {
+    pub fn get_mut(&mut self, i: &Ranged<N>) -> &mut T {
         unsafe { self.0.get_unchecked_mut(i.0 as usize) }
     }
 
@@ -250,6 +244,7 @@ where
         unsafe { self.0.get_unchecked_mut(b as usize) }
     }
 
+    #[allow(dead_code)]
     pub fn split_at_mut<const I: u32_>(
         &mut self,
     ) -> (RangedArraySlice<T, I>, RangedArraySlice<T, { N - I }>)
@@ -267,6 +262,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
         self.0.iter_mut()
     }

@@ -352,6 +352,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 				if (chromaSs != (int)config->chromaSs) {
 					config->chromaSs = chromaSs;
 				}
+				break;
 			}
 
 			case REMOTE_PLAY_ADVMENU_BACK: if (keys == KEY_A) { /* back */
@@ -577,8 +578,8 @@ int remotePlayMenu(u32 localaddr) {
 
 			case REMOTE_PLAY_MENU_ADV: if (keys == KEY_A) { /* advanced */
 				remotePlayAdvMenu(&config);
-				break;
 			}
+				break;
 
 			case REMOTE_PLAY_MENU_APPLY: if (keys == KEY_A) { /* apply */
 				u32 daddr = config.dstAddr;

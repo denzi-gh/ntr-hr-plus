@@ -43,6 +43,7 @@ pub struct nsDbgPrint_t {
     _z: (),
 }
 
+#[allow(dead_code)]
 impl nsDbgPrint_t {
     nsDbgPrint_fn!(trace, "Tracing...\n");
 
