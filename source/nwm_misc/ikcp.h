@@ -291,6 +291,9 @@ typedef struct IQUEUEHEAD iqueue_head;
 
 #define count_nbits (sizeof(IUINT16) * 8 - PID_NBITS)
 
+#define RSND_NBITS 2
+#define RSND_COUNT 3
+
 // #define CHECK_PID
 
 extern FecalEncoder rp_kcp_fecal_encoder;
@@ -298,22 +301,25 @@ extern FecalEncoder rp_kcp_fecal_encoder;
 struct IKCPSEG
 {
 	struct IQUEUEHEAD node;
+	char *data_buf;
+
 	IUINT16 pid; // packet id
 	IUINT16 fid; // fec packet group id
-	IUINT8 fty; // fec type
-	IUINT8 gid; // id within fec packet group
-	IUINT8 wrn; // wait resend count
 	IUINT16 wsn; // wait send count
 
-	// use flags instead of doing conditions later
-	bool recovery_data;
-	bool weak_data;
-	bool is_kcp_seg_data;
-	bool is_term_seg_data;
-	bool term_notify;
-	bool gid_end;
+	IUINT8 wrn : RSND_NBITS; // wait resend count
+	IUINT8 fty : FTY_NBITS; // fec type
+	IUINT8 gid : GID_NBITS; // id within fec packet group
 
-	char *data_buf;
+	// use flags instead of doing conditions later
+	IUINT8 recovery_data : 1;
+	IUINT8 weak_data : 1;
+	IUINT8 is_kcp_seg_data : 1;
+	IUINT8 is_term_seg_data : 1;
+	IUINT8 term_notify : 1;
+	IUINT8 gid_end : 1;
+
+	IUINT32 send_time; // sys tick of when the segment was sent
 };
 
 const unsigned NWM_PACKET_SIZE = ROUND_UP(PACKET_SIZE + NWM_HDR_SIZE, sizeof(void *));
@@ -327,8 +333,6 @@ const unsigned SEND_BUFS_COUNT = SEND_BUFS_DATA_COUNT;
 const unsigned SEND_BUFS_SIZE = SEND_BUFS_DATA_COUNT * NWM_PACKET_SIZE;
 const unsigned SEND_CUR_BUFS_COUNT = ARQ_CUR_COUNT_MAX_2;
 #define ARQ_SEG_MEM_COUNT (ARQ_PREFERRED_COUNT_MAX + ARQ_PREFERRED_COUNT_MAX_2)
-
-#define RSND_COUNT 3
 
 //---------------------------------------------------------------------
 // IKCPCB
@@ -351,6 +355,8 @@ struct IKCPCB
 	bool session_established;
 	bool session_new_data_received;
 	bool rp_output_retry;
+	IUINT32 seg_send_time;
+	IUINT32 seg_ack_count, seg_nack_count; // FIX16 format
 
 	char seg_mem[ARQ_SEG_MEM_COUNT][ARQ_SEG_SIZE] ALIGNED(sizeof(void *));
 	mp_pool_t seg_pool;
@@ -359,7 +365,9 @@ struct IKCPCB
 	struct BitSet4096Mem pid_bs;
 #endif
 	// Worst case between every other packet is nack
-	u16 nacks[ARQ_PREFERRED_COUNT_MAX][2];
+	struct {
+		u16 start, count;
+	} nacks[ARQ_PREFERRED_COUNT_MAX];
 	u16 n_nacks;
 };
 

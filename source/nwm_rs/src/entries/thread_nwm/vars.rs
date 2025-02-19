@@ -401,17 +401,12 @@ unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> 
         return -3;
     }
 
-    let curr_tick = svcGetSystemTick() as s64;
+    let mut curr_tick = svcGetSystemTick() as s64;
     let tick_diff = rp_output_next_tick - curr_tick;
     let duration = if tick_diff > 0 {
         tick_diff as s64 * 1_000_000_000 / SYSCLOCK_ARM11 as s64
     } else {
         0
-    };
-    let next_interval = if (*kcp).session_established && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
-        min_send_interval_tick as s64 * len as s64 / PACKET_SIZE as s64
-    } else {
-        min_send_interval_tick as s64
     };
     if duration > 0 {
         nwm_cb_unlock();
@@ -423,10 +418,15 @@ unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> 
         if AtomicBool::from_ptr(&mut (*kcp).rp_output_retry).load(Ordering::Acquire) {
             return 0;
         }
-        rp_output_next_tick = svcGetSystemTick() as s64 + next_interval;
-    } else {
-        rp_output_next_tick = curr_tick + next_interval;
+        curr_tick = svcGetSystemTick() as s64;
     }
+    let next_interval = if (*kcp).session_established && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
+        min_send_interval_tick as s64 * len as s64 / PACKET_SIZE as s64
+    } else {
+        min_send_interval_tick as s64
+    };
+    (*kcp).seg_send_time = curr_tick as u32_;
+    rp_output_next_tick = curr_tick + next_interval;
 
     nwm_output(buf.sub(NWM_HDR_SIZE as usize), len as usize);
 
