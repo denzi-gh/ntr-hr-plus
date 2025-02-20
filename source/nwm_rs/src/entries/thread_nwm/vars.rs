@@ -95,6 +95,8 @@ unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
                 return None;
             }
 
+            (*kcp).qos = qos;
+
             drop(nwm_lock);
 
             kcp_conv_count += 1;
@@ -130,6 +132,11 @@ unsafe fn init_min_send_interval(qos: u32_) {
             as u32_;
     min_send_interval_ns =
         (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_;
+}
+
+#[no_mangle]
+unsafe extern "C" fn rp_set_qos(qos: u32_) {
+    init_min_send_interval(qos)
 }
 
 pub unsafe fn reset_vars(dst_flags: u32, qos: u32) -> Option<()> {

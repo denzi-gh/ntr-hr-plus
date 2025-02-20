@@ -462,8 +462,61 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 	return 0;
 }
 
-static int ikcp_input_congc(__attribute__((unused)) ikcpcb *kcp)
+#define KCP_CONGC_COUNT_THRES (16 << 16)
+#define KCP_CONGC_COUNT_AVG (256 << 16)
+#define KCP_CONGC_DEC_THRES (8)
+#define KCP_CONGC_INC_THRES (32)
+#define KCP_CONGC_INC_RATEF (16)
+#define KCP_CONGC_QOS_MIN (RP_QOS_MIN / 4)
+
+#include <inttypes.h>
+static int ikcp_input_congc(ikcpcb *kcp)
 {
+	if (!kcp->seg_ack_count && !kcp->seg_nack_count) {
+		return 0;
+	}
+	kcp->congc.last_ack_count += kcp->seg_ack_count;
+	kcp->congc.last_nack_count += kcp->seg_nack_count;
+	IUINT32 last_count_total = kcp->congc.last_ack_count + kcp->congc.last_nack_count;
+	if (last_count_total >= KCP_CONGC_COUNT_THRES) {
+		IUINT32 avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
+		if (avg_count_total >= KCP_CONGC_COUNT_AVG) {
+			IUINT32 avg_count_remain = avg_count_total - last_count_total;
+			kcp->congc.avg_ack_count = (IUINT64)kcp->congc.avg_ack_count * avg_count_remain / avg_count_total;
+			kcp->congc.avg_nack_count = (IUINT64)kcp->congc.avg_nack_count * avg_count_remain / avg_count_total;
+			kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * avg_count_remain / avg_count_total;
+		}
+
+		kcp->congc.avg_ack_count += kcp->congc.last_ack_count;
+		kcp->congc.avg_nack_count += kcp->congc.last_nack_count;
+		IUINT32 last_dur = kcp->seg_send_time - kcp->congc.last_send_time;
+		kcp->congc.avg_dur += last_dur;
+
+		kcp->congc.last_send_time = kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
+
+		avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
+		IUINT32 avg_nack_iratio = avg_count_total / kcp->congc.avg_nack_count;
+
+		if (kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
+			IUINT32 qos = ((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16;
+			if (qos > kcp->qos) {
+				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
+				qos = kcp->qos;
+			}
+			if (qos < KCP_CONGC_QOS_MIN) {
+				qos = KCP_CONGC_QOS_MIN;
+			}
+			kcp->congc.qos = qos;
+			rp_set_qos(qos);
+		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
+			IUINT32 qos = kcp->congc.qos * (KCP_CONGC_INC_RATEF + 1) / KCP_CONGC_INC_RATEF;
+			if (qos > kcp->qos) {
+				qos = kcp->qos;
+			}
+			kcp->congc.qos = qos;
+			rp_set_qos(qos);
+		}
+	}
 	return 0;
 }
 
@@ -955,6 +1008,12 @@ static int ikcp_send_cur(ikcpcb *kcp)
 	const int len = PACKET_SIZE;
 	int ret = ikcp_output(kcp, ikcp_get_packet_data_buf(seg->data_buf), len);
 	seg->send_time = kcp->seg_send_time;
+	if (!kcp->session_congc_inited) {
+		kcp->session_congc_inited = true;
+		kcp->congc.last_send_time = seg->send_time;
+		kcp->congc.qos = kcp->qos;
+	}
+
 	if (ret == 0) {
 		return 1;
 	}

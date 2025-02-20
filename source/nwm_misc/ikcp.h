@@ -352,11 +352,16 @@ struct IKCPCB
 	struct IQUEUEHEAD snd_cur;
 	struct IQUEUEHEAD snd_wak;
 
-	bool session_established;
-	bool session_new_data_received;
-	bool rp_output_retry;
 	IUINT32 seg_send_time;
 	IUINT32 seg_ack_count, seg_nack_count; // FIX16 format
+
+	struct {
+		IUINT32 last_send_time;
+		IUINT32 last_ack_count, last_nack_count; // FIX16 format
+		IUINT32 avg_ack_count, avg_nack_count; // FIX16 format
+		IUINT32 avg_dur; // ticks
+		u32 qos; // current qos
+	} congc;
 
 	char seg_mem[ARQ_SEG_MEM_COUNT][ARQ_SEG_SIZE] ALIGNED(sizeof(void *));
 	mp_pool_t seg_pool;
@@ -369,6 +374,13 @@ struct IKCPCB
 		u16 start, count;
 	} nacks[ARQ_PREFERRED_COUNT_MAX];
 	u16 n_nacks;
+
+	bool session_established;
+	bool session_congc_inited;
+	bool session_new_data_received;
+	bool rp_output_retry;
+
+	u32 qos; // default/max qos
 };
 
 typedef struct IKCPCB ikcpcb;
@@ -384,6 +396,7 @@ extern void rp_term_data_buf_free(const char *data_buf);
 extern void rp_seg_data_buf_free(const char *data_buf);
 extern int rp_udp_output(char *buf, int len, ikcpcb *kcp);
 extern void rp_term_notify(void);
+extern void rp_set_qos(u32 qos);
 
 //---------------------------------------------------------------------
 // interface
