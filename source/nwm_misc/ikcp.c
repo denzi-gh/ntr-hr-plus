@@ -14,6 +14,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "3ds/os.h"
 
@@ -464,12 +465,19 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 
 #define KCP_CONGC_COUNT_THRES (16 << 16)
 #define KCP_CONGC_COUNT_AVG (256 << 16)
-#define KCP_CONGC_DEC_THRES (8)
+#define KCP_CONGC_DEC_THRES (16)
+#define KCP_CONGC_DEC_RATEF (32)
+#define KCP_CONGC_DEC_HTHRES (4)
 #define KCP_CONGC_DEC_MINF (8)
 #define KCP_CONGC_INC_THRES (32)
-#define KCP_CONGC_INC_RATEF (16)
+#define KCP_CONGC_INC_RATEF (64)
 
-#include <inttypes.h>
+static void ikcp_set_qos(u32 qos)
+{
+	// nsDbgPrint("setting qos: %08"PRIx32"\n", qos);
+	rp_set_qos(qos);
+}
+
 static int ikcp_input_congc(ikcpcb *kcp)
 {
 	if (!kcp->seg_ack_count && !kcp->seg_nack_count) {
@@ -498,7 +506,12 @@ static int ikcp_input_congc(ikcpcb *kcp)
 		IUINT32 avg_nack_iratio = avg_count_total / kcp->congc.avg_nack_count;
 
 		if (kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
-			IUINT32 qos = ((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16;
+			IUINT32 qos;
+			if (avg_nack_iratio < KCP_CONGC_DEC_HTHRES) {
+				qos = ((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16;
+			} else {
+				qos = kcp->congc.qos * (KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF;
+			}
 			if (qos > kcp->qos) {
 				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
 				qos = kcp->qos;
@@ -508,14 +521,14 @@ static int ikcp_input_congc(ikcpcb *kcp)
 				qos = qos_min;
 			}
 			kcp->congc.qos = qos;
-			rp_set_qos(qos);
+			ikcp_set_qos(qos);
 		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos = kcp->congc.qos * (KCP_CONGC_INC_RATEF + 1) / KCP_CONGC_INC_RATEF;
+			IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
 			if (qos > kcp->qos) {
 				qos = kcp->qos;
 			}
 			kcp->congc.qos = qos;
-			rp_set_qos(qos);
+			ikcp_set_qos(qos);
 		}
 	}
 	return 0;

@@ -124,14 +124,13 @@ unsafe fn set_packet_data_size() {
 }
 
 static mut min_send_interval_tick: u32_ = 0;
-static mut min_send_interval_ns: u32_ = 0;
+static mut min_send_interval_ns: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {
     min_send_interval_tick =
         core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_)
             as u32_;
-    min_send_interval_ns =
-        (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_;
+    min_send_interval_ns.store((min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_, Ordering::Relaxed);
 }
 
 #[no_mangle]
@@ -228,7 +227,7 @@ pub extern "C" fn thread_nwm(_: *mut c_void) {
     unsafe {
         while !crate::entries::work_thread::reset_threads() {
             if safe_impl::try_send_next_buffer(ThreadVars(()), true) {
-                svcSleepThread(min_send_interval_ns as s64);
+                svcSleepThread(min_send_interval_ns.load(Ordering::Relaxed) as s64);
                 continue;
             }
 
