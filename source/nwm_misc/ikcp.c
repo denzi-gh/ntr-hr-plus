@@ -470,6 +470,7 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 #define KCP_CONGC_DEC_HTHRES (4)
 #define KCP_CONGC_DEC_MINF (8)
 #define KCP_CONGC_INC_THRES (32)
+#define KCP_CONGC_INC_HTHRES (8)
 #define KCP_CONGC_INC_RATEF (64)
 
 static void ikcp_set_qos(u32 qos)
@@ -523,12 +524,15 @@ static int ikcp_input_congc(ikcpcb *kcp)
 			kcp->congc.qos = qos;
 			ikcp_set_qos(qos);
 		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
-			if (qos > kcp->qos) {
-				qos = kcp->qos;
+			IUINT32 qos_thres = (((IUINT64)avg_count_total * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16) * (KCP_CONGC_INC_HTHRES + 1) / KCP_CONGC_INC_HTHRES;
+			if (kcp->congc.qos <= qos_thres) {
+				IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
+				if (qos > kcp->qos) {
+					qos = kcp->qos;
+				}
+				kcp->congc.qos = qos;
+				ikcp_set_qos(qos);
 			}
-			kcp->congc.qos = qos;
-			ikcp_set_qos(qos);
 		}
 	}
 	return 0;
