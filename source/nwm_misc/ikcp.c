@@ -470,7 +470,7 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 #define KCP_CONGC_DEC_HTHRES (4)
 #define KCP_CONGC_DEC_MINF (8)
 #define KCP_CONGC_INC_THRES (32)
-#define KCP_CONGC_INC_HTHRES (8)
+#define KCP_CONGC_INC_HTHRES (2)
 #define KCP_CONGC_INC_RATEF (64)
 
 static void ikcp_set_qos(u32 qos)
@@ -501,7 +501,11 @@ static int ikcp_input_congc(ikcpcb *kcp)
 		IUINT32 last_dur = kcp->seg_send_time - kcp->congc.last_send_time;
 		kcp->congc.avg_dur += last_dur;
 
-		kcp->congc.last_send_time = kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
+		// IUINT64 avg_dur_ns = ((IUINT64)kcp->congc.avg_dur * (1000 * 1000 * 1000) / SYSCLOCK_ARM11);
+		// nsDbgPrint("avg_dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
+
+		kcp->congc.last_send_time = kcp->seg_send_time;
+		kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
 
 		avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
 		IUINT32 avg_nack_iratio = avg_count_total / kcp->congc.avg_nack_count;
