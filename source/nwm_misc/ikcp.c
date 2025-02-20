@@ -465,9 +465,9 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 #define KCP_CONGC_COUNT_THRES (16 << 16)
 #define KCP_CONGC_COUNT_AVG (256 << 16)
 #define KCP_CONGC_DEC_THRES (8)
+#define KCP_CONGC_DEC_MINF (8)
 #define KCP_CONGC_INC_THRES (32)
 #define KCP_CONGC_INC_RATEF (16)
-#define KCP_CONGC_QOS_MIN (RP_QOS_MIN / 4)
 
 #include <inttypes.h>
 static int ikcp_input_congc(ikcpcb *kcp)
@@ -503,8 +503,9 @@ static int ikcp_input_congc(ikcpcb *kcp)
 				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
 				qos = kcp->qos;
 			}
-			if (qos < KCP_CONGC_QOS_MIN) {
-				qos = KCP_CONGC_QOS_MIN;
+			IUINT32 qos_min = kcp->qos / KCP_CONGC_DEC_MINF;
+			if (qos < qos_min) {
+				qos = qos_min;
 			}
 			kcp->congc.qos = qos;
 			rp_set_qos(qos);
