@@ -525,8 +525,8 @@ static int ikcp_input_congc(ikcpcb *kcp)
 			ikcp_set_qos(qos);
 		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
 			IUINT32 qos_thres = (((IUINT64)avg_count_total * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16) * (KCP_CONGC_INC_HTHRES + 1) / KCP_CONGC_INC_HTHRES;
-			if (kcp->congc.qos <= qos_thres) {
-				IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
+			IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
+			if (qos <= qos_thres) {
 				if (qos > kcp->qos) {
 					qos = kcp->qos;
 				}
