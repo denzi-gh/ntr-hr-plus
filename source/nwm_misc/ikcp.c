@@ -470,7 +470,7 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 #define KCP_CONGC_DEC_HTHRES (4)
 #define KCP_CONGC_DEC_MINF (8)
 #define KCP_CONGC_INC_THRES (32)
-#define KCP_CONGC_INC_HTHRES (2)
+#define KCP_CONGC_INC_MAXF (8)
 #define KCP_CONGC_INC_RATEF (64)
 
 static void ikcp_set_qos(u32 qos)
@@ -505,17 +505,20 @@ static int ikcp_input_congc(ikcpcb *kcp)
 		// nsDbgPrint("avg_dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
 
 		kcp->congc.last_send_time = kcp->seg_send_time;
-		kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
 
 		avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
-		IUINT32 avg_nack_iratio = avg_count_total / kcp->congc.avg_nack_count;
+#define avg_nack_iratio (avg_count_total / kcp->congc.avg_nack_count)
 
-		if (kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
+		if (kcp->congc.last_nack_count && kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
 			IUINT32 qos;
 			if (avg_nack_iratio < KCP_CONGC_DEC_HTHRES) {
 				qos = ((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16;
+				kcp->congc.avg_nack_count = 0;
+				kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * kcp->congc.avg_ack_count / avg_count_total;
 			} else {
 				qos = kcp->congc.qos * (KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF;
+				kcp->congc.avg_nack_count = kcp->congc.avg_nack_count * (KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF;
+				kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * (kcp->congc.avg_ack_count + kcp->congc.avg_nack_count) / avg_count_total;
 			}
 			if (qos > kcp->qos) {
 				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
@@ -528,7 +531,7 @@ static int ikcp_input_congc(ikcpcb *kcp)
 			kcp->congc.qos = qos;
 			ikcp_set_qos(qos);
 		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos_thres = (((IUINT64)avg_count_total * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16) * (KCP_CONGC_INC_HTHRES + 1) / KCP_CONGC_INC_HTHRES;
+			IUINT32 qos_thres = (((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16) + kcp->qos / KCP_CONGC_INC_MAXF;
 			IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
 			if (qos <= qos_thres) {
 				if (qos > kcp->qos) {
@@ -538,6 +541,8 @@ static int ikcp_input_congc(ikcpcb *kcp)
 				ikcp_set_qos(qos);
 			}
 		}
+
+		kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
 	}
 	return 0;
 }
