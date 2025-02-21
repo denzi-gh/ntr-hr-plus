@@ -404,9 +404,7 @@ impl ThreadDoVars {
 
     pub fn capture_screen(&self) {
         unsafe {
-            let mut w = self.v().work_index();
-            w.next_wrapped();
-            self.v().set_screen_work_index(&w);
+            self.v().set_next_screen_work_index();
 
             self.v().release_screen_ready();
         }

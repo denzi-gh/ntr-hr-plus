@@ -187,9 +187,7 @@ impl ScreenThreadVars {
                 ScreenEncodeVars::init(is_top, format, work_index);
 
             let mut count = mem::MaybeUninit::<s32>::uninit();
-            if *skip_frames.get(&WorkIndex::init_unchecked(
-                screen_work_index.load(Ordering::Acquire),
-            )) {
+            if *skip_frames.get(&work_index) {
                 let res = svcReleaseSemaphore(
                     count.as_mut_ptr(),
                     (*syn_handles).threads.get(&screen_thread_id).work_ready,
@@ -321,8 +319,10 @@ impl ScreenWorkVars {
         screen_thread_id = *t;
     }
 
-    pub unsafe fn set_screen_work_index(&self, w: &WorkIndex) {
-        screen_work_index.store((*w).get(), Ordering::Release);
+    pub unsafe fn set_next_screen_work_index(&self) {
+        let mut w = ScreenThreadVars(()).screen_work_index();
+        w.next_wrapped();
+        screen_work_index.store(w.get(), Ordering::Release);
     }
 
     #[named]
@@ -414,7 +414,8 @@ impl ScreenThreadVarsSync {
                 if crate::entries::work_thread::reset_threads() {
                     return None;
                 }
-                let w = WorkIndex::init_unchecked(screen_work_index.load(Ordering::Acquire));
+                let thread_vars = ScreenThreadVars(());
+                let w = thread_vars.screen_work_index();
                 let synced = screens_synced.get_mut(&w);
 
                 if !synced.load(Ordering::Acquire) {
@@ -430,7 +431,7 @@ impl ScreenThreadVarsSync {
                     }
                     synced.store(true, Ordering::Release);
                 }
-                return Some(ScreenThreadVars(()));
+                return Some(thread_vars);
             }
         }
     }
