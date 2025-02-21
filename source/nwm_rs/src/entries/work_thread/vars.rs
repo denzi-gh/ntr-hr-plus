@@ -543,12 +543,38 @@ impl ThreadBeginVars {
         }
     }
 
+    #[cfg(feature = "img_diff_dbg")]
     pub fn frame_changed(&self) -> bool {
         unsafe {
             let ctx = self.ctx();
             let src_len = ctx.src_len();
-            *slice::from_raw_parts(ctx.src, src_len as usize)
-                != *slice::from_raw_parts(self.v().img_src_prev(), src_len as usize)
+
+            let curr = ctx.src;
+            let prev = self.v().img_src_prev();
+            let diff = self.v().img_src_diff();
+            for i in 0..src_len as usize {
+                *diff.add(i) = if *curr.add(i) == *prev.add(i) { 0 } else { 255 }
+            }
+
+            let ret = *slice::from_raw_parts(curr, src_len as usize)
+                != *slice::from_raw_parts(prev, src_len as usize);
+
+            ctx.src = diff;
+            ret
+        }
+    }
+
+    #[cfg(not(feature = "img_diff_dbg"))]
+    pub fn frame_changed(&self) -> bool {
+        unsafe {
+            let ctx = self.ctx();
+            let src_len = ctx.src_len();
+
+            let curr = ctx.src;
+            let prev = self.v().img_src_prev();
+
+            *slice::from_raw_parts(curr, src_len as usize)
+                != *slice::from_raw_parts(prev, src_len as usize)
         }
     }
 

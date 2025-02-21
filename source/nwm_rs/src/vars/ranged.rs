@@ -222,6 +222,13 @@ where
         self.0.as_mut_ptr()
     }
 
+    pub fn get_r<const N2: u32_>(&self, i: &Ranged<N2>) -> &T
+    where
+        [(); (N - N2) as usize]:,
+    {
+        unsafe { self.0.get_unchecked(i.0 as usize) }
+    }
+
     pub fn get(&self, i: &Ranged<N>) -> &T {
         unsafe { self.0.get_unchecked(i.0 as usize) }
     }

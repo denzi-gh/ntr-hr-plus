@@ -17,3 +17,6 @@ const-default = { path = "../../const_default", version = "1.0.0", features = [
 
 [build-dependencies]
 bindgen = "0.69.4"
+
+[features]
+img_diff_dbg = []

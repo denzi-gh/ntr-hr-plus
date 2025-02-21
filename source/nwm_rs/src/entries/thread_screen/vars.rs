@@ -31,7 +31,12 @@ pub struct CapParams {
 
 pub static mut cap_params: CapParams = const_default();
 
-pub const IMG_WORK_COUNT: u32_ = 2;
+pub const IMG_AWORK_COUNT: u32_ = 2;
+#[cfg(not(feature = "img_diff_dbg"))]
+pub const IMG_WORK_COUNT: u32_ = IMG_AWORK_COUNT;
+#[cfg(feature = "img_diff_dbg")]
+pub const IMG_WORK_COUNT: u32_ = IMG_AWORK_COUNT + 1;
+pub type ImgAWorkIndex = Ranged<IMG_AWORK_COUNT>;
 pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
 pub type ImgBufs = RangedArray<*mut u8_, IMG_WORK_COUNT>;
 
@@ -127,7 +132,7 @@ impl ScreenThreadVars {
     pub fn img_dst(&self, is_top: bool) -> u32_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(is_top);
-            *iinfo.bufs.get(&ImgWorkIndex::init_unchecked(
+            *iinfo.bufs.get_r(&ImgAWorkIndex::init_unchecked(
                 iinfo.index.load(Ordering::Acquire),
             )) as u32_
         }
@@ -294,15 +299,24 @@ impl ScreenWorkVars {
     pub fn img_src_prev(&self) -> *const u8_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(self.is_top());
-            let mut index = ImgWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
+            let mut index = ImgAWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
             index.prev_wrapped();
+            *iinfo.bufs.get_r(&index)
+        }
+    }
+
+    #[cfg(feature = "img_diff_dbg")]
+    pub fn img_src_diff(&self) -> *mut u8_ {
+        unsafe {
+            let iinfo = img_infos.get_b_mut(self.is_top());
+            let index = ImgWorkIndex::init_unchecked(IMG_AWORK_COUNT);
             *iinfo.bufs.get(&index)
         }
     }
 
     pub unsafe fn img_index_next(&self) {
         let iinfo = img_infos.get_b_mut(self.is_top());
-        let index = &mut ImgWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
+        let index = &mut ImgAWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
         index.next_wrapped();
         iinfo.index.store(index.get(), Ordering::Release);
     }
