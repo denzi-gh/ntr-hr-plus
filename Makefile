@@ -37,7 +37,7 @@ CP = cp
 
 CTRU_DIR := libctru/libctru
 
-CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft -fno-strict-aliasing
+CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft -fno-strict-aliasing -fshort-enums
 CFLAGS += -ffunction-sections -fdata-sections
 CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__
 LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(LIB_RS_DIR) -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
