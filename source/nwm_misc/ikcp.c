@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "3ds/os.h"
 
@@ -464,14 +465,14 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 }
 
 #define KCP_CONGC_COUNT_THRES (16 << 16)
-#define KCP_CONGC_COUNT_AVG (256 << 16)
-#define KCP_CONGC_DEC_THRES (16)
-#define KCP_CONGC_DEC_RATEF (32)
-#define KCP_CONGC_DEC_HTHRES (4)
+#define KCP_CONGC_COUNT_AVG (64 << 16)
+#define KCP_CONGC_DEC_THRES (12)
+#define KCP_CONGC_DEC_RATEF (12)
 #define KCP_CONGC_DEC_MINF (8)
-#define KCP_CONGC_INC_THRES (32)
-#define KCP_CONGC_INC_MAXF (4)
-#define KCP_CONGC_INC_RATEF (64)
+#define KCP_CONGC_INC_THRES (18)
+#define KCP_CONGC_INC_MAXF (2)
+#define KCP_CONGC_INC_RATEF (12)
+#define KCP_CONGC_TICK_F (8)
 
 static void ikcp_set_qos(u32 qos)
 {
@@ -490,7 +491,7 @@ static int ikcp_input_congc(ikcpcb *kcp)
 	if (last_count_total >= KCP_CONGC_COUNT_THRES) {
 		IUINT32 avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
 		if (avg_count_total >= KCP_CONGC_COUNT_AVG) {
-			IUINT32 avg_count_remain = avg_count_total - last_count_total;
+			IUINT32 avg_count_remain = avg_count_total > last_count_total ? avg_count_total - last_count_total : 0;
 			kcp->congc.avg_ack_count = (IUINT64)kcp->congc.avg_ack_count * avg_count_remain / avg_count_total;
 			kcp->congc.avg_nack_count = (IUINT64)kcp->congc.avg_nack_count * avg_count_remain / avg_count_total;
 			kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * avg_count_remain / avg_count_total;
@@ -502,7 +503,7 @@ static int ikcp_input_congc(ikcpcb *kcp)
 		kcp->congc.avg_dur += last_dur;
 
 		// IUINT64 avg_dur_ns = ((IUINT64)kcp->congc.avg_dur * (1000 * 1000 * 1000) / SYSCLOCK_ARM11);
-		// nsDbgPrint("avg_dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
+		// nsDbgPrint("avg dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
 
 		kcp->congc.last_send_time = kcp->seg_send_time;
 
@@ -510,17 +511,23 @@ static int ikcp_input_congc(ikcpcb *kcp)
 #define avg_nack_iratio (avg_count_total / kcp->congc.avg_nack_count)
 #define avg_qos (((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16)
 
+#define qos_tick_f ((double)KCP_CONGC_TICK_F * last_count_total / avg_count_total)
+#define qos_f (kcp->congc.avg_dur < SYSCLOCK_ARM11 ? qos_tick_f / SYSCLOCK_ARM11 * kcp->congc.avg_dur : qos_tick_f)
+
+		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, kcp->congc.qos);
+		// nsDbgPrint("qos f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_f, (IUINT32)(qos_f * 1000) % 1000);
+
 		if (kcp->congc.last_nack_count && kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
-			IUINT32 qos;
-			if (avg_nack_iratio < KCP_CONGC_DEC_HTHRES) {
-				qos = avg_qos;
-				kcp->congc.avg_nack_count = 0;
-				kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * kcp->congc.avg_ack_count / avg_count_total;
-			} else {
-				qos = kcp->congc.qos * (KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF;
-				kcp->congc.avg_nack_count = kcp->congc.avg_nack_count * (KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF;
-				kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * (kcp->congc.avg_ack_count + kcp->congc.avg_nack_count) / avg_count_total;
+			// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", kcp->congc.avg_ack_count >> 16, kcp->congc.avg_nack_count >> 16);
+			double qos_dec_f = pow((double)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
+			if (qos_dec_f == 0.0) {
+				nsDbgPrint("math library error\n");
 			}
+			// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
+			IUINT32 qos = kcp->congc.qos * qos_dec_f;
+			kcp->congc.avg_nack_count = kcp->congc.avg_nack_count * qos_dec_f;
+			kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * (kcp->congc.avg_ack_count + kcp->congc.avg_nack_count) / avg_count_total;
+
 			if (qos > kcp->qos) {
 				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
 				qos = kcp->qos;
@@ -532,17 +539,17 @@ static int ikcp_input_congc(ikcpcb *kcp)
 			kcp->congc.qos = qos;
 			ikcp_set_qos(qos);
 		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos_thres = avg_qos + kcp->qos / KCP_CONGC_INC_MAXF;
-			IUINT32 qos = kcp->congc.qos + kcp->qos / KCP_CONGC_INC_RATEF;
-			if (qos <= qos_thres) {
-				if (qos > kcp->qos) {
-					qos = kcp->qos;
-				}
-				kcp->congc.qos = qos;
-				ikcp_set_qos(qos);
+			IUINT32 qos_thres = _imax_(avg_qos * KCP_CONGC_INC_MAXF, avg_qos + kcp->qos / KCP_CONGC_DEC_MINF * KCP_CONGC_INC_MAXF);
+			IUINT32 qos = kcp->congc.qos + (IUINT32)(qos_f / KCP_CONGC_INC_RATEF * kcp->qos);
+			if (qos > qos_thres) {
+				qos = qos_thres;
 			}
+			if (qos > kcp->qos) {
+				qos = kcp->qos;
+			}
+			kcp->congc.qos = qos;
+			ikcp_set_qos(qos);
 		}
-		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, kcp->congc.qos);
 
 		kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
 	}

@@ -1,16 +1,13 @@
-# Remove "-Clinker-plugin-lto" from .cargo/config.toml
-# if you intend to compile with gcc.
-# When compiling with clang libclang_rt.builtins-arm.a will need to be obtained elsewhere.
-# See https://llvm.org/docs/HowToCrossCompileBuiltinsOnArm.html
-
 # Need 2025-02-02 nightly rust for now
 
 DEV_BIN_DIR := $(DEVKITARM)/bin
-
 UNAME := $(shell uname)
 
 # USE_CLANG = 1
 # USE_LTO = 1
+
+# When compiling with clang libclang_rt.builtins-arm.a will need to be obtained elsewhere.
+# See https://llvm.org/docs/HowToCrossCompileBuiltinsOnArm.html
 
 CC_NAME = @echo $(notdir $@);
 AS = $(CC_NAME) $(DEV_BIN_DIR)/arm-none-eabi-as
@@ -40,11 +37,11 @@ CP = cp
 
 CTRU_DIR := libctru/libctru
 
-CFLAGS := -Ofast -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -fno-strict-aliasing
+CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft -fno-strict-aliasing
 CFLAGS += -ffunction-sections -fdata-sections
 CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__
-LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack
-LDLIBS = -L. -lctru_ntr -L$(LIB_RS_DIR) -lsysbase
+LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(LIB_RS_DIR) -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
+LDLIBS := -lctru_ntr -lsysbase -lm
 LDLIBS += -Wl,-pie
 SRC_C := $(wildcard source/*.c)
 SRC_S := $(wildcard source/*.s)

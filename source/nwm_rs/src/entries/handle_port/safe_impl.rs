@@ -2,7 +2,7 @@ use super::*;
 
 #[named]
 pub fn handlePort(t: ThreadVars, cmd_id: u32_, norm_params: &[u32_], trans_params: &[u32_]) {
-    match cmd_id {
+    match cmd_id as u8_ {
         SVC_NWM_CMD_OVERLAY_CALLBACK => {
             let is_top = *norm_params.get(0).unwrap_or(&u32_::MAX);
 

@@ -97,8 +97,10 @@ fn main() {
             "-march=armv6k",
             "-mtune=mpcore",
             "-mfpu=vfp",
+            "-mtp=soft",
             "-DARM11",
             "-D__3DS__",
+            "-fshort-enums",
         ])
         .parse_callbacks(Box::new(Callback::new()))
         .generate()
