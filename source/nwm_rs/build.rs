@@ -44,16 +44,42 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=nwm_rs.h");
     println!("cargo:rerun-if-env-changed=DEVKITPRO");
 
     let gcc_version = get_gcc_version(PathBuf::from(&devkitarm).join("bin/arm-none-eabi-gcc"));
-    let include_path = Path::new("../../include");
-    let ctru_include_path = Path::new("../../libctru/libctru/include");
+    let include_path_str = "../../include";
+    let include_path = Path::new(include_path_str);
+    let ctru_include_path_str = "../../libctru/libctru/include";
+    let ctru_include_path = Path::new(ctru_include_path_str);
     let nwm_header_str = "nwm_rs.h";
     let nwm_header = Path::new(nwm_header_str);
 
-    println!("cargo:rerun-if-changed={nwm_header_str}");
+    let current_dir = env::current_dir().unwrap();
+    let rerun_headers = |path: &str| {
+        let stdout = match Command::new("find")
+            .args([path, "-name", "*.h", "-type", "f"])
+            .stderr(Stdio::inherit())
+            .output()
+        {
+            Ok(Output { stdout, status, .. }) if status.success() => stdout,
+            Ok(Output { status, .. }) => {
+                println!("cargo::error=find failed with status {status}");
+                return;
+            }
+            Err(err) => {
+                println!("cargo::error=find failed {err}");
+                return;
+            }
+        };
+        for line in String::from_utf8_lossy(&stdout).lines() {
+            let file = current_dir.join(line).canonicalize().unwrap();
+            let file = file.display();
+            println!("cargo:rerun-if-changed={file}");
+        }
+    };
+    rerun_headers("..");
+    rerun_headers(include_path_str);
+    rerun_headers(ctru_include_path_str);
 
     let sysroot = Path::new(&devkitarm).join("arm-none-eabi");
     let system_include = sysroot.join("include");

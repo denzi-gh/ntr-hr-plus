@@ -41,7 +41,7 @@ CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=
 CFLAGS += -ffunction-sections -fdata-sections
 CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__
 LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(LIB_RS_DIR) -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
-LDLIBS := -lctru_ntr -lsysbase -lm
+LDLIBS := -lctru_ntr -lsysbase
 LDLIBS += -Wl,-pie
 SRC_C := $(wildcard source/*.c)
 SRC_S := $(wildcard source/*.s)
@@ -115,12 +115,12 @@ bin/$(NTR_BIN_GAME:.bin=.elf): $(OBJ) $(OBJ_GAME) libctru_ntr.a 3ds.ld | bin
 	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3ds.ld $(LDFLAGS) $(OBJ) $(OBJ_GAME) $(LDLIBS)
 
 bin/$(NTR_BIN_NWM:.bin=.elf): $(OBJ) $(OBJ_NWM) libctru_ntr.a 3dst.ld $(LIB_NWM_RS) | bin
-	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM) $(LDLIBS) -lnwm_rs
+	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM) $(LDLIBS) -lnwm_rs -lm
 
 bin:
 	mkdir $@
 
-$(LIB_NWM_RS): $(shell find source/nwm_rs -type f)
+$(LIB_NWM_RS): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -type f)
 	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --release
 
 libctru_ntr.a: $(CTRU_DIR)/lib/libctru.a
@@ -170,7 +170,7 @@ obj:
 
 -include $(DEP)
 
-.PHONY: clean all install
+.PHONY: clean all install rs
 
 clean:
 	-rm *.map bin/* release/* obj/* libctru_ntr.a
