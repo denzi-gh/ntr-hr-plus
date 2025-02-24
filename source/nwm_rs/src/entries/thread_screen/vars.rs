@@ -89,12 +89,8 @@ pub unsafe fn reset_thread_vars(mode: u32_) {
     }
 }
 
-pub unsafe fn init_img_info<const T: usize>(
-    i: &ScreenIndex,
-    j: &ImgWorkIndex,
-    m: &mut MemRegion8<T>,
-) {
-    *img_infos.get_mut(&i).bufs.get_mut(&j) = m.to_ptr();
+pub unsafe fn init_img_info(is_top: bool, j: &ImgWorkIndex, m: &mut [u8]) {
+    *img_infos.get_b_mut(is_top).bufs.get_mut(&j) = m.as_mut_ptr();
 }
 
 #[allow(dead_code)]

@@ -65,9 +65,10 @@ mod first_time_init {
         }
 
         for i in ScreenIndex::all() {
+            let is_top = if i.get() == 0 { true } else { false };
             for j in crate::entries::thread_screen::ImgWorkIndex::all() {
-                if let Some(m) = request_mem_from_pool::<IMG_BUFFER_SIZE>() {
-                    crate::entries::thread_screen::init_img_info(&i, &j, m);
+                if let Some(m) = request_mem_from_pool_vsize(IMG_BUFFER_SIZE(is_top)) {
+                    crate::entries::thread_screen::init_img_info(is_top, &j, m);
                 } else {
                     return None;
                 }

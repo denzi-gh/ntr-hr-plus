@@ -168,9 +168,14 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
         bpp = 2;
         burst_size *= 2;
     }
-    let mut transfer_size = 240 * bpp;
+    let mut transfer_size = GSP_SCREEN_WIDTH * bpp;
     let mut pitch = cap_info.pitch;
-    let buf_size = transfer_size * if is_top { 400 } else { 320 };
+    let buf_size = transfer_size
+        * if is_top {
+            GSP_SCREEN_HEIGHT_TOP
+        } else {
+            GSP_SCREEN_HEIGHT_BOTTOM
+        };
 
     if transfer_size == pitch {
         let mut mul = if is_top { 16 } else { 64 };
@@ -211,7 +216,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
         },
     };
 
-    if buf_size > IMG_BUFFER_SIZE as u32_ {
+    if buf_size > IMG_BUFFER_SIZE(is_top) as u32_ {
         svcSleepThread(THREAD_WAIT_NS);
         return false;
     }

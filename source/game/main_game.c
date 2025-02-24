@@ -2,6 +2,7 @@
 
 #include "3ds/srv.h"
 #include "3ds/ipc.h"
+#include "3ds/services/gspgpu.h"
 
 #include <memory.h>
 
@@ -37,7 +38,7 @@ void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32
 		}
 	}
 
-	u32 height = isDisplay1 ? 320 : 400;
+	u32 height = isDisplay1 ? GSP_SCREEN_HEIGHT_BOTTOM : GSP_SCREEN_HEIGHT_TOP;
 	int isDirty = 0;
 
 	svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);

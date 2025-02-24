@@ -1,13 +1,14 @@
 #include "global.h"
 
 #include "3ds/services/hid.h"
+#include "3ds/services/gspgpu.h"
 
 #include <string.h>
 
 u32 hasDirectScreenAccess;
 
-#define BOTTOM_WIDTH 320
-#define BOTTOM_HEIGHT 240
+#define BOTTOM_WIDTH GSP_SCREEN_HEIGHT_BOTTOM
+#define BOTTOM_HEIGHT GSP_SCREEN_WIDTH
 #define BOTTOM_UI_BPP 2
 #define BOTTOM_UI_PITCH (BOTTOM_HEIGHT * BOTTOM_UI_BPP)
 #define BOTTOM_UI_FORMAT 3

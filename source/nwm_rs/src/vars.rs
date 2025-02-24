@@ -27,7 +27,15 @@ pub type WorkIndex = Ranged<WORK_COUNT>;
 pub type ThreadId = Ranged<RP_CORE_COUNT_MAX>;
 pub type ScreenIndex = Ranged<SCREEN_COUNT>;
 
-pub const IMG_BUFFER_SIZE: usize = 0x60000;
+pub const fn IMG_BUFFER_SIZE(is_top: bool) -> usize {
+    (GSP_SCREEN_WIDTH
+        * 4 // max bpp
+        * if is_top {
+            GSP_SCREEN_HEIGHT_TOP
+        } else {
+            GSP_SCREEN_HEIGHT_BOTTOM
+        }) as usize
+}
 pub const NWM_BUFFER_SIZE: usize =
     (SEND_BUFS_SIZE / WORK_COUNT) as usize / mem::size_of::<usize>() * mem::size_of::<usize>();
 
