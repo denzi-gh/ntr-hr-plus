@@ -33,6 +33,8 @@ mod first_time_init {
         *delta_prog_prev_coeffs.get_b_mut(true) =
             request_mem_from_pool::<delta_prog_bot_size>()?.to_ptr() as *mut f32;
 
+        crate::jpeg::deltaProgQuantTableInit();
+
         Some(())
     }
 

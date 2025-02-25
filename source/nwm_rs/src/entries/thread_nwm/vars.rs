@@ -132,6 +132,8 @@ unsafe fn init_min_send_interval(qos: u32_) {
         (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
         Ordering::Relaxed,
     );
+
+    crate::jpeg::targetBytesPerSec = qos;
 }
 
 #[no_mangle]
@@ -354,8 +356,9 @@ pub unsafe fn rp_send_buffer(dst: &mut crate::jpeg::WorkerDst, term: bool) -> bo
 unsafe fn init_udp_packet(nwm_buf: *mut u8_, mut len: u32_) -> u32_ {
     len += 8;
     *(nwm_buf.add(0x22 + 8) as *mut u16_) = utils::htons(RP_SRC_PORT as u16_); // src port
-    *(nwm_buf.add(0x24 + 8) as *mut u16_) =
-    utils::htons(AtomicU32::from_mut(&mut (*rp_config).dstPort).load(Ordering::Relaxed) as u16_); // dest port
+    *(nwm_buf.add(0x24 + 8) as *mut u16_) = utils::htons(
+        AtomicU32::from_mut(&mut (*rp_config).dstPort).load(Ordering::Relaxed) as u16_,
+    ); // dest port
     *(nwm_buf.add(0x26 + 8) as *mut u16_) = utils::htons(len as u16_);
     *(nwm_buf.add(0x28 + 8) as *mut u16_) = 0; // no checksum
     len += 20;

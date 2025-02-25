@@ -314,17 +314,33 @@ fn qualityScaling(quality: u32) -> u32
  * when divided by 2, "very good" quality.
  */
 
-const std_luminance_quant_tbl: [u8; DCTSIZE2] = [
+pub const std_luminance_quant_tbl: [u8; DCTSIZE2] = [
     16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
     14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
     92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
 ];
 
-const std_chrominance_quant_tbl: [u8; DCTSIZE2] = [
+pub const std_chrominance_quant_tbl: [u8; DCTSIZE2] = [
     17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99, 99, 99,
     47, 66, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 ];
+
+pub const aanscalefactor: [f32; DCTSIZE] = [
+    1.0,
+    1.387039845,
+    1.306562965,
+    1.175875602,
+    1.0,
+    0.785694958,
+    0.541196100,
+    0.275899379,
+];
+// pub static mut aanscalefactortbl: [f32; DCTSIZE2] = const_default();
+
+pub static mut std_luminance_quant_log2_tbl: [f32; DCTSIZE2] = const_default();
+pub static mut std_chrominance_quant_log2_tbl: [f32; DCTSIZE2] = const_default();
+pub static mut std_quant_log2_max: f32 = const_default();
 
 #[derive(ConstDefault)]
 pub struct QuantTbl {

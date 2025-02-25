@@ -2,6 +2,43 @@ use crate::*;
 pub mod vars;
 use vars::*;
 
+pub static mut targetBytesPerSec: u32 = const_default();
+
+pub fn deltaProgQuantTableInit() {
+    let initFn = |input: &[u8; DCTSIZE2], output: &mut [f32; DCTSIZE2], max: &mut f32| {
+        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+            for i in 0..DCTSIZE {
+                let k = j + i;
+                // output[k] = unsafe { log2f(input[k] as f32) };
+                output[k] = unsafe {
+                    log2f(input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
+                };
+
+                // unsafe {
+                //     aanscalefactortbl[k] = 1.0f32 / (aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
+                // };
+
+                if output[k] > *max {
+                    *max = output[k]
+                }
+            }
+        }
+    };
+
+    unsafe {
+        initFn(
+            &std_luminance_quant_tbl,
+            &mut std_luminance_quant_log2_tbl,
+            &mut std_quant_log2_max,
+        );
+        initFn(
+            &std_chrominance_quant_tbl,
+            &mut std_chrominance_quant_log2_tbl,
+            &mut std_quant_log2_max,
+        );
+    }
+}
+
 #[derive(ConstDefault)]
 pub struct JpegShared {
     quantTbls: QuantTbls,
@@ -11,9 +48,11 @@ pub struct JpegShared {
     pub maxHSampFactor: usize,
     pub maxVSampFactor: usize,
     pub maxBlocksInMcu: usize,
-    pub inRowsBlk: usize,
-    pub mcuSize: usize,
+    pub mcuRowSize: usize,
+    pub mcuColSize: usize,
     pub mcusPerRow: usize,
+    pub mcusTop: usize,
+    pub mcusBot: usize,
     pub deltaProg: bool,
     pub deltaProgMutex: [Handle; WORK_COUNT as usize],
 }
@@ -56,9 +95,13 @@ impl JpegShared {
         if self.maxBlocksInMcu > MAX_BLOCKS_IN_MCU {
             panic!();
         }
-        self.inRowsBlk = DCTSIZE * self.maxHSampFactor;
-        self.mcuSize = DCTSIZE * self.maxVSampFactor;
-        self.mcusPerRow = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.inRowsBlk);
+        self.mcuRowSize = DCTSIZE * self.maxHSampFactor;
+        self.mcuColSize = DCTSIZE * self.maxVSampFactor;
+        self.mcusPerRow = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.mcuRowSize);
+        self.mcusTop =
+            self.mcusPerRow * jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcuColSize);
+        self.mcusBot =
+            self.mcusPerRow * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize);
     }
 }
 
@@ -204,8 +247,8 @@ pub struct DeltaProgCache {
 
 #[derive(ConstDefault, Clone, Copy)]
 pub struct DeltaProgQ {
-    pub q: u8,
-    pub divisors: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    pub q: i8,
+    pub divisors: [[i8; DCTSIZE2]; NUM_QUANT_TBLS],
     pub cache: DeltaProgCache,
 }
 
@@ -984,7 +1027,9 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
         for j in (0..DCTSIZE2).step_by(DCTSIZE) {
             for i in 0..DCTSIZE {
-                inout[j + i] -= unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) };
+                let k = j + i;
+                // inout[k] *= unsafe { aanscalefactortbl[k] };
+                inout[k] -= unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) };
             }
         }
     }
@@ -992,7 +1037,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
     fn quantize_f(
         input: &JFBlock,
         output: &mut JBlock,
-        divisors: &[u8; DCTSIZE2],
+        divisors: &[i8; DCTSIZE2],
         prev_coeffs: *mut f32,
     ) {
         for j in (0..DCTSIZE2).step_by(DCTSIZE) {
@@ -1014,7 +1059,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         output: &mut JBlock,
         ypos: u16,
         xpos: u16,
-        divisors: &[u8; DCTSIZE2],
+        divisors: &[i8; DCTSIZE2],
         prev_coeffs: *mut f32,
     ) {
         Self::convsamp_f(input, ypos, xpos, staging);
@@ -1244,7 +1289,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 GSP_SCREEN_WIDTH as usize
                     * (self.worker.info.restartInRowsPixels as usize
                         * self.worker.info.workIndex.get() as usize
-                        + self.worker.shared.mcuSize * row_i),
+                        + self.worker.shared.mcuColSize * row_i),
             )
         };
         prev_coeffs
@@ -1349,7 +1394,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
             let deltaProgQ = &self.worker.info.deltaProgQ;
             if deltaProgQ.q == 0 {
-                AtomicU8::from(deltaProgQ.q)
+                AtomicI8::from(deltaProgQ.q)
                     .store(self.do_estimate_delta_prog_q(), Ordering::Relaxed);
             }
 
@@ -1386,9 +1431,13 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn do_estimate_delta_prog_q(&mut self) -> u8 {
+    #[named]
+    fn do_estimate_delta_prog_q(&mut self) -> i8 {
         unsafe {
             let mut delta_prog_cache_start = 0;
+            let mut exp_for_quant: [f32; NUM_QUANT_TBLS] = const_default();
+            let mut exp_count_for_quant: [u32; NUM_QUANT_TBLS] = const_default();
+            let mut comp_count_for_quant: [u32; NUM_QUANT_TBLS] = const_default();
 
             for ci in 0..MAX_COMPONENTS {
                 let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, 0);
@@ -1399,6 +1448,19 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 let MCU_height = comp.v_samp_factor;
                 let MCU_count = MCU_width * MCU_height;
                 let blkn_total = self.worker.shared.mcusPerRow as u8 * MCU_count;
+
+                let exp_for_comp: &mut f32 =
+                    exp_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
+                let exp_count_for_comp: &mut u32 =
+                    exp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
+                let comp_count_for_comp: &mut u32 =
+                    comp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
+
+                let exp_tbl = if comp.quant_tbl_no == 0 {
+                    &std_luminance_quant_log2_tbl
+                } else {
+                    &std_chrominance_quant_log2_tbl
+                };
 
                 let mut blkn_saved: [u8; DELTA_PROG_CACHE_COUNT_MAX as usize] = const_default();
 
@@ -1431,12 +1493,54 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     Self::fdct_f(&mut cache.cache, prev_coeffs);
 
                     cache.index = blkn;
+
+                    for i in 0..DCTSIZE2 {
+                        let mut bits = mem::MaybeUninit::<i32>::uninit();
+                        let _res = frexpf(cache.cache[i], bits.as_mut_ptr());
+                        let bits = bits.assume_init();
+
+                        *exp_for_comp += bits as f32 - exp_tbl[i];
+                    }
+                    *exp_count_for_comp += 1;
                 }
+
+                *exp_for_comp /= *exp_count_for_comp as f32;
+
+                *comp_count_for_comp += if self.worker.info.isTop {
+                    self.worker.shared.mcusTop as u32
+                } else {
+                    self.worker.shared.mcusBot as u32
+                } * MCU_count as u32;
 
                 delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
             }
 
-            0
+            let target_frame_rate = 120u32; // TODO detect in screen capture thread
+            let target_qos = targetBytesPerSec;
+
+            let jpeg_size = target_qos / target_frame_rate;
+            let jpeg_size = jpeg_size * entries::get_packet_data_size() as u32 / PACKET_SIZE;
+
+            let mut exp_total = 0u32;
+            let mut comp_total = 0u32;
+            for i in 0..NUM_QUANT_TBLS {
+                exp_total += exp_for_quant[i] as u32 * comp_count_for_quant[i] as u32
+                    / exp_count_for_quant[i];
+                comp_total += comp_count_for_quant[i] as u32;
+            }
+            let mut q = (exp_total as i32 - jpeg_size as i32 * u8::BITS as i32)
+                / comp_total as i32
+                / DCTSIZE2 as i32;
+
+            nsDbgPrint!(deltaProgQ, q);
+            if q < -std_quant_log2_max as i32 {
+                q = -std_quant_log2_max as i32
+            }
+            if q > u8::BITS as i32 {
+                q = u8::BITS as i32;
+            }
+
+            q as i8
         }
     }
 
@@ -1575,7 +1679,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
     fn process(&mut self, deltaProg: bool, i: usize) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if deltaProg {
-                if AtomicU8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0 {
+                if AtomicI8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0 {
                     self.estimate_delta_prog_q();
                     if entries::reset_threads() {
                         return;
