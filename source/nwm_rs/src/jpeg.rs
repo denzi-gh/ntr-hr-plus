@@ -16,12 +16,6 @@ pub fn deltaProgQuantTableInit() {
                 let num = input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32;
                 output[k] = unsafe { log2f(num) };
 
-                // nsDbgPrint!(expBits, num as i32, output[k] as i32);
-
-                // unsafe {
-                //     aanscalefactortbl[k] = 1.0f32 / (aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
-                // };
-
                 if output[k] > *max {
                     *max = output[k]
                 }
@@ -1256,8 +1250,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             for _ in 0..MCU_height {
                 let mut xpos = xpos;
                 for _ in 0..MCU_width {
-                    // nsDbgPrint!(convSampPos, xpos as i32, ypos as i32);
-
                     Self::forward_DCT(
                         &self.worker.bufs.prep[ci],
                         unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
@@ -1299,54 +1291,14 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     * ci,
             )
         };
-        // nsDbgPrint!(int, c_str!("prev_coeffs offset comp"), unsafe {
-        //     prev_coeffs.sub_ptr(
-        //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
-        //             false
-        //         } else {
-        //             true
-        //         }),
-        //     )
-        // } as i32);
         let rows = self.worker.info.restartInRowsPixels as usize
             * self.worker.threadId.get() as usize
             + self.worker.shared.mcuColSize * row_i;
-        // nsDbgPrint!(int, c_str!("rows"), rows as i32);
-        // if rows
-        //     >= if self.worker.info.isTop {
-        //         GSP_SCREEN_HEIGHT_TOP
-        //     } else {
-        //         GSP_SCREEN_HEIGHT_BOTTOM
-        //     } as usize
-        // {
-        //     nsDbgPrint!(
-        //         int,
-        //         c_str!("restart in rows pixels"),
-        //         self.worker.info.restartInRowsPixels as i32
-        //     );
-        //     nsDbgPrint!(int, c_str!("threadId"), self.worker.threadId.get() as i32);
-        //     nsDbgPrint!(
-        //         int,
-        //         c_str!("mcu col size"),
-        //         self.worker.shared.mcuColSize as i32
-        //     );
-        //     nsDbgPrint!(int, c_str!("row_i"), row_i as i32);
-        //     panic!()
-        // }
         let prev_coeffs = unsafe {
             prev_coeffs.add(
                 core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) as usize * rows,
             )
         };
-        // nsDbgPrint!(int, c_str!("prev_coeffs offset row"), unsafe {
-        //     prev_coeffs.sub_ptr(
-        //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
-        //             false
-        //         } else {
-        //             true
-        //         }),
-        //     )
-        // } as i32);
         prev_coeffs
     }
 
@@ -1363,15 +1315,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
         for ci in 0..MAX_COMPONENTS {
             let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, row_i);
-            // nsDbgPrint!(int, c_str!("prev_coeffs offset init"), unsafe {
-            //     prev_coeffs.sub_ptr(
-            //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
-            //             false
-            //         } else {
-            //             true
-            //         }),
-            //     )
-            // } as i32);
 
             let comp = &self.worker.shared.compInfos.infos[ci];
             let prev_coeffs_pitch =
@@ -1397,16 +1340,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     let prev_coeffs = unsafe {
                         prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize)
                     };
-                    // nsDbgPrint!(int, c_str!("prev_coeffs offset next"), unsafe {
-                    //     prev_coeffs.sub_ptr(
-                    //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
-                    //             false
-                    //         } else {
-                    //             true
-                    //         }),
-                    //     )
-                    // }
-                    //     as i32);
 
                     let mut cache_hit = false;
 
@@ -1595,23 +1528,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     let prev_coeffs =
                         prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize);
 
-                    // nsDbgPrint!(convSampPos, xpos as i32, ypos as i32);
-
                     Self::convsamp_f(&self.worker.bufs.prep[ci], ypos, xpos, &mut cache.cache);
                     Self::fdct_f(&mut cache.cache, prev_coeffs, prev_coeffs_pitch);
-
-                    // if self.worker.threadId.get() == 0 {
-                    //     nsDbgPrint!(int, c_str!("cache[0]"), cache.cache[0] as i32);
-                    //     nsDbgPrint!(int, c_str!("prev_coeffs[0]"), *prev_coeffs as i32);
-                    //     nsDbgPrint!(
-                    //         int,
-                    //         c_str!("prev_coeffs offset"),
-                    //         prev_coeffs.sub_ptr(
-                    //             *unsafe { delta_prog_prev_coeffs }
-                    //                 .get_b_mut(if self.worker.info.isTop { false } else { true })
-                    //         ) as i32
-                    //     );
-                    // }
 
                     cache.index = blkn;
 
@@ -1620,8 +1538,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                             let mut bits = mem::MaybeUninit::<i32>::uninit();
                             let _res = frexpf(cache.cache[i], bits.as_mut_ptr());
                             let bits = bits.assume_init();
-
-                            // nsDbgPrint!(expBits, cache.cache[i] as i32, bits);
 
                             *exp_for_comp +=
                                 f32::max(bits as f32 - exp_tbl[i] + std_quant_log2_max, 0.0f32);
@@ -1636,7 +1552,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     self.worker.shared.mcusBot as u32
                 } * MCU_count as u32;
                 *comp_count_for_comp += mcus;
-                // nsDbgPrint!(int, c_str!("mcus"), mcus as i32);
 
                 delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
             }
@@ -1658,13 +1573,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 / comp_total as i32
                 / DCTSIZE2 as i32;
 
-            // nsDbgPrint!(
-            //     deltaProgQ,
-            //     q,
-            //     exp_total as i32 / 8i32,
-            //     jpeg_size as i32,
-            //     comp_total as i32
-            // );
             if q < 0 {
                 q = 0
             }
@@ -1687,8 +1595,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             }
             delta_prog.tid = self.worker.threadId;
 
-            let ret = q + 1;
-            ret as i8
+            entries::jpeg_set_dyn_q(self.worker.info.workIndex, q as u32);
+            1
         }
     }
 
