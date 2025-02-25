@@ -13,6 +13,12 @@ pub struct JpegShared {
     pub maxBlocksInMcu: usize,
     pub inRowsBlk: usize,
     pub mcusPerRow: usize,
+    pub deltaProg: bool,
+    pub deltaProgMutex: [Handle; WORK_COUNT as usize],
+}
+
+pub struct JpegSharedMut {
+    pub rand32: Rand32,
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -77,7 +83,7 @@ impl ArqRpHdr {
     pub unsafe fn write_hdr(&self, dst: *mut u8) {
         let hdr = (self.w.get() as u16) << (PID_NBITS + CID_NBITS)
             | (self.t.get() as u16) << (PID_NBITS + CID_NBITS + RP_KCP_HDR_W_NBITS);
-        ptr::copy_nonoverlapping(&hdr as *const u16, dst as *mut _, 1 as usize);
+        ptr::copy_nonoverlapping(&hdr, dst as *mut _, 1);
     }
 }
 
@@ -155,12 +161,59 @@ impl WorkerDst {
     }
 }
 
+pub const DELTA_PROG_CACHE_COUNT: [u8; MAX_COMPONENTS] = [4, 2, 2];
+pub const DELTA_PROG_CACHE_COUNT_TOTAL: u8 = {
+    let mut count = 0;
+    let mut i = 0;
+    loop {
+        if i >= DELTA_PROG_CACHE_COUNT.len() {
+            break;
+        }
+        count += DELTA_PROG_CACHE_COUNT[i];
+        i += 1;
+    }
+    count
+};
+pub const DELTA_PROG_CACHE_COUNT_MAX: u8 = {
+    let mut count = 0;
+    let mut i = 0;
+    loop {
+        if i >= DELTA_PROG_CACHE_COUNT.len() {
+            break;
+        }
+        if count < DELTA_PROG_CACHE_COUNT[i] {
+            count = DELTA_PROG_CACHE_COUNT[i]
+        }
+        i += 1;
+    }
+    count
+};
+
+#[derive(ConstDefault, Clone, Copy)]
+pub struct DeltaProgCacheItem {
+    pub index: u8,
+    pub cache: JFBlock,
+}
+
+#[derive(ConstDefault, Clone, Copy)]
+pub struct DeltaProgCache {
+    pub cache: [DeltaProgCacheItem; DELTA_PROG_CACHE_COUNT_TOTAL as usize],
+}
+
+#[derive(ConstDefault, Clone, Copy)]
+pub struct DeltaProgQ {
+    pub q: u8,
+    pub divisors: [[f32; DCTSIZE2]; NUM_QUANT_TBLS],
+    pub cache: DeltaProgCache,
+}
+
 #[derive(ConstDefault, Clone, Copy)]
 pub struct CInfo {
     pub isTop: bool,
     pub colorSpace: ColorSpace,
     pub restartInterval: u16,
     pub workIndex: WorkIndex,
+    pub deltaProgQ: DeltaProgQ,
 }
 
 type BitBufType = u32;
@@ -176,8 +229,9 @@ pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 #[derive(ConstDefault)]
 pub struct JpegWorker<'a, const RS: bool> {
     shared: &'a JpegShared,
+    shared_mut: *mut JpegSharedMut,
     bufs: &'a mut WorkerBufs,
-    info: &'a CInfo,
+    info: &'a mut CInfo,
     threadId: ThreadId,
     huffState: HuffState,
     last_dc_val: [i16; MAX_COMPONENTS],
@@ -191,6 +245,7 @@ pub struct JpegEncode<'a, 'c, const RS: bool> {
 #[derive(ConstDefault)]
 pub struct Jpeg {
     pub shared: JpegShared,
+    pub shared_mut: JpegSharedMut,
     bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
     info: [CInfo; WORK_COUNT as usize],
 }
@@ -201,6 +256,7 @@ impl Jpeg {
         self.shared.divisors.setDivisors(&self.shared.quantTbls);
         self.shared.coreCount = coreCount;
         self.shared.setCompInfos(hq);
+        unsafe { self.shared_mut.rand32 = Rand32::new(svcGetSystemTick()) };
     }
 
     pub fn setInfo(&mut self, info: CInfo) {
@@ -214,8 +270,9 @@ impl Jpeg {
     ) -> JpegWorker<RS> {
         JpegWorker::init(
             &self.shared,
+            &mut self.shared_mut,
             threadId.index_into_mut(&mut self.bufs),
-            workIndex.index_into(&self.info),
+            workIndex.index_into_mut(&mut self.info),
             threadId,
         )
     }
@@ -477,12 +534,14 @@ impl<'a, const RS: bool> JpegWorker<'a, RS> {
 
     pub fn init(
         shared: &'a JpegShared,
+        shared_mut: *mut JpegSharedMut,
         bufs: &'a mut WorkerBufs,
-        info: &'a CInfo,
+        info: &'a mut CInfo,
         tid: ThreadId,
     ) -> Self {
         JpegWorker {
             shared,
+            shared_mut,
             bufs,
             info,
             threadId: tid,
@@ -802,7 +861,146 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    pub fn convsamp(
+    fn convsamp_f(
+        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+        ypos: u16,
+        xpos: u16,
+        output: &mut JFBlock,
+    ) {
+        let mut oidx = 0;
+        for yidx in 0..DCTSIZE {
+            let input = unsafe { input.get_unchecked(ypos as usize + yidx) };
+            for xidx in 0..DCTSIZE {
+                output[oidx] = *unsafe { input.get_unchecked(xpos as usize + xidx) } as f32
+                    - (u8::MAX as f32 / 2.0f32);
+
+                oidx += 1;
+            }
+        }
+    }
+
+    fn fdct_f(inout: &mut JFBlock) {
+        const F_C4: f32 = 0.707106781f32;
+        const F_C6: f32 = 0.382683433f32;
+        const F_C2_Minus_C6: f32 = 0.541196100f32;
+        const F_C2_Plus_C6: f32 = 1.306562965f32;
+
+        /* Pass 1: process rows. */
+
+        for i in (0..DCTSIZE2).step_by(DCTSIZE) {
+            let tmp0 = inout[i + 0] + inout[i + 7];
+            let tmp7 = inout[i + 0] - inout[i + 7];
+            let tmp1 = inout[i + 1] + inout[i + 6];
+            let tmp6 = inout[i + 1] - inout[i + 6];
+            let tmp2 = inout[i + 2] + inout[i + 5];
+            let tmp5 = inout[i + 2] - inout[i + 5];
+            let tmp3 = inout[i + 3] + inout[i + 4];
+            let tmp4 = inout[i + 3] - inout[i + 4];
+
+            /* Even part */
+
+            let tmp10 = tmp0 + tmp3; /* phase 2 */
+            let tmp13 = tmp0 - tmp3;
+            let tmp11 = tmp1 + tmp2;
+            let tmp12 = tmp1 - tmp2;
+
+            inout[i + 0] = tmp10 + tmp11; /* phase 3 */
+            inout[i + 4] = tmp10 - tmp11;
+
+            let z1 = (tmp12 + tmp13) * F_C4; /* c4 */
+            inout[i + 2] = tmp13 + z1; /* phase 5 */
+            inout[i + 6] = tmp13 - z1;
+
+            /* Odd part */
+
+            let tmp10 = tmp4 + tmp5; /* phase 2 */
+            let tmp11 = tmp5 + tmp6;
+            let tmp12 = tmp6 + tmp7;
+
+            /* The rotator is modified from fig 4-8 to avoid extra negations. */
+            let z5 = (tmp10 - tmp12) * F_C6; /* c6 */
+            let z2 = F_C2_Minus_C6 * tmp10 + z5; /* c2-c6 */
+            let z4 = F_C2_Plus_C6 * tmp12 + z5; /* c2+c6 */
+            let z3 = tmp11 * F_C4; /* c4 */
+
+            let z11 = tmp7 + z3; /* phase 5 */
+            let z13 = tmp7 - z3;
+
+            inout[i + 5] = z13 + z2; /* phase 6 */
+            inout[i + 3] = z13 - z2;
+            inout[i + 1] = z11 + z4;
+            inout[i + 7] = z11 - z4;
+        }
+
+        /* Pass 2: process columns. */
+
+        for i in 0..DCTSIZE {
+            let tmp0 = inout[i + DCTSIZE * 0] + inout[i + DCTSIZE * 7];
+            let tmp7 = inout[i + DCTSIZE * 0] - inout[i + DCTSIZE * 7];
+            let tmp1 = inout[i + DCTSIZE * 1] + inout[i + DCTSIZE * 6];
+            let tmp6 = inout[i + DCTSIZE * 1] - inout[i + DCTSIZE * 6];
+            let tmp2 = inout[i + DCTSIZE * 2] + inout[i + DCTSIZE * 5];
+            let tmp5 = inout[i + DCTSIZE * 2] - inout[i + DCTSIZE * 5];
+            let tmp3 = inout[i + DCTSIZE * 3] + inout[i + DCTSIZE * 4];
+            let tmp4 = inout[i + DCTSIZE * 3] - inout[i + DCTSIZE * 4];
+
+            /* Even part */
+
+            let tmp10 = tmp0 + tmp3; /* phase 2 */
+            let tmp13 = tmp0 - tmp3;
+            let tmp11 = tmp1 + tmp2;
+            let tmp12 = tmp1 - tmp2;
+
+            inout[i + DCTSIZE * 0] = tmp10 + tmp11; /* phase 3 */
+            inout[i + DCTSIZE * 4] = tmp10 - tmp11;
+
+            let z1 = (tmp12 + tmp13) * F_C4; /* c4 */
+            inout[i + DCTSIZE * 2] = tmp13 + z1; /* phase 5 */
+            inout[i + DCTSIZE * 6] = tmp13 - z1;
+
+            /* Odd part */
+
+            let tmp10 = tmp4 + tmp5; /* phase 2 */
+            let tmp11 = tmp5 + tmp6;
+            let tmp12 = tmp6 + tmp7;
+
+            /* The rotator is modified from fig 4-8 to avoid extra negations. */
+            let z5 = (tmp10 - tmp12) * F_C6; /* c6 */
+            let z2 = F_C2_Minus_C6 * tmp10 + z5; /* c2-c6 */
+            let z4 = F_C2_Plus_C6 * tmp12 + z5; /* c2+c6 */
+            let z3 = tmp11 * F_C4; /* c4 */
+
+            let z11 = tmp7 + z3; /* phase 5 */
+            let z13 = tmp7 - z3;
+
+            inout[i + DCTSIZE * 5] = z13 + z2; /* phase 6 */
+            inout[i + DCTSIZE * 3] = z13 - z2;
+            inout[i + DCTSIZE * 1] = z11 + z4;
+            inout[i + DCTSIZE * 7] = z11 - z4;
+        }
+    }
+
+    fn quantize_f(input: &JFBlock, output: &mut JBlock, divisors: &[f32; DCTSIZE2]) {
+        for i in 0..DCTSIZE2 {
+            let temp = input[i] * divisors[i];
+            output[i] = (temp + 16384.5f32) as JCoef - 16384;
+        }
+    }
+
+    fn forward_DCT_f(
+        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+        staging: &mut JFBlock,
+        output: &mut JBlock,
+        ypos: u16,
+        xpos: u16,
+        divisors: &[f32; DCTSIZE2],
+    ) {
+        Self::convsamp_f(input, ypos, xpos, staging);
+        Self::fdct_f(staging);
+        Self::quantize_f(staging, output, divisors);
+    }
+
+    fn convsamp(
         input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
         ypos: u16,
         xpos: u16,
@@ -1002,6 +1200,182 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
+    fn compress_delta_prog(&mut self, MCU_col_num: usize) {
+        let mut blkn = 0;
+
+        if MCU_col_num > self.worker.shared.mcusPerRow {
+            panic!();
+        }
+
+        let delta_prog = &self.worker.info.deltaProgQ;
+        let mut delta_prog_cache_start = 0;
+
+        for ci in 0..MAX_COMPONENTS {
+            let comp = &self.worker.shared.compInfos.infos[ci];
+            let MCU_width = comp.h_samp_factor;
+            let MCU_height = comp.v_samp_factor;
+
+            let MCU_sample_width = MCU_width as u16 * DCTSIZE as u16;
+            let xpos = MCU_col_num as u16 * MCU_sample_width;
+            let mut ypos = 0;
+
+            let divisors = unsafe {
+                delta_prog
+                    .divisors
+                    .get_unchecked(comp.quant_tbl_no as usize)
+            };
+            let cache_blkn_start = MCU_col_num as u8 * MCU_width * MCU_height;
+
+            for _ in 0..MCU_height {
+                let mut xpos = xpos;
+                for _ in 0..MCU_width {
+                    let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
+
+                    let mut cache_hit = false;
+                    for delta_prog_cache_i in 0..DELTA_PROG_CACHE_COUNT[ci] {
+                        let cache = unsafe {
+                            delta_prog.cache.cache.get_unchecked(
+                                (delta_prog_cache_start + delta_prog_cache_i) as usize,
+                            )
+                        };
+                        if cache.index == cache_blkn_start + blkn {
+                            Self::quantize_f(&cache.cache, output, divisors);
+                            cache_hit = true;
+                            break;
+                        }
+                    }
+
+                    if !cache_hit {
+                        Self::forward_DCT_f(
+                            &self.worker.bufs.prep[ci],
+                            &mut self.worker.bufs.mcu_f,
+                            output,
+                            ypos,
+                            xpos,
+                            divisors,
+                        );
+                    }
+
+                    xpos += DCTSIZE as u16;
+                    blkn += 1;
+                }
+                ypos += DCTSIZE as u16;
+            }
+
+            delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
+        }
+    }
+
+    #[named]
+    fn estimate_delta_prog_q(&mut self) {
+        unsafe {
+            let mutex = self
+                .worker
+                .shared
+                .deltaProgMutex
+                .get_unchecked(self.worker.info.workIndex.get() as usize);
+
+            while !entries::reset_threads() {
+                let res = svcWaitSynchronization(*mutex, THREAD_WAIT_NS);
+                if res != 0 {
+                    if res != RES_TIMEOUT as s32 {
+                        nsDbgPrint!(waitForSyncFailed, c_str!("deltaProgMutex"), res);
+                        entries::set_reset_threads_ar();
+                        return;
+                    }
+                    continue;
+                }
+                break;
+            }
+
+            let deltaProgQ = &self.worker.info.deltaProgQ;
+            if deltaProgQ.q == 0 {
+                AtomicU8::from(deltaProgQ.q)
+                    .store(self.do_estimate_delta_prog_q(), Ordering::Relaxed);
+            }
+
+            let res = svcReleaseMutex(*mutex);
+            if res != 0 {
+                nsDbgPrint!(releaseMutexFailed, c_str!("deltaProgMutex"), res);
+            }
+        }
+    }
+
+    fn gen_unique_index(
+        rand32: &mut Rand32,
+        seen: &mut [u8; DELTA_PROG_CACHE_COUNT_MAX as usize],
+        seen_n: u8,
+        range: u8,
+    ) -> u8 {
+        unsafe {
+            loop {
+                let r = rand32.rand_range(0..range as u32) as u8;
+                let mut again = false;
+                for i in 0..seen_n as usize {
+                    if *seen.get_unchecked(i) == r {
+                        again = true;
+                        break;
+                    }
+                }
+                if again {
+                    continue;
+                }
+
+                *seen.get_unchecked_mut(seen_n as usize) = r;
+                return r;
+            }
+        }
+    }
+
+    fn do_estimate_delta_prog_q(&mut self) -> u8 {
+        unsafe {
+            let delta_prog = &mut self.worker.info.deltaProgQ;
+            let mut delta_prog_cache_start = 0;
+
+            for ci in 0..MAX_COMPONENTS {
+                let comp = &self.worker.shared.compInfos.infos[ci];
+                let MCU_width = comp.h_samp_factor;
+                let MCU_height = comp.v_samp_factor;
+                let MCU_count = MCU_width * MCU_height;
+                let blkn_total = self.worker.shared.mcusPerRow as u8 * MCU_count;
+
+                let mut blkn_saved: [u8; DELTA_PROG_CACHE_COUNT_MAX as usize] = const_default();
+
+                for i in 0..DELTA_PROG_CACHE_COUNT[ci] {
+                    let cache = delta_prog
+                        .cache
+                        .cache
+                        .get_unchecked_mut((delta_prog_cache_start + i) as usize);
+
+                    let blkn = Self::gen_unique_index(
+                        &mut (*self.worker.shared_mut).rand32,
+                        &mut blkn_saved,
+                        i,
+                        blkn_total,
+                    );
+
+                    let MCU_col_num = blkn / MCU_count;
+                    let blkn_MCU = blkn % MCU_count;
+                    let blkn_x = blkn_MCU % MCU_width;
+                    let blkn_y = blkn_MCU / MCU_width;
+                    let blkn_x = MCU_col_num * MCU_width + blkn_x;
+
+                    let xpos = blkn_x as u16 * DCTSIZE as u16;
+                    let ypos = blkn_y as u16 * DCTSIZE as u16;
+
+                    Self::convsamp_f(&self.worker.bufs.prep[ci], ypos, xpos, &mut cache.cache);
+                    Self::fdct_f(&mut cache.cache);
+
+                    cache.index = blkn;
+                }
+
+                delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
+            }
+
+            0
+        }
+    }
+
     fn encode_one_block(
         dst: &mut WorkerDst,
         state: &mut HuffState,
@@ -1097,7 +1471,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                         },
                     );
                     self.worker.last_dc_val[ci] =
-                        (*unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn) })[0];
+                        (*unsafe { self.worker.bufs.mcu.get_unchecked(blkn) })[0];
 
                     blkn += 1;
                 }
@@ -1134,9 +1508,19 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         buf.store();
     }
 
-    fn process(&mut self) {
+    fn process(&mut self, deltaProg: bool) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
-            self.compress(MCU_col_num);
+            if deltaProg {
+                if AtomicU8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0 {
+                    self.estimate_delta_prog_q();
+                    if entries::reset_threads() {
+                        return;
+                    }
+                }
+                self.compress_delta_prog(MCU_col_num);
+            } else {
+                self.compress(MCU_col_num);
+            }
             self.encode_mcu();
         }
     }
@@ -1154,6 +1538,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         if !RS && self.worker.threadId.get() == 0 {
             self.write_headers();
         }
+        let deltaProg = RS && self.worker.shared.deltaProg;
 
         self.reset_mcu();
 
@@ -1174,7 +1559,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 pre_progress();
 
                 /* Compress and encode */
-                self.process();
+                self.process(deltaProg);
 
                 progress();
             }
@@ -1186,7 +1571,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 pre_progress();
 
                 /* Compress and encode */
-                self.process();
+                self.process(deltaProg);
 
                 progress();
             }

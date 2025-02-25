@@ -132,6 +132,8 @@ mod first_time_init {
         let nwmStack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
         let screenStack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
 
+        nsDbgPrint!(memUsage, plgGetMemoryUsage());
+
         Some(ThreadsStacks {
             aux1: stack_region_from_mem_region(aux1Stack),
             aux2: stack_region_from_mem_region(aux2Stack),
@@ -307,6 +309,15 @@ mod loop_main {
             //     return None;
             // }
 
+            let jpeg = crate::entries::work_thread::get_jpeg();
+            for mutex in &mut jpeg.shared.deltaProgMutex {
+                let res = svcCreateMutex(mutex, false);
+                if res != 0 {
+                    nsDbgPrint!(createMutexFailed, c_str!("deltaProgMutex"), res);
+                    return None;
+                }
+            }
+
             Some(Self(v))
         }
     }
@@ -314,6 +325,11 @@ mod loop_main {
     impl Drop for InitCleanup {
         fn drop(&mut self) {
             unsafe {
+                let jpeg = crate::entries::work_thread::get_jpeg();
+                for mutex in jpeg.shared.deltaProgMutex {
+                    let _ = svcCloseHandle(mutex);
+                }
+
                 // let _ = svcCloseHandle(cur_seg_mem_lock);
                 // let _ = svcCloseHandle(cur_seg_mem_sem);
 
@@ -417,6 +433,8 @@ mod loop_main {
 
         crate::entries::work_thread::reset_vars(quality, chroma_ss);
         crate::entries::thread_nwm::reset_vars(dst_flags, qos)?;
+        crate::entries::work_thread::get_jpeg().shared.deltaProg =
+            crate::entries::thread_nwm::get_reliable_stream_delta_prog();
 
         for i in WorkIndex::all() {
             for j in ThreadId::up_to(&core_count) {

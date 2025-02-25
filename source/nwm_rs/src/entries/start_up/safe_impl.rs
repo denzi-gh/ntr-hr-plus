@@ -6,10 +6,10 @@ pub fn start_up(t: ThreadVars, nwm_hdr: NwmHdr) {
     let src_port = nwm_hdr.src_port();
     let dst_port = nwm_hdr.dst_port();
 
-    let tcp_hit = protocol == 0x6 && src_port == htons(NS_MENU_LISTEN_PORT as u16);
+    let tcp_hit = protocol == 0x6 && src_port == utils::htons(NS_MENU_LISTEN_PORT as u16);
     let udp_hit = protocol == 0x11
-        && src_port == htons(NWM_INIT_SRC_PORT as u16)
-        && dst_port == htons(NWM_INIT_DST_PORT as u16);
+        && src_port == utils::htons(NWM_INIT_SRC_PORT as u16)
+        && dst_port == utils::htons(NWM_INIT_DST_PORT as u16);
 
     if tcp_hit || udp_hit {
         let saddr = nwm_hdr.srcAddr();

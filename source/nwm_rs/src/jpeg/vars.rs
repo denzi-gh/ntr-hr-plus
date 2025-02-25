@@ -606,8 +606,10 @@ impl EntropyTbls {
 
 pub const MAX_SAMP_FACTOR: usize = 2;
 
-type JCoef = i16;
+pub type JCoef = i16;
+pub type JFCoef = f32;
 pub type JBlock = [JCoef; DCTSIZE2];
+pub type JFBlock = [JFCoef; DCTSIZE2];
 pub const MAX_BLOCKS_IN_MCU: usize = MAX_SAMP_FACTOR * MAX_SAMP_FACTOR + 1 + 1;
 
 pub struct WorkerColorBuf {
@@ -620,6 +622,7 @@ pub struct WorkerBufs {
     pub color: [WorkerColorBuf; MAX_COMPONENTS],
     pub prep: [[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE]; MAX_COMPONENTS],
     pub mcu: [JBlock; MAX_BLOCKS_IN_MCU],
+    pub mcu_f: JFBlock,
 }
 
 #[derive(Default, Clone, Copy)]

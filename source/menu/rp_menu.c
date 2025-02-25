@@ -200,9 +200,9 @@ socket_exit:
 enum ReliableStream {
 	ReliableStreamNone,
 	ReliableStreamOn,
-	ReliableStreamDelta, // Not implemented yet
+	ReliableStreamDelta, // WIP
 	ReliableStreamMin = ReliableStreamNone,
-	ReliableStreamMax = ReliableStreamOn,
+	ReliableStreamMax = ReliableStreamDelta,
 };
 
 static enum ReliableStream getReliableStreamFromFlag(int flag) {
@@ -245,7 +245,7 @@ static const char *getReliableStreamDesc(enum ReliableStream reliableStream) {
 	switch (reliableStream) {
 		default:
         case ReliableStreamNone:
-			return "Off: Better compatibility and\nless latency; may drop frames.";
+			return "Off: Better compatibility and\nlower latency; may drop frames.";
         case ReliableStreamOn:
 			return "On: Avoid dropping frames.\nNeed NTRViewer-HR.";
         case ReliableStreamDelta:

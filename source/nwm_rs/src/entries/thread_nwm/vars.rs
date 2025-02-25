@@ -43,9 +43,7 @@ pub unsafe fn get_data_buf_hdrs() -> &'static mut RangedArray<DataHdr, WORK_COUN
 }
 
 static mut reliable_stream: bool = const_default();
-static mut reliable_stream_method: u8 = const_default();
-
-const reliable_stream_kcp: u8 = 0;
+static mut reliable_stream_delta_prog: bool = const_default();
 
 static mut packet_data_size: usize = 0;
 
@@ -57,14 +55,14 @@ pub enum ReliableStreamMethod {
 
 pub unsafe fn get_reliable_stream_method() -> ReliableStreamMethod {
     if reliable_stream {
-        if reliable_stream_method == reliable_stream_kcp {
-            ReliableStreamMethod::KCP
-        } else {
-            ReliableStreamMethod::None
-        }
+        ReliableStreamMethod::KCP
     } else {
         ReliableStreamMethod::None
     }
+}
+
+pub unsafe fn get_reliable_stream_delta_prog() -> bool {
+    reliable_stream_delta_prog
 }
 
 static mut kcp_conv_count: u8 = 0;
@@ -77,7 +75,7 @@ unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
     };
 
     reliable_stream = flags & RP_CONFIG_RELIABLE_STREAM_FLAG > 0;
-    reliable_stream_method = reliable_stream_kcp;
+    reliable_stream_delta_prog = flags & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG > 0;
 
     set_packet_data_size();
 
@@ -130,7 +128,10 @@ unsafe fn init_min_send_interval(qos: u32_) {
     min_send_interval_tick =
         core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_)
             as u32_;
-    min_send_interval_ns.store((min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_, Ordering::Relaxed);
+    min_send_interval_ns.store(
+        (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
+        Ordering::Relaxed,
+    );
 }
 
 #[no_mangle]
@@ -352,14 +353,14 @@ pub unsafe fn rp_send_buffer(dst: &mut crate::jpeg::WorkerDst, term: bool) -> bo
 
 unsafe fn init_udp_packet(nwm_buf: *mut u8_, mut len: u32_) -> u32_ {
     len += 8;
-    *(nwm_buf.add(0x22 + 8) as *mut u16_) = htons(RP_SRC_PORT as u16_); // src port
+    *(nwm_buf.add(0x22 + 8) as *mut u16_) = utils::htons(RP_SRC_PORT as u16_); // src port
     *(nwm_buf.add(0x24 + 8) as *mut u16_) =
-        htons(AtomicU32::from_mut(&mut (*rp_config).dstPort).load(Ordering::Relaxed) as u16_); // dest port
-    *(nwm_buf.add(0x26 + 8) as *mut u16_) = htons(len as u16_);
+    utils::htons(AtomicU32::from_mut(&mut (*rp_config).dstPort).load(Ordering::Relaxed) as u16_); // dest port
+    *(nwm_buf.add(0x26 + 8) as *mut u16_) = utils::htons(len as u16_);
     *(nwm_buf.add(0x28 + 8) as *mut u16_) = 0; // no checksum
     len += 20;
 
-    *(nwm_buf.add(0x10 + 8) as *mut u16_) = htons(len as u16_);
+    *(nwm_buf.add(0x10 + 8) as *mut u16_) = utils::htons(len as u16_);
     *(nwm_buf.add(0x12 + 8) as *mut u16_) = 0xaf01; // packet id is a random value since we won't use the fragment
     *(nwm_buf.add(0x14 + 8) as *mut u16_) = 0x0040; // no fragment
     *(nwm_buf.add(0x16 + 8) as *mut u16_) = 0x1140; // ttl 64, udp
@@ -368,7 +369,7 @@ unsafe fn init_udp_packet(nwm_buf: *mut u8_, mut len: u32_) -> u32_ {
     *(nwm_buf.add(0x18 + 8) as *mut u16_) = ip_checksum(nwm_buf.add(0xE + 8), 0x14);
 
     len += 22;
-    *(nwm_buf.add(12) as *mut u16_) = htons(len as u16_);
+    *(nwm_buf.add(12) as *mut u16_) = utils::htons(len as u16_);
 
     len
 }
@@ -388,13 +389,13 @@ unsafe fn ip_checksum(data: *mut u8_, mut length: usize) -> u16_ {
 
     // Handle complete 16-bit blocks.
     for i in 0..length {
-        acc += ntohs(*data.add(i)) as u32_;
+        acc += utils::ntohs(*data.add(i)) as u32_;
     }
     acc = (acc & 0xffff) + (acc >> 16);
     acc += acc >> 16;
 
     // Return the checksum in network byte order.
-    htons(!acc as u16_)
+    utils::htons(!acc as u16_)
 }
 
 static mut rp_output_next_tick: s64 = 0;

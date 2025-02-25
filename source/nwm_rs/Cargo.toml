@@ -7,7 +7,8 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [dependencies]
-libc = { version = "0.2.153", default-features = false }
+libc = { version = "0.2.170", default-features = false }
+oorandom = "11.1.4"
 function_name = "0.3.0"
 # Modified to work with union types
 const-default = { path = "../../const_default", version = "1.0.0", features = [
@@ -16,7 +17,7 @@ const-default = { path = "../../const_default", version = "1.0.0", features = [
 ] }
 
 [build-dependencies]
-bindgen = "0.69.4"
+bindgen = "0.69.5"
 
 [features]
 img_diff_dbg = []

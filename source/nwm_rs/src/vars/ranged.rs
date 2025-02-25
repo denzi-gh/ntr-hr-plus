@@ -155,6 +155,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn index_into<'a, T, const N: usize>(&self, t: &'a [T; N]) -> &'a T
     where
         [(); END as usize - (N - 1)]:,

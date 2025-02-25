@@ -153,6 +153,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                 },
                 restartInterval: restart_interval as u16,
                 workIndex: w,
+                deltaProgQ: const_default(),
             };
 
             get_jpeg().setInfo(cinfo);

@@ -124,6 +124,13 @@ int plgEnsurePoolSize(u32 size) {
 static u32 plgMemoryPoolBegin;
 static u32 plgMemoryPoolEnd;
 
+u32 plgGetMemoryUsage(void) {
+	if (plgMemoryPoolEnd)
+		return plgMemoryPoolEnd - PLG_MEM_ADDR;
+	else
+		return 0;
+}
+
 u32 plgRequestMemoryFromPool(u32 size, int pool) {
 	if (pool == 0) {
 		if (!plgMemoryPoolEnd) {

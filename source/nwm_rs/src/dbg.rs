@@ -47,6 +47,8 @@ pub struct nsDbgPrint_t {
 impl nsDbgPrint_t {
     nsDbgPrint_fn!(trace, "Tracing...\n");
 
+    nsDbgPrint_fn!(memUsage, "Mem usage: %08x\n", size: u32_);
+
     nsDbgPrint_fn!(mainLoopExit, "Nwm main loop exited\n");
 
     nsDbgPrint_fn!(mainLoopReset, "Nwm main loop restarted\n");
