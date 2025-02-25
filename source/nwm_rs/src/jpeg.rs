@@ -6,9 +6,9 @@ pub static mut targetBytesPerSec: u32 = const_default();
 
 pub fn deltaProgQuantTableInit() {
     let initFn = |input: &[u8; DCTSIZE2], output: &mut [f32; DCTSIZE2], max: &mut f32| {
-        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+        for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
-                let k = j + i;
+                let k = j * DCTSIZE + i;
                 // output[k] = unsafe { log2f(input[k] as f32) };
                 output[k] = unsafe {
                     log2f(input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
@@ -1025,9 +1025,9 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             inout[i + DCTSIZE * 7] = z11 - z4;
         }
 
-        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+        for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
-                let k = j + i;
+                let k = j * DCTSIZE + i;
                 // inout[k] *= unsafe { aanscalefactortbl[k] };
                 inout[k] -= unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) };
             }
@@ -1040,9 +1040,9 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         divisors: &[i8; DCTSIZE2],
         prev_coeffs: *mut f32,
     ) {
-        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+        for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
-                let k = j + i;
+                let k = j * DCTSIZE + i;
                 let temp = unsafe { ldexpf(input[k], 0 - divisors[k] as i32) };
                 let temp = unsafe { truncf(temp) };
                 output[k] = temp as JCoef;

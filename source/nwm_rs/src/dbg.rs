@@ -47,7 +47,7 @@ pub struct nsDbgPrint_t {
 impl nsDbgPrint_t {
     nsDbgPrint_fn!(trace, "Tracing...\n");
 
-    nsDbgPrint_fn!(deltaProgQ, "Delta prog q: %08d\n", q: s32);
+    nsDbgPrint_fn!(deltaProgQ, "Delta prog q: %d\n", q: s32);
 
     nsDbgPrint_fn!(memUsage, "Mem usage: %08x\n", size: u32_);
 
