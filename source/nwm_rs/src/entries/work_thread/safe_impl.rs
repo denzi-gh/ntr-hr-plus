@@ -16,9 +16,11 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
                 unsafe { crate::entries::thread_screen::set_no_skip_frame(is_top) };
             }
 
-            let skip_frame = !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
-                && !format_changed
-                && !v.frame_changed();
+            let skip_frame =
+                !unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() }
+                    && !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
+                    && !format_changed
+                    && !v.frame_changed();
 
             if !skip_frame {
                 if unsafe { entries::thread_nwm::get_reliable_stream_method() }
@@ -91,6 +93,8 @@ fn ready_nwm(v: &ThreadBeginVars) -> bool {
 
 const last_row_last_n_range: u32_ = 10;
 
+#[allow(unused_macros)]
+#[named]
 fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
     unsafe {
         let ctx = v.ctx();
@@ -137,6 +141,9 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
             (n, n_last)
         };
 
+        // nsDbgPrint!(int, c_str!("restart_in_rows"), v_adjusted as s32);
+        // nsDbgPrint!(int, c_str!("mcu_size"), mcu_size as s32);
+
         for j in ThreadId::up_to(&core_count) {
             let restart_in_rows = v_adjusted as s32;
             let restart_interval = restart_in_rows as u32 * mcus_per_row;
@@ -154,6 +161,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                 restartInRowsPixels: restart_in_rows as u16 * mcu_size as u16,
                 workIndex: w,
                 deltaProgQ: const_default(),
+                partsRemain: core_count.get() as u8,
             };
 
             get_jpeg().setInfo(cinfo);

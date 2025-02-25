@@ -224,6 +224,8 @@ pub struct CompInfo {
     pub component_index: u8, /* its index in SOF or cinfo->comp_info[] */
     pub h_samp_factor: u8,   /* horizontal sampling factor (1..4) */
     pub v_samp_factor: u8,   /* vertical sampling factor (1..4) */
+    pub h_samp_exp: u8,      /* horizontal sampling factor (1..4) */
+    pub v_samp_exp: u8,      /* vertical sampling factor (1..4) */
     pub quant_tbl_no: u8,    /* quantization table selector (0..3) */
     /* These values may vary between scans. */
     /* For compression, they must be supplied by parameter setup; */
@@ -254,29 +256,31 @@ impl CompInfos {
         let comp = &mut self.infos[index];
         comp.component_id = id;
         comp.component_index = index as u8;
-        comp.h_samp_factor = hsamp;
-        comp.v_samp_factor = vsamp;
+        comp.h_samp_exp = hsamp;
+        comp.v_samp_exp = vsamp;
+        comp.h_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, hsamp) };
+        comp.v_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, vsamp) };
         comp.quant_tbl_no = quant;
         comp.dc_tbl_no = dctbl;
         comp.ac_tbl_no = actbl;
     }
 
     pub const fn setColorSpaceYCbCr420(&mut self) {
-        self.setComp(0, 1, 2, 2, 0, 0, 0);
-        self.setComp(1, 2, 1, 1, 1, 1, 1);
-        self.setComp(2, 3, 1, 1, 1, 1, 1);
+        self.setComp(0, 1, 1, 1, 0, 0, 0);
+        self.setComp(1, 2, 0, 0, 1, 1, 1);
+        self.setComp(2, 3, 0, 0, 1, 1, 1);
     }
 
     pub const fn setColorSpaceYCbCr422(&mut self) {
-        self.setComp(0, 1, 2, 1, 0, 0, 0);
-        self.setComp(1, 2, 1, 1, 1, 1, 1);
-        self.setComp(2, 3, 1, 1, 1, 1, 1);
+        self.setComp(0, 1, 1, 1, 0, 0, 0);
+        self.setComp(1, 2, 0, 0, 1, 1, 1);
+        self.setComp(2, 3, 0, 0, 1, 1, 1);
     }
 
     pub const fn setColorSpaceYCbCr444(&mut self) {
-        self.setComp(0, 1, 1, 1, 0, 0, 0);
-        self.setComp(1, 2, 1, 1, 1, 1, 1);
-        self.setComp(2, 3, 1, 1, 1, 1, 1);
+        self.setComp(0, 1, 0, 0, 0, 0, 0);
+        self.setComp(1, 2, 0, 0, 1, 1, 1);
+        self.setComp(2, 3, 0, 0, 1, 1, 1);
     }
 }
 

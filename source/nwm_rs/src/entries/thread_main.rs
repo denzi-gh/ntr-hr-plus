@@ -333,6 +333,14 @@ mod loop_main {
                     return None;
                 }
             }
+            for i in ScreenIndex::all() {
+                let sem = delta_prog_prev_sem.get_mut(&i);
+                let res = svcCreateSemaphore(sem, 1, 1);
+                if res != 0 {
+                    nsDbgPrint!(createSemaphoreFailed, c_str!("delta_prog_prev_sem"), res);
+                    return None;
+                }
+            }
 
             Some(Self(v))
         }
@@ -341,6 +349,11 @@ mod loop_main {
     impl Drop for InitCleanup {
         fn drop(&mut self) {
             unsafe {
+                for i in ScreenIndex::all() {
+                    let sem = delta_prog_prev_sem.get_mut(&i);
+                    let _ = svcCloseHandle(*sem);
+                }
+
                 let jpeg = crate::entries::work_thread::get_jpeg();
                 for mutex in jpeg.shared.deltaProgMutex {
                     let _ = svcCloseHandle(mutex);
@@ -542,7 +555,7 @@ mod loop_main {
                 2,
             )?);
 
-            // rp_svc_print_limits();
+            rp_svc_print_limits();
 
             let t = crate::ThreadId::init();
             crate::entries::work_thread::work_thread_loop(t);

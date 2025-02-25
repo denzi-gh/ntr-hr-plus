@@ -47,7 +47,13 @@ pub struct nsDbgPrint_t {
 impl nsDbgPrint_t {
     nsDbgPrint_fn!(trace, "Tracing...\n");
 
-    nsDbgPrint_fn!(deltaProgQ, "Delta prog q: %d\n", q: s32);
+    nsDbgPrint_fn!(int, "%s: %d\n", ame: *const c_char, num: s32);
+
+    nsDbgPrint_fn!(convSampPos, "xpos: %d, ypos: %d\n", xpos: s32, ypos: s32);
+
+    nsDbgPrint_fn!(expBits, "num: %d, exp: %d\n", num: s32, exp: s32);
+
+    nsDbgPrint_fn!(deltaProgQ, "Delta prog q: %d, projected size: %d, desired size: %d, comp count: %d\n", q: s32, projected_size: s32, desired_size: s32, comp_n: s32);
 
     nsDbgPrint_fn!(memUsage, "Mem usage: %08x\n", size: u32_);
 

@@ -555,12 +555,10 @@ impl ThreadBeginVars {
             for i in 0..src_len as usize {
                 *diff.add(i) = if *curr.add(i) == *prev.add(i) { 0 } else { 255 }
             }
-
-            let ret = *slice::from_raw_parts(curr, src_len as usize)
-                != *slice::from_raw_parts(prev, src_len as usize);
-
             ctx.src = diff;
-            ret
+
+            *slice::from_raw_parts(curr, src_len as usize)
+                != *slice::from_raw_parts(prev, src_len as usize);
         }
     }
 

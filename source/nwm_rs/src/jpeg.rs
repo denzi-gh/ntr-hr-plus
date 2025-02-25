@@ -1,18 +1,22 @@
+#![allow(unused_macros)]
+
 use crate::*;
 pub mod vars;
 use vars::*;
 
 pub static mut targetBytesPerSec: u32 = const_default();
 
+#[named]
 pub fn deltaProgQuantTableInit() {
     let initFn = |input: &[u8; DCTSIZE2], output: &mut [f32; DCTSIZE2], max: &mut f32| {
         for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
                 let k = j * DCTSIZE + i;
                 // output[k] = unsafe { log2f(input[k] as f32) };
-                output[k] = unsafe {
-                    log2f(input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
-                };
+                let num = input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32;
+                output[k] = unsafe { log2f(num) };
+
+                // nsDbgPrint!(expBits, num as i32, output[k] as i32);
 
                 // unsafe {
                 //     aanscalefactortbl[k] = 1.0f32 / (aanscalefactor[j] * aanscalefactor[i] * 8.0f32)
@@ -250,6 +254,7 @@ pub struct DeltaProgQ {
     pub q: i8,
     pub divisors: [[i8; DCTSIZE2]; NUM_QUANT_TBLS],
     pub cache: DeltaProgCache,
+    pub tid: ThreadId,
 }
 
 #[derive(ConstDefault, Clone, Copy)]
@@ -260,6 +265,7 @@ pub struct CInfo {
     pub restartInRowsPixels: u16,
     pub workIndex: WorkIndex,
     pub deltaProgQ: DeltaProgQ,
+    pub partsRemain: u8,
 }
 
 type BitBufType = u32;
@@ -925,7 +931,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn fdct_f(inout: &mut JFBlock, prev_coeffs: *mut f32) {
+    #[named]
+    fn fdct_f(inout: &mut JFBlock, prev_coeffs: *const f32, prev_coeffs_pitch: u32) {
         const F_C4: f32 = 0.707106781f32;
         const F_C6: f32 = 0.382683433f32;
         const F_C2_Minus_C6: f32 = 0.541196100f32;
@@ -1029,7 +1036,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             for i in 0..DCTSIZE {
                 let k = j * DCTSIZE + i;
                 // inout[k] *= unsafe { aanscalefactortbl[k] };
-                inout[k] -= unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) };
+                let prev = unsafe { *prev_coeffs.add(j * prev_coeffs_pitch as usize + i) };
+                inout[k] -= prev;
             }
         }
     }
@@ -1039,6 +1047,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         output: &mut JBlock,
         divisors: &[i8; DCTSIZE2],
         prev_coeffs: *mut f32,
+        prev_coeffs_pitch: u32,
     ) {
         for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
@@ -1048,7 +1057,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 output[k] = temp as JCoef;
 
                 let temp = unsafe { ldexpf(temp, divisors[k] as i32) };
-                unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) += temp };
+                unsafe { *prev_coeffs.add(j * prev_coeffs_pitch as usize + i) += temp };
             }
         }
     }
@@ -1061,10 +1070,11 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         xpos: u16,
         divisors: &[i8; DCTSIZE2],
         prev_coeffs: *mut f32,
+        prev_coeffs_pitch: u32,
     ) {
         Self::convsamp_f(input, ypos, xpos, staging);
-        Self::fdct_f(staging, prev_coeffs);
-        Self::quantize_f(staging, output, divisors, prev_coeffs);
+        Self::fdct_f(staging, prev_coeffs, prev_coeffs_pitch);
+        Self::quantize_f(staging, output, divisors, prev_coeffs, prev_coeffs_pitch);
     }
 
     fn convsamp(
@@ -1226,6 +1236,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         Self::quantize(output, divisors);
     }
 
+    #[named]
     fn compress(&mut self, MCU_col_num: usize) {
         let mut blkn = 0;
 
@@ -1245,6 +1256,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             for _ in 0..MCU_height {
                 let mut xpos = xpos;
                 for _ in 0..MCU_width {
+                    // nsDbgPrint!(convSampPos, xpos as i32, ypos as i32);
+
                     Self::forward_DCT(
                         &self.worker.bufs.prep[ci],
                         unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
@@ -1267,34 +1280,77 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
+    #[named]
     fn prev_coeffs_for_comp_and_row(&self, ci: usize, row_i: usize) -> *mut f32 {
         let prev_coeffs = *unsafe { delta_prog_prev_coeffs }.get_b_mut(if self.worker.info.isTop {
             false
         } else {
             true
         });
+        let comp = &self.worker.shared.compInfos.infos[ci];
         let prev_coeffs = unsafe {
             prev_coeffs.add(
-                GSP_SCREEN_WIDTH as usize
+                core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) as usize
                     * if self.worker.info.isTop {
-                        GSP_SCREEN_HEIGHT_TOP
+                        core::intrinsics::unchecked_shr(GSP_SCREEN_HEIGHT_TOP, comp.v_samp_exp)
                     } else {
-                        GSP_SCREEN_HEIGHT_BOTTOM
+                        core::intrinsics::unchecked_shr(GSP_SCREEN_HEIGHT_BOTTOM, comp.v_samp_exp)
                     } as usize
                     * ci,
             )
         };
+        // nsDbgPrint!(int, c_str!("prev_coeffs offset comp"), unsafe {
+        //     prev_coeffs.sub_ptr(
+        //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
+        //             false
+        //         } else {
+        //             true
+        //         }),
+        //     )
+        // } as i32);
+        let rows = self.worker.info.restartInRowsPixels as usize
+            * self.worker.threadId.get() as usize
+            + self.worker.shared.mcuColSize * row_i;
+        // nsDbgPrint!(int, c_str!("rows"), rows as i32);
+        // if rows
+        //     >= if self.worker.info.isTop {
+        //         GSP_SCREEN_HEIGHT_TOP
+        //     } else {
+        //         GSP_SCREEN_HEIGHT_BOTTOM
+        //     } as usize
+        // {
+        //     nsDbgPrint!(
+        //         int,
+        //         c_str!("restart in rows pixels"),
+        //         self.worker.info.restartInRowsPixels as i32
+        //     );
+        //     nsDbgPrint!(int, c_str!("threadId"), self.worker.threadId.get() as i32);
+        //     nsDbgPrint!(
+        //         int,
+        //         c_str!("mcu col size"),
+        //         self.worker.shared.mcuColSize as i32
+        //     );
+        //     nsDbgPrint!(int, c_str!("row_i"), row_i as i32);
+        //     panic!()
+        // }
         let prev_coeffs = unsafe {
             prev_coeffs.add(
-                GSP_SCREEN_WIDTH as usize
-                    * (self.worker.info.restartInRowsPixels as usize
-                        * self.worker.info.workIndex.get() as usize
-                        + self.worker.shared.mcuColSize * row_i),
+                core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) as usize * rows,
             )
         };
+        // nsDbgPrint!(int, c_str!("prev_coeffs offset row"), unsafe {
+        //     prev_coeffs.sub_ptr(
+        //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
+        //             false
+        //         } else {
+        //             true
+        //         }),
+        //     )
+        // } as i32);
         prev_coeffs
     }
 
+    #[named]
     fn compress_delta_prog(&mut self, MCU_col_num: usize, row_i: usize) {
         let mut blkn = 0;
 
@@ -1307,8 +1363,19 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
         for ci in 0..MAX_COMPONENTS {
             let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, row_i);
+            // nsDbgPrint!(int, c_str!("prev_coeffs offset init"), unsafe {
+            //     prev_coeffs.sub_ptr(
+            //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
+            //             false
+            //         } else {
+            //             true
+            //         }),
+            //     )
+            // } as i32);
 
             let comp = &self.worker.shared.compInfos.infos[ci];
+            let prev_coeffs_pitch =
+                unsafe { core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) };
             let MCU_width = comp.h_samp_factor;
             let MCU_height = comp.v_samp_factor;
 
@@ -1328,12 +1395,22 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 for _ in 0..MCU_width {
                     let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
                     let prev_coeffs = unsafe {
-                        prev_coeffs.add(GSP_SCREEN_WIDTH as usize * ypos as usize + xpos as usize)
+                        prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize)
                     };
+                    // nsDbgPrint!(int, c_str!("prev_coeffs offset next"), unsafe {
+                    //     prev_coeffs.sub_ptr(
+                    //         *delta_prog_prev_coeffs.get_b_mut(if self.worker.info.isTop {
+                    //             false
+                    //         } else {
+                    //             true
+                    //         }),
+                    //     )
+                    // }
+                    //     as i32);
 
                     let mut cache_hit = false;
 
-                    if row_i == 0 {
+                    if delta_prog.tid == self.worker.threadId && row_i == 0 {
                         for delta_prog_cache_i in 0..DELTA_PROG_CACHE_COUNT[ci] {
                             let cache = unsafe {
                                 delta_prog.cache.cache.get_unchecked(
@@ -1341,7 +1418,13 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                                 )
                             };
                             if cache.index == cache_blkn_start + blkn {
-                                Self::quantize_f(&cache.cache, output, divisors, prev_coeffs);
+                                Self::quantize_f(
+                                    &cache.cache,
+                                    output,
+                                    divisors,
+                                    prev_coeffs,
+                                    prev_coeffs_pitch,
+                                );
                                 cache_hit = true;
                                 break;
                             }
@@ -1357,6 +1440,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                             xpos,
                             divisors,
                             prev_coeffs,
+                            prev_coeffs_pitch,
                         );
                     }
 
@@ -1392,10 +1476,29 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 break;
             }
 
-            let deltaProgQ = &self.worker.info.deltaProgQ;
+            let deltaProgQ = &mut self.worker.info.deltaProgQ;
             if deltaProgQ.q == 0 {
-                AtomicI8::from(deltaProgQ.q)
-                    .store(self.do_estimate_delta_prog_q(), Ordering::Relaxed);
+                while !entries::reset_threads() {
+                    let res = svcWaitSynchronization(
+                        *delta_prog_prev_sem.get_b_mut(self.worker.info.isTop),
+                        THREAD_WAIT_NS,
+                    );
+                    if res != 0 {
+                        if res != RES_TIMEOUT as s32 {
+                            nsDbgPrint!(waitForSyncFailed, c_str!("delta_prog_prev_sem"), res);
+                            entries::set_reset_threads_ar();
+                            break;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+
+                if !entries::reset_threads() {
+                    let q = self.do_estimate_delta_prog_q();
+                    AtomicI8::from_mut(&mut self.worker.info.deltaProgQ.q)
+                        .store(q, Ordering::Relaxed);
+                }
             }
 
             let res = svcReleaseMutex(*mutex);
@@ -1411,6 +1514,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         seen_n: u8,
         range: u8,
     ) -> u8 {
+        // return seen_n;
         unsafe {
             loop {
                 let r = rand32.rand_range(0..range as u32) as u8;
@@ -1444,16 +1548,18 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 let delta_prog = &mut self.worker.info.deltaProgQ;
 
                 let comp = &self.worker.shared.compInfos.infos[ci];
+                let prev_coeffs_pitch =
+                    core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp);
+
                 let MCU_width = comp.h_samp_factor;
                 let MCU_height = comp.v_samp_factor;
                 let MCU_count = MCU_width * MCU_height;
                 let blkn_total = self.worker.shared.mcusPerRow as u8 * MCU_count;
 
-                let exp_for_comp: &mut f32 =
-                    exp_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
-                let exp_count_for_comp: &mut u32 =
+                let exp_for_comp = exp_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
+                let exp_count_for_comp =
                     exp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
-                let comp_count_for_comp: &mut u32 =
+                let comp_count_for_comp =
                     comp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
 
                 let exp_tbl = if comp.quant_tbl_no == 0 {
@@ -1487,30 +1593,50 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     let ypos = blkn_y as u16 * DCTSIZE as u16;
 
                     let prev_coeffs =
-                        prev_coeffs.add(GSP_SCREEN_WIDTH as usize * ypos as usize + xpos as usize);
+                        prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize);
+
+                    // nsDbgPrint!(convSampPos, xpos as i32, ypos as i32);
 
                     Self::convsamp_f(&self.worker.bufs.prep[ci], ypos, xpos, &mut cache.cache);
-                    Self::fdct_f(&mut cache.cache, prev_coeffs);
+                    Self::fdct_f(&mut cache.cache, prev_coeffs, prev_coeffs_pitch);
+
+                    // if self.worker.threadId.get() == 0 {
+                    //     nsDbgPrint!(int, c_str!("cache[0]"), cache.cache[0] as i32);
+                    //     nsDbgPrint!(int, c_str!("prev_coeffs[0]"), *prev_coeffs as i32);
+                    //     nsDbgPrint!(
+                    //         int,
+                    //         c_str!("prev_coeffs offset"),
+                    //         prev_coeffs.sub_ptr(
+                    //             *unsafe { delta_prog_prev_coeffs }
+                    //                 .get_b_mut(if self.worker.info.isTop { false } else { true })
+                    //         ) as i32
+                    //     );
+                    // }
 
                     cache.index = blkn;
 
                     for i in 0..DCTSIZE2 {
-                        let mut bits = mem::MaybeUninit::<i32>::uninit();
-                        let _res = frexpf(cache.cache[i], bits.as_mut_ptr());
-                        let bits = bits.assume_init();
+                        if cache.cache[i] != 0.0 {
+                            let mut bits = mem::MaybeUninit::<i32>::uninit();
+                            let _res = frexpf(cache.cache[i], bits.as_mut_ptr());
+                            let bits = bits.assume_init();
 
-                        *exp_for_comp += bits as f32 - exp_tbl[i];
+                            // nsDbgPrint!(expBits, cache.cache[i] as i32, bits);
+
+                            *exp_for_comp +=
+                                f32::max(bits as f32 - exp_tbl[i] + std_quant_log2_max, 0.0f32);
+                        }
                     }
                     *exp_count_for_comp += 1;
                 }
 
-                *exp_for_comp /= *exp_count_for_comp as f32;
-
-                *comp_count_for_comp += if self.worker.info.isTop {
+                let mcus = if self.worker.info.isTop {
                     self.worker.shared.mcusTop as u32
                 } else {
                     self.worker.shared.mcusBot as u32
                 } * MCU_count as u32;
+                *comp_count_for_comp += mcus;
+                // nsDbgPrint!(int, c_str!("mcus"), mcus as i32);
 
                 delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
             }
@@ -1521,26 +1647,48 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             let jpeg_size = target_qos / target_frame_rate;
             let jpeg_size = jpeg_size * entries::get_packet_data_size() as u32 / PACKET_SIZE;
 
-            let mut exp_total = 0u32;
+            let mut exp_total = 0.0f32;
             let mut comp_total = 0u32;
             for i in 0..NUM_QUANT_TBLS {
-                exp_total += exp_for_quant[i] as u32 * comp_count_for_quant[i] as u32
-                    / exp_count_for_quant[i];
+                exp_total += exp_for_quant[i] * comp_count_for_quant[i] as f32
+                    / exp_count_for_quant[i] as f32;
                 comp_total += comp_count_for_quant[i] as u32;
             }
             let mut q = (exp_total as i32 - jpeg_size as i32 * u8::BITS as i32)
                 / comp_total as i32
                 / DCTSIZE2 as i32;
 
-            nsDbgPrint!(deltaProgQ, q);
-            if q < -std_quant_log2_max as i32 {
-                q = -std_quant_log2_max as i32
+            // nsDbgPrint!(
+            //     deltaProgQ,
+            //     q,
+            //     exp_total as i32 / 8i32,
+            //     jpeg_size as i32,
+            //     comp_total as i32
+            // );
+            if q < 0 {
+                q = 0
             }
-            if q > u8::BITS as i32 {
-                q = u8::BITS as i32;
+            if q > u8::BITS as i32 + std_quant_log2_max as i32 {
+                q = u8::BITS as i32 + std_quant_log2_max as i32;
             }
 
-            q as i8
+            let delta_prog = &mut self.worker.info.deltaProgQ;
+            for j in 0..NUM_QUANT_TBLS {
+                let exp_tbl = if j == 0 {
+                    &std_luminance_quant_log2_tbl
+                } else {
+                    &std_chrominance_quant_log2_tbl
+                };
+
+                let divs = &mut delta_prog.divisors[j];
+                for i in 0..DCTSIZE2 {
+                    divs[i] = (exp_tbl[i] as i32 + q - std_quant_log2_max as i32) as i8;
+                }
+            }
+            delta_prog.tid = self.worker.threadId;
+
+            let ret = q + 1;
+            ret as i8
         }
     }
 
@@ -1679,7 +1827,10 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
     fn process(&mut self, deltaProg: bool, i: usize) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if deltaProg {
-                if AtomicI8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0 {
+                if i == 0
+                    && MCU_col_num == 0
+                    && AtomicI8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0
+                {
                     self.estimate_delta_prog_q();
                     if entries::reset_threads() {
                         return;
@@ -1693,6 +1844,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
+    #[named]
     pub fn encode<F, G>(&mut self, src: &[u8], mut pre_progress: F, mut progress: G)
     where
         F: FnMut(),
@@ -1744,6 +1896,31 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 progress();
             }
         }
+
+        if deltaProg {
+            let res = AtomicU8::from_mut(&mut self.worker.info.partsRemain)
+                .fetch_sub(1, Ordering::Relaxed);
+            if res == 1 {
+                let mut count = mem::MaybeUninit::uninit();
+                let res = unsafe {
+                    svcReleaseSemaphore(
+                        count.as_mut_ptr(),
+                        *delta_prog_prev_sem.get_b_mut(self.worker.info.isTop),
+                        1,
+                    )
+                };
+                if res != 0 {
+                    nsDbgPrint!(
+                        releaseSemaphoreFailed,
+                        c_str!("delta_prog_prev_sem"),
+                        self.worker.info.workIndex.get(),
+                        res
+                    );
+                }
+            } else {
+            }
+        }
+
         self.flush_mcu();
 
         if !RS {
