@@ -12,12 +12,26 @@ pub struct ThreadsStacks<'a> {
     nwm_bufs: [*mut u8; WORK_COUNT as usize],
 }
 
+const delta_prog_top_size: usize = mem::size_of::<f32>()
+    * GSP_SCREEN_WIDTH as usize
+    * GSP_SCREEN_HEIGHT_TOP as usize
+    * jpeg::vars::MAX_COMPONENTS;
+const delta_prog_bot_size: usize = mem::size_of::<f32>()
+    * GSP_SCREEN_WIDTH as usize
+    * GSP_SCREEN_HEIGHT_BOTTOM as usize
+    * jpeg::vars::MAX_COMPONENTS;
+
 mod first_time_init {
     use super::*;
 
     unsafe fn init_jpeg_compress() -> Option<()> {
         let jpeg_mem = request_mem_from_pool::<{ mem::size_of::<crate::jpeg::Jpeg>() }>()?;
         crate::entries::work_thread::set_jpeg(jpeg_mem.0.assume_init_mut());
+
+        *delta_prog_prev_coeffs.get_b_mut(false) =
+            request_mem_from_pool::<delta_prog_top_size>()?.to_ptr() as *mut f32;
+        *delta_prog_prev_coeffs.get_b_mut(true) =
+            request_mem_from_pool::<delta_prog_bot_size>()?.to_ptr() as *mut f32;
 
         Some(())
     }
@@ -395,6 +409,17 @@ mod loop_main {
         let quality = config.quality_ar();
         let chroma_ss = config.chroma_ss_ar();
         jpeg.reset(quality, vars.core_count, chroma_ss);
+
+        slice::from_raw_parts_mut(
+            (*delta_prog_prev_coeffs.get_b_mut(false)) as *mut u8,
+            delta_prog_top_size,
+        )
+        .fill(0);
+        slice::from_raw_parts_mut(
+            (*delta_prog_prev_coeffs.get_b_mut(true)) as *mut u8,
+            delta_prog_bot_size,
+        )
+        .fill(0);
 
         let cb = &mut *reliable_stream_cb;
         if mp_init(
