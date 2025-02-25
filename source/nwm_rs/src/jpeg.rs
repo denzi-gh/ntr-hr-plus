@@ -12,6 +12,7 @@ pub struct JpegShared {
     pub maxVSampFactor: usize,
     pub maxBlocksInMcu: usize,
     pub inRowsBlk: usize,
+    pub mcuSize: usize,
     pub mcusPerRow: usize,
     pub deltaProg: bool,
     pub deltaProgMutex: [Handle; WORK_COUNT as usize],
@@ -56,6 +57,7 @@ impl JpegShared {
             panic!();
         }
         self.inRowsBlk = DCTSIZE * self.maxHSampFactor;
+        self.mcuSize = DCTSIZE * self.maxVSampFactor;
         self.mcusPerRow = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.inRowsBlk);
     }
 }
@@ -203,7 +205,7 @@ pub struct DeltaProgCache {
 #[derive(ConstDefault, Clone, Copy)]
 pub struct DeltaProgQ {
     pub q: u8,
-    pub divisors: [[f32; DCTSIZE2]; NUM_QUANT_TBLS],
+    pub divisors: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
     pub cache: DeltaProgCache,
 }
 
@@ -212,6 +214,7 @@ pub struct CInfo {
     pub isTop: bool,
     pub colorSpace: ColorSpace,
     pub restartInterval: u16,
+    pub restartInRowsPixels: u16,
     pub workIndex: WorkIndex,
     pub deltaProgQ: DeltaProgQ,
 }
@@ -879,7 +882,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn fdct_f(inout: &mut JFBlock) {
+    fn fdct_f(inout: &mut JFBlock, prev_coeffs: *mut f32) {
         const F_C4: f32 = 0.707106781f32;
         const F_C6: f32 = 0.382683433f32;
         const F_C2_Minus_C6: f32 = 0.541196100f32;
@@ -978,12 +981,30 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             inout[i + DCTSIZE * 1] = z11 + z4;
             inout[i + DCTSIZE * 7] = z11 - z4;
         }
+
+        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+            for i in 0..DCTSIZE {
+                inout[j + i] -= unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) };
+            }
+        }
     }
 
-    fn quantize_f(input: &JFBlock, output: &mut JBlock, divisors: &[f32; DCTSIZE2]) {
-        for i in 0..DCTSIZE2 {
-            let temp = input[i] * divisors[i];
-            output[i] = (temp + 16384.5f32) as JCoef - 16384;
+    fn quantize_f(
+        input: &JFBlock,
+        output: &mut JBlock,
+        divisors: &[u8; DCTSIZE2],
+        prev_coeffs: *mut f32,
+    ) {
+        for j in (0..DCTSIZE2).step_by(DCTSIZE) {
+            for i in 0..DCTSIZE {
+                let k = j + i;
+                let temp = unsafe { ldexpf(input[k], 0 - divisors[k] as i32) };
+                let temp = unsafe { truncf(temp) };
+                output[k] = temp as JCoef;
+
+                let temp = unsafe { ldexpf(temp, divisors[k] as i32) };
+                unsafe { *prev_coeffs.add(j * GSP_SCREEN_WIDTH as usize + i) += temp };
+            }
         }
     }
 
@@ -993,11 +1014,12 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         output: &mut JBlock,
         ypos: u16,
         xpos: u16,
-        divisors: &[f32; DCTSIZE2],
+        divisors: &[u8; DCTSIZE2],
+        prev_coeffs: *mut f32,
     ) {
         Self::convsamp_f(input, ypos, xpos, staging);
-        Self::fdct_f(staging);
-        Self::quantize_f(staging, output, divisors);
+        Self::fdct_f(staging, prev_coeffs);
+        Self::quantize_f(staging, output, divisors, prev_coeffs);
     }
 
     fn convsamp(
@@ -1200,7 +1222,35 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn compress_delta_prog(&mut self, MCU_col_num: usize) {
+    fn prev_coeffs_for_comp_and_row(&self, ci: usize, row_i: usize) -> *mut f32 {
+        let prev_coeffs = *unsafe { delta_prog_prev_coeffs }.get_b_mut(if self.worker.info.isTop {
+            false
+        } else {
+            true
+        });
+        let prev_coeffs = unsafe {
+            prev_coeffs.add(
+                GSP_SCREEN_WIDTH as usize
+                    * if self.worker.info.isTop {
+                        GSP_SCREEN_HEIGHT_TOP
+                    } else {
+                        GSP_SCREEN_HEIGHT_BOTTOM
+                    } as usize
+                    * ci,
+            )
+        };
+        let prev_coeffs = unsafe {
+            prev_coeffs.add(
+                GSP_SCREEN_WIDTH as usize
+                    * (self.worker.info.restartInRowsPixels as usize
+                        * self.worker.info.workIndex.get() as usize
+                        + self.worker.shared.mcuSize * row_i),
+            )
+        };
+        prev_coeffs
+    }
+
+    fn compress_delta_prog(&mut self, MCU_col_num: usize, row_i: usize) {
         let mut blkn = 0;
 
         if MCU_col_num > self.worker.shared.mcusPerRow {
@@ -1211,6 +1261,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         let mut delta_prog_cache_start = 0;
 
         for ci in 0..MAX_COMPONENTS {
+            let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, row_i);
+
             let comp = &self.worker.shared.compInfos.infos[ci];
             let MCU_width = comp.h_samp_factor;
             let MCU_height = comp.v_samp_factor;
@@ -1230,18 +1282,24 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 let mut xpos = xpos;
                 for _ in 0..MCU_width {
                     let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
+                    let prev_coeffs = unsafe {
+                        prev_coeffs.add(GSP_SCREEN_WIDTH as usize * ypos as usize + xpos as usize)
+                    };
 
                     let mut cache_hit = false;
-                    for delta_prog_cache_i in 0..DELTA_PROG_CACHE_COUNT[ci] {
-                        let cache = unsafe {
-                            delta_prog.cache.cache.get_unchecked(
-                                (delta_prog_cache_start + delta_prog_cache_i) as usize,
-                            )
-                        };
-                        if cache.index == cache_blkn_start + blkn {
-                            Self::quantize_f(&cache.cache, output, divisors);
-                            cache_hit = true;
-                            break;
+
+                    if row_i == 0 {
+                        for delta_prog_cache_i in 0..DELTA_PROG_CACHE_COUNT[ci] {
+                            let cache = unsafe {
+                                delta_prog.cache.cache.get_unchecked(
+                                    (delta_prog_cache_start + delta_prog_cache_i) as usize,
+                                )
+                            };
+                            if cache.index == cache_blkn_start + blkn {
+                                Self::quantize_f(&cache.cache, output, divisors, prev_coeffs);
+                                cache_hit = true;
+                                break;
+                            }
                         }
                     }
 
@@ -1253,6 +1311,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                             ypos,
                             xpos,
                             divisors,
+                            prev_coeffs,
                         );
                     }
 
@@ -1329,10 +1388,12 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
     fn do_estimate_delta_prog_q(&mut self) -> u8 {
         unsafe {
-            let delta_prog = &mut self.worker.info.deltaProgQ;
             let mut delta_prog_cache_start = 0;
 
             for ci in 0..MAX_COMPONENTS {
+                let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, 0);
+                let delta_prog = &mut self.worker.info.deltaProgQ;
+
                 let comp = &self.worker.shared.compInfos.infos[ci];
                 let MCU_width = comp.h_samp_factor;
                 let MCU_height = comp.v_samp_factor;
@@ -1363,8 +1424,11 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     let xpos = blkn_x as u16 * DCTSIZE as u16;
                     let ypos = blkn_y as u16 * DCTSIZE as u16;
 
+                    let prev_coeffs =
+                        prev_coeffs.add(GSP_SCREEN_WIDTH as usize * ypos as usize + xpos as usize);
+
                     Self::convsamp_f(&self.worker.bufs.prep[ci], ypos, xpos, &mut cache.cache);
-                    Self::fdct_f(&mut cache.cache);
+                    Self::fdct_f(&mut cache.cache, prev_coeffs);
 
                     cache.index = blkn;
                 }
@@ -1508,7 +1572,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         buf.store();
     }
 
-    fn process(&mut self, deltaProg: bool) {
+    fn process(&mut self, deltaProg: bool, i: usize) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if deltaProg {
                 if AtomicU8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0 {
@@ -1517,7 +1581,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                         return;
                     }
                 }
-                self.compress_delta_prog(MCU_col_num);
+                self.compress_delta_prog(MCU_col_num, i);
             } else {
                 self.compress(MCU_col_num);
             }
@@ -1546,7 +1610,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             let src_chunks = src
                 .chunks_exact(pitch)
                 .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
-            for chunks in src_chunks {
+            for (i, chunks) in src_chunks.enumerate() {
                 /* Pre-process */
                 let mut chunks = chunks.array_chunks::<{ DCTSIZE }>();
 
@@ -1559,19 +1623,19 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 pre_progress();
 
                 /* Compress and encode */
-                self.process(deltaProg);
+                self.process(deltaProg, i);
 
                 progress();
             }
         } else {
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
-            for chunk in src_chunks {
+            for (i, chunk) in src_chunks.enumerate() {
                 self.pre_process_no_vsubsamp(chunk);
 
                 pre_progress();
 
                 /* Compress and encode */
-                self.process(deltaProg);
+                self.process(deltaProg, i);
 
                 progress();
             }

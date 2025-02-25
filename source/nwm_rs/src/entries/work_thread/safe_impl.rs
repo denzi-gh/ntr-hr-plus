@@ -105,8 +105,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
 
         let l = v.last_row_last_n();
 
-        let mcu_size =
-            crate::jpeg::vars::DCTSIZE as u32_ * get_jpeg().shared.maxVSampFactor as u32_;
+        let mcu_size = get_jpeg().shared.mcuSize as u32_;
         let mcus_per_row = get_jpeg().shared.mcusPerRow as u32_;
         let mcu_rows = ctx.height() / mcu_size;
         let mcu_rows_per_thread =
@@ -152,6 +151,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                     _ => crate::jpeg::vars::ColorSpace::RGB4,
                 },
                 restartInterval: restart_interval as u16,
+                restartInRowsPixels: restart_in_rows as u16 * mcu_size as u16,
                 workIndex: w,
                 deltaProgQ: const_default(),
             };
@@ -205,7 +205,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
         let i_count = *ctx.i_count.get(&t);
         let pitch = ctx.pitch();
 
-        let mcu_size = crate::jpeg::vars::DCTSIZE * get_jpeg().shared.maxVSampFactor;
+        let mcu_size = get_jpeg().shared.mcuSize;
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
         let i_count_half = J_MAX_HALF_FACTOR(i_count as u32_) as usize;

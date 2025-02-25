@@ -23,3 +23,5 @@ struct rp_cb {
 };
 
 #define NWM_PROPORTIONAL_MIN_INTERVAL 1
+
+#include <math.h>
