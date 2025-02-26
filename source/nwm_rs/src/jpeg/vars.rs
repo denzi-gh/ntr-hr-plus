@@ -330,22 +330,6 @@ pub const std_chrominance_quant_tbl: [u8; DCTSIZE2] = [
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 ];
 
-pub const aanscalefactor: [f32; DCTSIZE] = [
-    1.0,
-    1.387039845,
-    1.306562965,
-    1.175875602,
-    1.0,
-    0.785694958,
-    0.541196100,
-    0.275899379,
-];
-// pub static mut aanscalefactortbl: [f32; DCTSIZE2] = const_default();
-
-pub static mut std_luminance_quant_log2_tbl: [f32; DCTSIZE2] = const_default();
-pub static mut std_chrominance_quant_log2_tbl: [f32; DCTSIZE2] = const_default();
-pub static mut std_quant_log2_max: f32 = const_default();
-
 #[derive(ConstDefault)]
 pub struct QuantTbl {
     /* This array gives the coefficient quantizers in natural array order
@@ -627,9 +611,7 @@ impl EntropyTbls {
 pub const MAX_SAMP_FACTOR: usize = 2;
 
 pub type JCoef = i16;
-pub type JFCoef = f32;
 pub type JBlock = [JCoef; DCTSIZE2];
-pub type JFBlock = [JFCoef; DCTSIZE2];
 pub const MAX_BLOCKS_IN_MCU: usize = MAX_SAMP_FACTOR * MAX_SAMP_FACTOR + 1 + 1;
 
 pub struct WorkerColorBuf {
@@ -642,7 +624,6 @@ pub struct WorkerBufs {
     pub color: [WorkerColorBuf; MAX_COMPONENTS],
     pub prep: [[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE]; MAX_COMPONENTS],
     pub mcu: [JBlock; MAX_BLOCKS_IN_MCU],
-    pub mcu_f: JFBlock,
 }
 
 #[derive(Default, Clone, Copy)]

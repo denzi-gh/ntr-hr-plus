@@ -391,6 +391,7 @@ pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
     jpeg_chroma_ss = chroma_ss;
 }
 
+#[allow(unused)]
 pub unsafe fn jpeg_set_dyn_q(w: WorkIndex, q: u32) {
     *jpeg_dyn_q.get_mut(&w) = q;
 }

@@ -12,28 +12,12 @@ pub struct ThreadsStacks<'a> {
     nwm_bufs: [*mut u8; WORK_COUNT as usize],
 }
 
-const delta_prog_top_size: usize = mem::size_of::<f32>()
-    * GSP_SCREEN_WIDTH as usize
-    * GSP_SCREEN_HEIGHT_TOP as usize
-    * jpeg::vars::MAX_COMPONENTS;
-const delta_prog_bot_size: usize = mem::size_of::<f32>()
-    * GSP_SCREEN_WIDTH as usize
-    * GSP_SCREEN_HEIGHT_BOTTOM as usize
-    * jpeg::vars::MAX_COMPONENTS;
-
 mod first_time_init {
     use super::*;
 
     unsafe fn init_jpeg_compress() -> Option<()> {
         let jpeg_mem = request_mem_from_pool::<{ mem::size_of::<crate::jpeg::Jpeg>() }>()?;
         crate::entries::work_thread::set_jpeg(jpeg_mem.0.assume_init_mut());
-
-        *delta_prog_prev_coeffs.get_b_mut(false) =
-            request_mem_from_pool::<delta_prog_top_size>()?.to_ptr() as *mut f32;
-        *delta_prog_prev_coeffs.get_b_mut(true) =
-            request_mem_from_pool::<delta_prog_bot_size>()?.to_ptr() as *mut f32;
-
-        crate::jpeg::deltaProgQuantTableInit();
 
         Some(())
     }
@@ -325,23 +309,6 @@ mod loop_main {
             //     return None;
             // }
 
-            let jpeg = crate::entries::work_thread::get_jpeg();
-            for mutex in &mut jpeg.shared.deltaProgMutex {
-                let res = svcCreateMutex(mutex, false);
-                if res != 0 {
-                    nsDbgPrint!(createMutexFailed, c_str!("deltaProgMutex"), res);
-                    return None;
-                }
-            }
-            for i in ScreenIndex::all() {
-                let sem = delta_prog_prev_sem.get_mut(&i);
-                let res = svcCreateSemaphore(sem, 1, 1);
-                if res != 0 {
-                    nsDbgPrint!(createSemaphoreFailed, c_str!("delta_prog_prev_sem"), res);
-                    return None;
-                }
-            }
-
             Some(Self(v))
         }
     }
@@ -349,16 +316,6 @@ mod loop_main {
     impl Drop for InitCleanup {
         fn drop(&mut self) {
             unsafe {
-                for i in ScreenIndex::all() {
-                    let sem = delta_prog_prev_sem.get_mut(&i);
-                    let _ = svcCloseHandle(*sem);
-                }
-
-                let jpeg = crate::entries::work_thread::get_jpeg();
-                for mutex in jpeg.shared.deltaProgMutex {
-                    let _ = svcCloseHandle(mutex);
-                }
-
                 // let _ = svcCloseHandle(cur_seg_mem_lock);
                 // let _ = svcCloseHandle(cur_seg_mem_sem);
 
@@ -425,17 +382,6 @@ mod loop_main {
         let chroma_ss = config.chroma_ss_ar();
         jpeg.reset(quality, vars.core_count, chroma_ss);
 
-        slice::from_raw_parts_mut(
-            (*delta_prog_prev_coeffs.get_b_mut(false)) as *mut u8,
-            delta_prog_top_size,
-        )
-        .fill(0);
-        slice::from_raw_parts_mut(
-            (*delta_prog_prev_coeffs.get_b_mut(true)) as *mut u8,
-            delta_prog_bot_size,
-        )
-        .fill(0);
-
         let cb = &mut *reliable_stream_cb;
         if mp_init(
             (*cb.send_bufs.as_ptr()).len(),
@@ -473,8 +419,6 @@ mod loop_main {
 
         crate::entries::work_thread::reset_vars(quality, chroma_ss);
         crate::entries::thread_nwm::reset_vars(dst_flags, qos)?;
-        crate::entries::work_thread::get_jpeg().shared.deltaProg =
-            crate::entries::thread_nwm::get_reliable_stream_delta_prog();
 
         for i in WorkIndex::all() {
             for j in ThreadId::up_to(&core_count) {

@@ -8,7 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 libc = { version = "0.2.170", default-features = false }
-oorandom = "11.1.4"
+# oorandom = "11.1.4"
 function_name = "0.3.0"
 # Modified to work with union types
 const-default = { path = "../../const_default", version = "1.0.0", features = [

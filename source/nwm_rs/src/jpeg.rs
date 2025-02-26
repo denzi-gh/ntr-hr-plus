@@ -4,39 +4,6 @@ use crate::*;
 pub mod vars;
 use vars::*;
 
-pub static mut targetBytesPerSec: u32 = const_default();
-
-#[named]
-pub fn deltaProgQuantTableInit() {
-    let initFn = |input: &[u8; DCTSIZE2], output: &mut [f32; DCTSIZE2], max: &mut f32| {
-        for j in 0..DCTSIZE {
-            for i in 0..DCTSIZE {
-                let k = j * DCTSIZE + i;
-                // output[k] = unsafe { log2f(input[k] as f32) };
-                let num = input[k] as f32 * aanscalefactor[j] * aanscalefactor[i] * 8.0f32;
-                output[k] = unsafe { log2f(num) };
-
-                if output[k] > *max {
-                    *max = output[k]
-                }
-            }
-        }
-    };
-
-    unsafe {
-        initFn(
-            &std_luminance_quant_tbl,
-            &mut std_luminance_quant_log2_tbl,
-            &mut std_quant_log2_max,
-        );
-        initFn(
-            &std_chrominance_quant_tbl,
-            &mut std_chrominance_quant_log2_tbl,
-            &mut std_quant_log2_max,
-        );
-    }
-}
-
 #[derive(ConstDefault)]
 pub struct JpegShared {
     quantTbls: QuantTbls,
@@ -51,12 +18,6 @@ pub struct JpegShared {
     pub mcusPerRow: usize,
     pub mcusTop: usize,
     pub mcusBot: usize,
-    pub deltaProg: bool,
-    pub deltaProgMutex: [Handle; WORK_COUNT as usize],
-}
-
-pub struct JpegSharedMut {
-    pub rand32: Rand32,
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -204,62 +165,12 @@ impl WorkerDst {
     }
 }
 
-pub const DELTA_PROG_CACHE_COUNT: [u8; MAX_COMPONENTS] = [4, 2, 2];
-pub const DELTA_PROG_CACHE_COUNT_TOTAL: u8 = {
-    let mut count = 0;
-    let mut i = 0;
-    loop {
-        if i >= DELTA_PROG_CACHE_COUNT.len() {
-            break;
-        }
-        count += DELTA_PROG_CACHE_COUNT[i];
-        i += 1;
-    }
-    count
-};
-pub const DELTA_PROG_CACHE_COUNT_MAX: u8 = {
-    let mut count = 0;
-    let mut i = 0;
-    loop {
-        if i >= DELTA_PROG_CACHE_COUNT.len() {
-            break;
-        }
-        if count < DELTA_PROG_CACHE_COUNT[i] {
-            count = DELTA_PROG_CACHE_COUNT[i]
-        }
-        i += 1;
-    }
-    count
-};
-
-#[derive(ConstDefault, Clone, Copy)]
-pub struct DeltaProgCacheItem {
-    pub index: u8,
-    pub cache: JFBlock,
-}
-
-#[derive(ConstDefault, Clone, Copy)]
-pub struct DeltaProgCache {
-    pub cache: [DeltaProgCacheItem; DELTA_PROG_CACHE_COUNT_TOTAL as usize],
-}
-
-#[derive(ConstDefault, Clone, Copy)]
-pub struct DeltaProgQ {
-    pub q: i8,
-    pub divisors: [[f32; DCTSIZE2]; NUM_QUANT_TBLS],
-    pub cache: DeltaProgCache,
-    pub tid: ThreadId,
-}
-
 #[derive(ConstDefault, Clone, Copy)]
 pub struct CInfo {
     pub isTop: bool,
     pub colorSpace: ColorSpace,
     pub restartInterval: u16,
-    pub restartInRowsPixels: u16,
     pub workIndex: WorkIndex,
-    pub deltaProgQ: DeltaProgQ,
-    pub partsRemain: u8,
 }
 
 type BitBufType = u32;
@@ -275,7 +186,6 @@ pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 #[derive(ConstDefault)]
 pub struct JpegWorker<'a, const RS: bool> {
     shared: &'a JpegShared,
-    shared_mut: *mut JpegSharedMut,
     bufs: &'a mut WorkerBufs,
     info: &'a mut CInfo,
     threadId: ThreadId,
@@ -291,7 +201,6 @@ pub struct JpegEncode<'a, 'c, const RS: bool> {
 #[derive(ConstDefault)]
 pub struct Jpeg {
     pub shared: JpegShared,
-    pub shared_mut: JpegSharedMut,
     bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
     info: [CInfo; WORK_COUNT as usize],
 }
@@ -302,7 +211,6 @@ impl Jpeg {
         self.shared.divisors.setDivisors(&self.shared.quantTbls);
         self.shared.coreCount = coreCount;
         self.shared.setCompInfos(hq);
-        unsafe { self.shared_mut.rand32 = Rand32::new(svcGetSystemTick()) };
     }
 
     pub fn setInfo(&mut self, info: CInfo) {
@@ -316,7 +224,6 @@ impl Jpeg {
     ) -> JpegWorker<RS> {
         JpegWorker::init(
             &self.shared,
-            &mut self.shared_mut,
             threadId.index_into_mut(&mut self.bufs),
             workIndex.index_into_mut(&mut self.info),
             threadId,
@@ -580,14 +487,12 @@ impl<'a, const RS: bool> JpegWorker<'a, RS> {
 
     pub fn init(
         shared: &'a JpegShared,
-        shared_mut: *mut JpegSharedMut,
         bufs: &'a mut WorkerBufs,
         info: &'a mut CInfo,
         tid: ThreadId,
     ) -> Self {
         JpegWorker {
             shared,
-            shared_mut,
             bufs,
             info,
             threadId: tid,
@@ -907,164 +812,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn convsamp_f(
-        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
-        ypos: u16,
-        xpos: u16,
-        output: &mut JFBlock,
-    ) {
-        let mut oidx = 0;
-        for yidx in 0..DCTSIZE {
-            let input = unsafe { input.get_unchecked(ypos as usize + yidx) };
-            for xidx in 0..DCTSIZE {
-                output[oidx] = *unsafe { input.get_unchecked(xpos as usize + xidx) } as f32
-                    - (u8::MAX as f32 / 2.0f32);
-
-                oidx += 1;
-            }
-        }
-    }
-
-    #[named]
-    fn fdct_f(inout: &mut JFBlock, _prev_coeffs: *const f32, _prev_coeffs_pitch: u32) {
-        const F_C4: f32 = 0.707106781f32;
-        const F_C6: f32 = 0.382683433f32;
-        const F_C2_Minus_C6: f32 = 0.541196100f32;
-        const F_C2_Plus_C6: f32 = 1.306562965f32;
-
-        /* Pass 1: process rows. */
-
-        for i in (0..DCTSIZE2).step_by(DCTSIZE) {
-            let tmp0 = inout[i + 0] + inout[i + 7];
-            let tmp7 = inout[i + 0] - inout[i + 7];
-            let tmp1 = inout[i + 1] + inout[i + 6];
-            let tmp6 = inout[i + 1] - inout[i + 6];
-            let tmp2 = inout[i + 2] + inout[i + 5];
-            let tmp5 = inout[i + 2] - inout[i + 5];
-            let tmp3 = inout[i + 3] + inout[i + 4];
-            let tmp4 = inout[i + 3] - inout[i + 4];
-
-            /* Even part */
-
-            let tmp10 = tmp0 + tmp3; /* phase 2 */
-            let tmp13 = tmp0 - tmp3;
-            let tmp11 = tmp1 + tmp2;
-            let tmp12 = tmp1 - tmp2;
-
-            inout[i + 0] = tmp10 + tmp11; /* phase 3 */
-            inout[i + 4] = tmp10 - tmp11;
-
-            let z1 = (tmp12 + tmp13) * F_C4; /* c4 */
-            inout[i + 2] = tmp13 + z1; /* phase 5 */
-            inout[i + 6] = tmp13 - z1;
-
-            /* Odd part */
-
-            let tmp10 = tmp4 + tmp5; /* phase 2 */
-            let tmp11 = tmp5 + tmp6;
-            let tmp12 = tmp6 + tmp7;
-
-            /* The rotator is modified from fig 4-8 to avoid extra negations. */
-            let z5 = (tmp10 - tmp12) * F_C6; /* c6 */
-            let z2 = F_C2_Minus_C6 * tmp10 + z5; /* c2-c6 */
-            let z4 = F_C2_Plus_C6 * tmp12 + z5; /* c2+c6 */
-            let z3 = tmp11 * F_C4; /* c4 */
-
-            let z11 = tmp7 + z3; /* phase 5 */
-            let z13 = tmp7 - z3;
-
-            inout[i + 5] = z13 + z2; /* phase 6 */
-            inout[i + 3] = z13 - z2;
-            inout[i + 1] = z11 + z4;
-            inout[i + 7] = z11 - z4;
-        }
-
-        /* Pass 2: process columns. */
-
-        for i in 0..DCTSIZE {
-            let tmp0 = inout[i + DCTSIZE * 0] + inout[i + DCTSIZE * 7];
-            let tmp7 = inout[i + DCTSIZE * 0] - inout[i + DCTSIZE * 7];
-            let tmp1 = inout[i + DCTSIZE * 1] + inout[i + DCTSIZE * 6];
-            let tmp6 = inout[i + DCTSIZE * 1] - inout[i + DCTSIZE * 6];
-            let tmp2 = inout[i + DCTSIZE * 2] + inout[i + DCTSIZE * 5];
-            let tmp5 = inout[i + DCTSIZE * 2] - inout[i + DCTSIZE * 5];
-            let tmp3 = inout[i + DCTSIZE * 3] + inout[i + DCTSIZE * 4];
-            let tmp4 = inout[i + DCTSIZE * 3] - inout[i + DCTSIZE * 4];
-
-            /* Even part */
-
-            let tmp10 = tmp0 + tmp3; /* phase 2 */
-            let tmp13 = tmp0 - tmp3;
-            let tmp11 = tmp1 + tmp2;
-            let tmp12 = tmp1 - tmp2;
-
-            inout[i + DCTSIZE * 0] = tmp10 + tmp11; /* phase 3 */
-            inout[i + DCTSIZE * 4] = tmp10 - tmp11;
-
-            let z1 = (tmp12 + tmp13) * F_C4; /* c4 */
-            inout[i + DCTSIZE * 2] = tmp13 + z1; /* phase 5 */
-            inout[i + DCTSIZE * 6] = tmp13 - z1;
-
-            /* Odd part */
-
-            let tmp10 = tmp4 + tmp5; /* phase 2 */
-            let tmp11 = tmp5 + tmp6;
-            let tmp12 = tmp6 + tmp7;
-
-            /* The rotator is modified from fig 4-8 to avoid extra negations. */
-            let z5 = (tmp10 - tmp12) * F_C6; /* c6 */
-            let z2 = F_C2_Minus_C6 * tmp10 + z5; /* c2-c6 */
-            let z4 = F_C2_Plus_C6 * tmp12 + z5; /* c2+c6 */
-            let z3 = tmp11 * F_C4; /* c4 */
-
-            let z11 = tmp7 + z3; /* phase 5 */
-            let z13 = tmp7 - z3;
-
-            inout[i + DCTSIZE * 5] = z13 + z2; /* phase 6 */
-            inout[i + DCTSIZE * 3] = z13 - z2;
-            inout[i + DCTSIZE * 1] = z11 + z4;
-            inout[i + DCTSIZE * 7] = z11 - z4;
-        }
-
-        for j in 0..DCTSIZE {
-            for i in 0..DCTSIZE {
-                let _k = j * DCTSIZE + i;
-            }
-        }
-    }
-
-    fn quantize_f(
-        input: &JFBlock,
-        output: &mut JBlock,
-        divisors: &[f32; DCTSIZE2],
-        _prev_coeffs: *mut f32,
-        _prev_coeffs_pitch: u32,
-    ) {
-        for j in 0..DCTSIZE {
-            for i in 0..DCTSIZE {
-                let k = j * DCTSIZE + i;
-                let temp = input[k] * divisors[k];
-
-                output[k] = temp as JCoef % 1024;
-            }
-        }
-    }
-
-    fn forward_DCT_f(
-        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
-        staging: &mut JFBlock,
-        output: &mut JBlock,
-        ypos: u16,
-        xpos: u16,
-        divisors: &[f32; DCTSIZE2],
-        prev_coeffs: *mut f32,
-        prev_coeffs_pitch: u32,
-    ) {
-        Self::convsamp_f(input, ypos, xpos, staging);
-        Self::fdct_f(staging, prev_coeffs, prev_coeffs_pitch);
-        Self::quantize_f(staging, output, divisors, prev_coeffs, prev_coeffs_pitch);
-    }
-
     fn convsamp(
         input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
         ypos: u16,
@@ -1266,341 +1013,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    #[named]
-    fn prev_coeffs_for_comp_and_row(&self, ci: usize, row_i: usize) -> *mut f32 {
-        let prev_coeffs = *unsafe { delta_prog_prev_coeffs }.get_b_mut(if self.worker.info.isTop {
-            false
-        } else {
-            true
-        });
-        let comp = &self.worker.shared.compInfos.infos[ci];
-        let prev_coeffs = unsafe {
-            prev_coeffs.add(
-                core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) as usize
-                    * if self.worker.info.isTop {
-                        core::intrinsics::unchecked_shr(GSP_SCREEN_HEIGHT_TOP, comp.v_samp_exp)
-                    } else {
-                        core::intrinsics::unchecked_shr(GSP_SCREEN_HEIGHT_BOTTOM, comp.v_samp_exp)
-                    } as usize
-                    * ci,
-            )
-        };
-        let rows = self.worker.info.restartInRowsPixels as usize
-            * self.worker.threadId.get() as usize
-            + self.worker.shared.mcuColSize * row_i;
-        let prev_coeffs = unsafe {
-            prev_coeffs.add(
-                core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) as usize * rows,
-            )
-        };
-        prev_coeffs
-    }
-
-    #[named]
-    fn compress_delta_prog(&mut self, MCU_col_num: usize, row_i: usize) {
-        let mut blkn = 0;
-
-        if MCU_col_num > self.worker.shared.mcusPerRow {
-            panic!();
-        }
-
-        let delta_prog = &self.worker.info.deltaProgQ;
-        let mut delta_prog_cache_start = 0;
-
-        for ci in 0..MAX_COMPONENTS {
-            let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, row_i);
-
-            let comp = &self.worker.shared.compInfos.infos[ci];
-            let prev_coeffs_pitch =
-                unsafe { core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp) };
-            let MCU_width = comp.h_samp_factor;
-            let MCU_height = comp.v_samp_factor;
-
-            let MCU_sample_width = MCU_width as u16 * DCTSIZE as u16;
-            let xpos = MCU_col_num as u16 * MCU_sample_width;
-            let mut ypos = 0;
-
-            let divisors = unsafe {
-                delta_prog
-                    .divisors
-                    .get_unchecked(comp.quant_tbl_no as usize)
-            };
-            let cache_blkn_start = MCU_col_num as u8 * MCU_width * MCU_height;
-
-            for _ in 0..MCU_height {
-                let mut xpos = xpos;
-                for _ in 0..MCU_width {
-                    let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
-                    let prev_coeffs = unsafe {
-                        prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize)
-                    };
-
-                    let mut cache_hit = false;
-
-                    if delta_prog.tid == self.worker.threadId && row_i == 0 {
-                        for delta_prog_cache_i in 0..DELTA_PROG_CACHE_COUNT[ci] {
-                            let cache = unsafe {
-                                delta_prog.cache.cache.get_unchecked(
-                                    (delta_prog_cache_start + delta_prog_cache_i) as usize,
-                                )
-                            };
-                            if cache.index == cache_blkn_start + blkn {
-                                Self::quantize_f(
-                                    &cache.cache,
-                                    output,
-                                    divisors,
-                                    prev_coeffs,
-                                    prev_coeffs_pitch,
-                                );
-                                cache_hit = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if !cache_hit {
-                        Self::forward_DCT_f(
-                            &self.worker.bufs.prep[ci],
-                            &mut self.worker.bufs.mcu_f,
-                            output,
-                            ypos,
-                            xpos,
-                            divisors,
-                            prev_coeffs,
-                            prev_coeffs_pitch,
-                        );
-                    }
-
-                    xpos += DCTSIZE as u16;
-                    blkn += 1;
-                }
-                ypos += DCTSIZE as u16;
-            }
-
-            delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
-        }
-    }
-
-    #[named]
-    fn estimate_delta_prog_q(&mut self) {
-        unsafe {
-            let mutex = self
-                .worker
-                .shared
-                .deltaProgMutex
-                .get_unchecked(self.worker.info.workIndex.get() as usize);
-
-            while !entries::reset_threads() {
-                let res = svcWaitSynchronization(*mutex, THREAD_WAIT_NS);
-                if res != 0 {
-                    if res != RES_TIMEOUT as s32 {
-                        nsDbgPrint!(waitForSyncFailed, c_str!("deltaProgMutex"), res);
-                        entries::set_reset_threads_ar();
-                        return;
-                    }
-                    continue;
-                }
-                break;
-            }
-
-            let deltaProgQ = &mut self.worker.info.deltaProgQ;
-            if deltaProgQ.q == 0 {
-                while !entries::reset_threads() {
-                    let res = svcWaitSynchronization(
-                        *delta_prog_prev_sem.get_b_mut(self.worker.info.isTop),
-                        THREAD_WAIT_NS,
-                    );
-                    if res != 0 {
-                        if res != RES_TIMEOUT as s32 {
-                            nsDbgPrint!(waitForSyncFailed, c_str!("delta_prog_prev_sem"), res);
-                            entries::set_reset_threads_ar();
-                            break;
-                        }
-                        continue;
-                    }
-                    break;
-                }
-
-                if !entries::reset_threads() {
-                    let q = self.do_estimate_delta_prog_q();
-                    AtomicI8::from_mut(&mut self.worker.info.deltaProgQ.q)
-                        .store(q, Ordering::Relaxed);
-                }
-            }
-
-            let res = svcReleaseMutex(*mutex);
-            if res != 0 {
-                nsDbgPrint!(releaseMutexFailed, c_str!("deltaProgMutex"), res);
-            }
-        }
-    }
-
-    fn gen_unique_index(
-        rand32: &mut Rand32,
-        seen: &mut [u8; DELTA_PROG_CACHE_COUNT_MAX as usize],
-        seen_n: u8,
-        range: u8,
-    ) -> u8 {
-        // return seen_n;
-        unsafe {
-            loop {
-                let r = rand32.rand_range(0..range as u32) as u8;
-                let mut again = false;
-                for i in 0..seen_n as usize {
-                    if *seen.get_unchecked(i) == r {
-                        again = true;
-                        break;
-                    }
-                }
-                if again {
-                    continue;
-                }
-
-                *seen.get_unchecked_mut(seen_n as usize) = r;
-                return r;
-            }
-        }
-    }
-
-    #[named]
-    fn do_estimate_delta_prog_q(&mut self) -> i8 {
-        unsafe {
-            let mut delta_prog_cache_start = 0;
-            let mut exp_for_quant: [f32; NUM_QUANT_TBLS] = const_default();
-            let mut exp_count_for_quant: [u32; NUM_QUANT_TBLS] = const_default();
-            let mut comp_count_for_quant: [u32; NUM_QUANT_TBLS] = const_default();
-
-            for ci in 0..MAX_COMPONENTS {
-                let prev_coeffs = self.prev_coeffs_for_comp_and_row(ci, 0);
-                let delta_prog = &mut self.worker.info.deltaProgQ;
-
-                let comp = &self.worker.shared.compInfos.infos[ci];
-                let prev_coeffs_pitch =
-                    core::intrinsics::unchecked_shr(GSP_SCREEN_WIDTH, comp.h_samp_exp);
-
-                let MCU_width = comp.h_samp_factor;
-                let MCU_height = comp.v_samp_factor;
-                let MCU_count = MCU_width * MCU_height;
-                let blkn_total = self.worker.shared.mcusPerRow as u8 * MCU_count;
-
-                let exp_for_comp = exp_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
-                let exp_count_for_comp =
-                    exp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
-                let comp_count_for_comp =
-                    comp_count_for_quant.get_unchecked_mut(comp.quant_tbl_no as usize);
-
-                let exp_tbl = if comp.quant_tbl_no == 0 {
-                    &std_luminance_quant_log2_tbl
-                } else {
-                    &std_chrominance_quant_log2_tbl
-                };
-
-                let mut blkn_saved: [u8; DELTA_PROG_CACHE_COUNT_MAX as usize] = const_default();
-
-                for i in 0..DELTA_PROG_CACHE_COUNT[ci] {
-                    let cache = delta_prog
-                        .cache
-                        .cache
-                        .get_unchecked_mut((delta_prog_cache_start + i) as usize);
-
-                    let blkn = Self::gen_unique_index(
-                        &mut (*self.worker.shared_mut).rand32,
-                        &mut blkn_saved,
-                        i,
-                        blkn_total,
-                    );
-
-                    let MCU_col_num = blkn / MCU_count;
-                    let blkn_MCU = blkn % MCU_count;
-                    let blkn_x = blkn_MCU % MCU_width;
-                    let blkn_y = blkn_MCU / MCU_width;
-                    let blkn_x = MCU_col_num * MCU_width + blkn_x;
-
-                    let xpos = blkn_x as u16 * DCTSIZE as u16;
-                    let ypos = blkn_y as u16 * DCTSIZE as u16;
-
-                    let prev_coeffs =
-                        prev_coeffs.add(prev_coeffs_pitch as usize * ypos as usize + xpos as usize);
-
-                    Self::convsamp_f(&self.worker.bufs.prep[ci], ypos, xpos, &mut cache.cache);
-                    Self::fdct_f(&mut cache.cache, prev_coeffs, prev_coeffs_pitch);
-
-                    cache.index = blkn;
-
-                    for i in 0..DCTSIZE2 {
-                        *exp_for_comp += f32::max(
-                            log2f(cache.cache[i]) - exp_tbl[i] + std_quant_log2_max,
-                            0.0f32,
-                        );
-                    }
-                    *exp_count_for_comp += 1;
-                }
-
-                let mcus = if self.worker.info.isTop {
-                    self.worker.shared.mcusTop as u32
-                } else {
-                    self.worker.shared.mcusBot as u32
-                } * MCU_count as u32;
-                *comp_count_for_comp += mcus;
-
-                delta_prog_cache_start += DELTA_PROG_CACHE_COUNT[ci];
-            }
-
-            let target_frame_rate = 120u32; // TODO detect in screen capture thread
-            let target_qos = targetBytesPerSec;
-
-            let jpeg_size = target_qos / target_frame_rate;
-            let jpeg_size = jpeg_size * entries::get_packet_data_size() as u32 / PACKET_SIZE;
-
-            let mut exp_total = 0.0f32;
-            let mut comp_total = 0u32;
-            for i in 0..NUM_QUANT_TBLS {
-                exp_total += exp_for_quant[i] * comp_count_for_quant[i] as f32
-                    / exp_count_for_quant[i] as f32;
-                comp_total += comp_count_for_quant[i] as u32;
-            }
-            let q: f32 = (exp_total - jpeg_size as f32 * u8::BITS as f32)
-                / comp_total as f32
-                / DCTSIZE2 as f32;
-
-            nsDbgPrint!(
-                deltaProgQ,
-                q as i32,
-                exp_total as i32 / u8::BITS as i32,
-                jpeg_size as i32,
-                comp_total as i32
-            );
-
-            let mut q_int = (q * 8.0f32) as i32;
-            if q_int < 0 {
-                q_int = 0;
-            }
-            if q_int > (2 << RP_KCP_HDR_QUALITY_NBITS) - 1 {
-                q_int = (2 << RP_KCP_HDR_QUALITY_NBITS) - 1;
-            }
-
-            let q = (q_int as f32) / 8.0f32;
-
-            let delta_prog = &mut self.worker.info.deltaProgQ;
-            for j in 0..NUM_QUANT_TBLS {
-                let exp_tbl = if j == 0 {
-                    &std_luminance_quant_log2_tbl
-                } else {
-                    &std_chrominance_quant_log2_tbl
-                };
-
-                let divs = &mut delta_prog.divisors[j];
-                for i in 0..DCTSIZE2 {
-                    divs[i] = exp2f(std_quant_log2_max - exp_tbl[i] - q);
-                }
-            }
-            delta_prog.tid = self.worker.threadId;
-
-            entries::jpeg_set_dyn_q(self.worker.info.workIndex, q_int as u32);
-            1
-        }
-    }
-
     fn encode_one_block(
         dst: &mut WorkerDst,
         state: &mut HuffState,
@@ -1733,22 +1145,9 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         buf.store();
     }
 
-    fn process(&mut self, deltaProg: bool, i: usize) {
+    fn process(&mut self) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
-            if deltaProg {
-                if i == 0
-                    && MCU_col_num == 0
-                    && AtomicI8::from(self.worker.info.deltaProgQ.q).load(Ordering::Relaxed) == 0
-                {
-                    self.estimate_delta_prog_q();
-                    if entries::reset_threads() {
-                        return;
-                    }
-                }
-                self.compress_delta_prog(MCU_col_num, i);
-            } else {
-                self.compress(MCU_col_num);
-            }
+            self.compress(MCU_col_num);
             self.encode_mcu();
         }
     }
@@ -1767,7 +1166,6 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         if !RS && self.worker.threadId.get() == 0 {
             self.write_headers();
         }
-        let deltaProg = RS && self.worker.shared.deltaProg;
 
         self.reset_mcu();
 
@@ -1775,7 +1173,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             let src_chunks = src
                 .chunks_exact(pitch)
                 .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
-            for (i, chunks) in src_chunks.enumerate() {
+            for (_, chunks) in src_chunks.enumerate() {
                 /* Pre-process */
                 let mut chunks = chunks.array_chunks::<{ DCTSIZE }>();
 
@@ -1788,45 +1186,21 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 pre_progress();
 
                 /* Compress and encode */
-                self.process(deltaProg, i);
+                self.process();
 
                 progress();
             }
         } else {
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
-            for (i, chunk) in src_chunks.enumerate() {
+            for (_, chunk) in src_chunks.enumerate() {
                 self.pre_process_no_vsubsamp(chunk);
 
                 pre_progress();
 
                 /* Compress and encode */
-                self.process(deltaProg, i);
+                self.process();
 
                 progress();
-            }
-        }
-
-        if deltaProg {
-            let res = AtomicU8::from_mut(&mut self.worker.info.partsRemain)
-                .fetch_sub(1, Ordering::Relaxed);
-            if res == 1 {
-                let mut count = mem::MaybeUninit::uninit();
-                let res = unsafe {
-                    svcReleaseSemaphore(
-                        count.as_mut_ptr(),
-                        *delta_prog_prev_sem.get_b_mut(self.worker.info.isTop),
-                        1,
-                    )
-                };
-                if res != 0 {
-                    nsDbgPrint!(
-                        releaseSemaphoreFailed,
-                        c_str!("delta_prog_prev_sem"),
-                        self.worker.info.workIndex.get(),
-                        res
-                    );
-                }
-            } else {
             }
         }
 

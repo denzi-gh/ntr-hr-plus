@@ -38,7 +38,7 @@ use core::{
 };
 use ctru::*;
 use function_name::named;
-use oorandom::Rand32;
+// use oorandom::Rand32;
 
 #[allow(unused)]
 mod ctru {

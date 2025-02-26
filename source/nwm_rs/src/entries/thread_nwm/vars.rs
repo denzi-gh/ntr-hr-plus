@@ -132,8 +132,6 @@ unsafe fn init_min_send_interval(qos: u32_) {
         (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
         Ordering::Relaxed,
     );
-
-    crate::jpeg::targetBytesPerSec = qos;
 }
 
 #[no_mangle]

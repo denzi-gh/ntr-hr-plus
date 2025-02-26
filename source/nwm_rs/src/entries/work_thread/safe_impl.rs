@@ -158,10 +158,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                     _ => crate::jpeg::vars::ColorSpace::RGB4,
                 },
                 restartInterval: restart_interval as u16,
-                restartInRowsPixels: restart_in_rows as u16 * mcu_size as u16,
                 workIndex: w,
-                deltaProgQ: const_default(),
-                partsRemain: core_count.get() as u8,
             };
 
             get_jpeg().setInfo(cinfo);

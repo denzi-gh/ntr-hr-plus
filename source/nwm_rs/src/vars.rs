@@ -97,6 +97,3 @@ pub const RP_KCP_HDR_T_NBITS: u32 = 2;
 pub const RP_KCP_HDR_SIZE_NBITS: u32 = 11;
 #[allow(dead_code)]
 pub const RP_KCP_HDR_RC_NBITS: u32 = 5;
-
-pub static mut delta_prog_prev_coeffs: RangedArray<*mut f32, SCREEN_COUNT> = const_default();
-pub static mut delta_prog_prev_sem: RangedArray<Handle, SCREEN_COUNT> = const_default();
