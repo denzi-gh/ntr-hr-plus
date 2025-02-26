@@ -246,7 +246,7 @@ pub struct DeltaProgCache {
 #[derive(ConstDefault, Clone, Copy)]
 pub struct DeltaProgQ {
     pub q: i8,
-    pub divisors: [[i8; DCTSIZE2]; NUM_QUANT_TBLS],
+    pub divisors: [[f32; DCTSIZE2]; NUM_QUANT_TBLS],
     pub cache: DeltaProgCache,
     pub tid: ThreadId,
 }
@@ -926,7 +926,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
     }
 
     #[named]
-    fn fdct_f(inout: &mut JFBlock, prev_coeffs: *const f32, prev_coeffs_pitch: u32) {
+    fn fdct_f(inout: &mut JFBlock, _prev_coeffs: *const f32, _prev_coeffs_pitch: u32) {
         const F_C4: f32 = 0.707106781f32;
         const F_C6: f32 = 0.382683433f32;
         const F_C2_Minus_C6: f32 = 0.541196100f32;
@@ -1028,10 +1028,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
         for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
-                let k = j * DCTSIZE + i;
-                // inout[k] *= unsafe { aanscalefactortbl[k] };
-                let prev = unsafe { *prev_coeffs.add(j * prev_coeffs_pitch as usize + i) };
-                inout[k] -= prev;
+                let _k = j * DCTSIZE + i;
             }
         }
     }
@@ -1039,19 +1036,16 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
     fn quantize_f(
         input: &JFBlock,
         output: &mut JBlock,
-        divisors: &[i8; DCTSIZE2],
-        prev_coeffs: *mut f32,
-        prev_coeffs_pitch: u32,
+        divisors: &[f32; DCTSIZE2],
+        _prev_coeffs: *mut f32,
+        _prev_coeffs_pitch: u32,
     ) {
         for j in 0..DCTSIZE {
             for i in 0..DCTSIZE {
                 let k = j * DCTSIZE + i;
-                let temp = unsafe { ldexpf(input[k], 0 - divisors[k] as i32) };
-                let temp = unsafe { truncf(temp) };
-                output[k] = temp as JCoef;
+                let temp = input[k] * divisors[k];
 
-                let temp = unsafe { ldexpf(temp, divisors[k] as i32) };
-                unsafe { *prev_coeffs.add(j * prev_coeffs_pitch as usize + i) += temp };
+                output[k] = temp as JCoef % 1024;
             }
         }
     }
@@ -1062,7 +1056,7 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         output: &mut JBlock,
         ypos: u16,
         xpos: u16,
-        divisors: &[i8; DCTSIZE2],
+        divisors: &[f32; DCTSIZE2],
         prev_coeffs: *mut f32,
         prev_coeffs_pitch: u32,
     ) {
@@ -1534,14 +1528,10 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     cache.index = blkn;
 
                     for i in 0..DCTSIZE2 {
-                        if cache.cache[i] != 0.0 {
-                            let mut bits = mem::MaybeUninit::<i32>::uninit();
-                            let _res = frexpf(cache.cache[i], bits.as_mut_ptr());
-                            let bits = bits.assume_init();
-
-                            *exp_for_comp +=
-                                f32::max(bits as f32 - exp_tbl[i] + std_quant_log2_max, 0.0f32);
-                        }
+                        *exp_for_comp += f32::max(
+                            log2f(cache.cache[i]) - exp_tbl[i] + std_quant_log2_max,
+                            0.0f32,
+                        );
                     }
                     *exp_count_for_comp += 1;
                 }
@@ -1569,16 +1559,27 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                     / exp_count_for_quant[i] as f32;
                 comp_total += comp_count_for_quant[i] as u32;
             }
-            let mut q = (exp_total as i32 - jpeg_size as i32 * u8::BITS as i32)
-                / comp_total as i32
-                / DCTSIZE2 as i32;
+            let q: f32 = (exp_total - jpeg_size as f32 * u8::BITS as f32)
+                / comp_total as f32
+                / DCTSIZE2 as f32;
 
-            if q < 0 {
-                q = 0
+            nsDbgPrint!(
+                deltaProgQ,
+                q as i32,
+                exp_total as i32 / u8::BITS as i32,
+                jpeg_size as i32,
+                comp_total as i32
+            );
+
+            let mut q_int = (q * 8.0f32) as i32;
+            if q_int < 0 {
+                q_int = 0;
             }
-            if q > u8::BITS as i32 + std_quant_log2_max as i32 {
-                q = u8::BITS as i32 + std_quant_log2_max as i32;
+            if q_int > (2 << RP_KCP_HDR_QUALITY_NBITS) - 1 {
+                q_int = (2 << RP_KCP_HDR_QUALITY_NBITS) - 1;
             }
+
+            let q = (q_int as f32) / 8.0f32;
 
             let delta_prog = &mut self.worker.info.deltaProgQ;
             for j in 0..NUM_QUANT_TBLS {
@@ -1590,12 +1591,12 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
                 let divs = &mut delta_prog.divisors[j];
                 for i in 0..DCTSIZE2 {
-                    divs[i] = (exp_tbl[i] as i32 + q - std_quant_log2_max as i32) as i8;
+                    divs[i] = exp2f(std_quant_log2_max - exp_tbl[i] - q);
                 }
             }
             delta_prog.tid = self.worker.threadId;
 
-            entries::jpeg_set_dyn_q(self.worker.info.workIndex, q as u32);
+            entries::jpeg_set_dyn_q(self.worker.info.workIndex, q_int as u32);
             1
         }
     }
