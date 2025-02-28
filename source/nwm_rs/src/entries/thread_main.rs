@@ -29,13 +29,12 @@ mod first_time_init {
         crate::entries::work_thread::set_jpeg(jpeg_mem.0.assume_init_mut());
         let jpeg = crate::entries::work_thread::get_jpeg();
         jpeg.shared.init();
+        jpeg.shared_mut.init(&jpeg.shared);
 
         delta_q_prev_coeffs[0] =
             request_mem_from_pool::<delta_q_prev_coeffs_top_size>()?.to_ptr() as *mut _;
         delta_q_prev_coeffs[1] =
             request_mem_from_pool::<delta_q_prev_coeffs_bot_size>()?.to_ptr() as *mut _;
-
-        jpeg.shared_mut.rand32 = Rand32::new(svcGetSystemTick());
 
         Some(())
     }

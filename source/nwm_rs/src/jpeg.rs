@@ -26,6 +26,7 @@ pub struct JpegShared<'a> {
     quantTbls: QuantTbls,
     divisors: Divisors,
     divShifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    divDeltaQShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     coreCount: CoreCount,
     compInfos: &'a CompInfos,
     pub maxHSampFactor: usize,
@@ -79,8 +80,36 @@ pub struct JpegSharedMut {
     pub workInited: [bool; WORK_COUNT as usize],
     pub screenSemCount: [u8; SCREEN_COUNT as usize],
     pub deltaQ: [u8; SCREEN_COUNT as usize],
+    pub dQRescalePrev: [i8; SCREEN_COUNT as usize],
+    pub rPShifts: [[u8; DCTSIZE2]; SCREEN_COUNT as usize],
     pub deltaQCache: [DeltaQCache; DELTA_Q_CACHE_TOTAL as usize],
+    pub dQLShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
     pub rand32: Rand32,
+}
+
+impl JpegSharedMut {
+    pub fn init(&mut self, shared: &JpegShared) {
+        for s in 0..SCREEN_COUNT {
+            self.deltaQ[s as usize] = DELTA_Q_COUNT - 1;
+
+            for t in 0..NUM_QUANT_TBLS {
+                let dQShifts = unsafe {
+                    &shared
+                        .deltaQTbls
+                        .get_unchecked(self.deltaQ[s as usize] as usize)
+                        .get_unchecked(t)
+                        .tbl
+                };
+
+                let dQLShifts = &mut self.dQLShifts[s as usize][t];
+
+                for i in 0..DCTSIZE2 {
+                    dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
+                }
+            }
+        }
+        self.rand32 = Rand32::new(unsafe { svcGetSystemTick() });
+    }
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -326,6 +355,22 @@ impl<'b> Jpeg<'b> {
         self.shared
             .divisors
             .setDivisors(&self.shared.quantTbls, &mut self.shared.divShifts);
+
+        if deltaProg {
+            for q in 0..DELTA_Q_COUNT {
+                let divShifts = &mut self.shared.divDeltaQShifts[q as usize];
+                for i in 0..NUM_QUANT_TBLS {
+                    let baseShifts = &self.shared.divShifts[i];
+                    let shifts = &mut divShifts[i];
+                    let ltbl = &self.shared.deltaQTbls[q as usize][i];
+
+                    for i in 0..DCTSIZE2 {
+                        shifts[i] = baseShifts[i] + ltbl.tbl[i];
+                    }
+                }
+            }
+        }
+
         self.shared.coreCount = coreCount;
         self.shared.setCompInfos(hq);
     }
@@ -1063,12 +1108,13 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
-    fn quantize<const DQ: bool>(
+    fn quantize<const DQ: bool, const RP: bool, const RPShr: bool>(
         inout: &mut JBlock,
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        dQShifts: &[u8; DCTSIZE2],
+        dQLShifts: &[u8; DCTSIZE2],
+        rPShifts: &[u8; DCTSIZE2],
     ) {
         for i in 0..DCTSIZE2 {
             let mut temp = inout[i];
@@ -1082,11 +1128,9 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
                 if DQ {
-                    temp = i16::min(
-                        temp,
-                        (1 << MAX_COEF_BITS)
-                            - unsafe { core::intrinsics::unchecked_shl(1, dQShifts[i]) },
-                    );
+                    temp = i16::min(temp, unsafe {
+                        core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
+                    });
                 }
                 temp = -temp;
             } else {
@@ -1094,25 +1138,31 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
                 // if DQ {
-                //     temp = i16::min(
-                //         temp,
-                //         (1 << MAX_COEF_BITS)
-                //             - unsafe { core::intrinsics::unchecked_shl(1, dQShifts[i]) },
-                //     );
+                //     temp = i16::min(temp, unsafe {
+                //         core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
+                //     });
                 // }
             }
 
             if DQ {
                 unsafe {
-                    temp -= (*prev)[i];
-                    if temp < 0 {
-                        temp = -core::intrinsics::unchecked_shr(-temp, dQShifts[i]);
-                    } else {
-                        temp = core::intrinsics::unchecked_shr(temp, dQShifts[i]);
+                    if RP {
+                        if RPShr {
+                            if (*prev)[i] < 0 {
+                                (*prev)[i] =
+                                    -core::intrinsics::unchecked_shr(-(*prev)[i], rPShifts[i]);
+                            } else {
+                                (*prev)[i] =
+                                    core::intrinsics::unchecked_shr((*prev)[i], rPShifts[i]);
+                            }
+                        } else {
+                            (*prev)[i] = core::intrinsics::unchecked_shl((*prev)[i], rPShifts[i]);
+                        }
                     }
-                    (*prev)[i] += core::intrinsics::unchecked_shl(temp, dQShifts[i]);
-                    // (*prev)[i] = Self::coef_fix((*prev)[i], MAX_COEF_BITS);
-                    temp = Self::coef_fix(temp, MAX_COEF_BITS);
+                    let next = temp;
+                    temp -= (*prev)[i];
+                    (*prev)[i] = next;
+                    temp = Self::coef_fix(temp, dQLShifts[i]);
                 }
             }
 
@@ -1128,14 +1178,30 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        dQShifts: &[u8; DCTSIZE2],
+        dQLShifts: &[u8; DCTSIZE2],
+        dQRescalePrev: i8,
+        rPShifts: &[u8; DCTSIZE2],
     ) {
         Self::convsamp(input, ypos, xpos, output);
         Self::fdct_ifast(output);
         if prev.is_null() {
-            Self::quantize::<false>(output, divParts, divShifts, prev, dQShifts);
+            Self::quantize::<false, false, false>(
+                output, divParts, divShifts, prev, dQLShifts, rPShifts,
+            );
         } else {
-            Self::quantize::<true>(output, divParts, divShifts, prev, dQShifts);
+            if dQRescalePrev > 0 {
+                Self::quantize::<true, true, false>(
+                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
+                );
+            } else if dQRescalePrev < 0 {
+                Self::quantize::<true, true, true>(
+                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
+                );
+            } else {
+                Self::quantize::<true, false, false>(
+                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
+                );
+            }
         }
     }
 
@@ -1143,6 +1209,8 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     fn compress(&mut self, MCU_col_num: usize, prev: *mut JBlock) {
         let divParts = &self.worker.shared.divisors.divisors;
         let s = if self.worker.info.isTop { 0 } else { 1 };
+        let dQRescalePrev = unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(s) };
+        let deltaQ = !prev.is_null();
 
         let mut blkn = 0;
 
@@ -1152,6 +1220,34 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
         for ci in 0..MAX_COMPONENTS {
             let comp = &self.worker.shared.compInfos.infos[ci];
+
+            let divShifts = if deltaQ {
+                unsafe {
+                    self.worker
+                        .shared
+                        .divDeltaQShifts
+                        .get_unchecked(*self.worker.shared_mut.deltaQ.get_unchecked(s) as usize)
+                        .get_unchecked(comp.quant_tbl_no as usize)
+                }
+            } else {
+                unsafe {
+                    self.worker
+                        .shared
+                        .divShifts
+                        .get_unchecked(comp.quant_tbl_no as usize)
+                }
+            };
+
+            let dQLShifts = unsafe {
+                self.worker
+                    .shared_mut
+                    .dQLShifts
+                    .get_unchecked(s)
+                    .get_unchecked(comp.quant_tbl_no as usize)
+            };
+
+            let rPShifts = unsafe { self.worker.shared_mut.rPShifts.get_unchecked(s) };
+
             let MCU_width = comp.h_samp_factor;
             let MCU_height = comp.v_samp_factor;
 
@@ -1168,29 +1264,15 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         ypos,
                         xpos,
                         unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
-                        unsafe {
-                            &self
-                                .worker
-                                .shared
-                                .divShifts
-                                .get_unchecked(comp.quant_tbl_no as usize)
-                        },
-                        if prev.is_null() {
-                            ptr::null_mut()
-                        } else {
+                        divShifts,
+                        if deltaQ {
                             unsafe { prev.add(blkn) }
+                        } else {
+                            ptr::null_mut()
                         },
-                        unsafe {
-                            &self
-                                .worker
-                                .shared
-                                .deltaQTbls
-                                .get_unchecked(
-                                    *self.worker.shared_mut.deltaQ.get_unchecked(s) as usize
-                                )
-                                .get_unchecked(comp.quant_tbl_no as usize)
-                                .tbl
-                        },
+                        dQLShifts,
+                        dQRescalePrev,
+                        rPShifts,
                     );
 
                     xpos += DCTSIZE as u16;
@@ -1457,6 +1539,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             }
 
             let s = if self.worker.info.isTop { 0 } else { 1 };
+            let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             if self.worker.shared.quality <= 10 {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
                     self.worker
@@ -1466,6 +1549,49 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             } else {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
                     (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8;
+            }
+            let dQRescalePrev =
+                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) as i8 - prevDeltaQ as i8;
+            *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(s) = dQRescalePrev;
+
+            if dQRescalePrev != 0 {
+                // nsDbgPrint!(int, c_str!("dQRescalePrev"), dQRescalePrev as i32);
+                for t in 0..NUM_QUANT_TBLS {
+                    let dQShifts = &self
+                        .worker
+                        .shared
+                        .deltaQTbls
+                        .get_unchecked(*self.worker.shared_mut.deltaQ.get_unchecked(s) as usize)
+                        .get_unchecked(t)
+                        .tbl;
+
+                    let dQShiftsPrev = &self
+                        .worker
+                        .shared
+                        .deltaQTbls
+                        .get_unchecked(prevDeltaQ as usize)
+                        .get_unchecked(t)
+                        .tbl;
+
+                    let rPShifts = self.worker.shared_mut.rPShifts.get_unchecked_mut(t);
+
+                    let dQLShifts = self
+                        .worker
+                        .shared_mut
+                        .dQLShifts
+                        .get_unchecked_mut(s)
+                        .get_unchecked_mut(t);
+
+                    for i in 0..DCTSIZE2 {
+                        rPShifts[i] = if dQRescalePrev > 0 {
+                            dQShiftsPrev[i] - dQShifts[i]
+                        } else {
+                            dQShifts[i] - dQShiftsPrev[i]
+                        };
+
+                        dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
+                    }
+                }
             }
         }
     }
