@@ -8,6 +8,7 @@ use vars::*;
 
 const DELTA_Q_COUNT: u8 = 32;
 const DELTA_Q_MAX: f32 = 7.0f32;
+const MAX_COEF_BITS: u8 = 8 + 2;
 
 #[derive(ConstDefault)]
 struct DeltaQTbl {
@@ -1051,6 +1052,9 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
                 temp = -temp;
+                if !prev.is_null() {
+                    temp = i16::max(temp, -((1 << MAX_COEF_BITS) - 1));
+                }
             } else {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
@@ -1130,23 +1134,44 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
-    fn encode_one_block(
+    #[named]
+    fn encode_one_block<const DQ: bool>(
         dst: &mut WorkerDst,
         state: &mut HuffState,
         block: &[i16; DCTSIZE2],
         last_dc_val: i16,
         dc_derived_tbl: &DerivedTbl,
         ac_derived_tbl: &DerivedTbl,
-    ) {
+    ) -> i16 {
         let mut localbuf: [u8; BUFSIZE] = const_default();
         let mut buf = EncodeBuffer::<_, RS>::init(state, dst, &mut localbuf);
 
-        let val = block[0] as i32 - last_dc_val as i32;
-        let sign1 = val >> (core::mem::size_of_val(&val) * 8 - 1);
-        let val1 = val + sign1;
-        let abs = val1 ^ sign1;
+        let coef_fix = |s: i16, m: u8| {
+            if s >= (1 << m) {
+                s - ((1 << (m + 1)) - 1)
+            } else if s <= -(1 << m) {
+                s + ((1 << (m + 1)) - 1)
+            } else {
+                s
+            }
+        };
 
-        let bits = JPEG_NBITS(abs) as i32;
+        let (val1, bits, b0) = if DQ {
+            let b0 = coef_fix(block[0], MAX_COEF_BITS) as i32;
+            let val = b0 as i32 - last_dc_val as i32;
+            let val = coef_fix(val as i16, MAX_COEF_BITS) as i32;
+            let sign1 = val >> (i32::BITS as u8 - 1);
+            let val1 = val + sign1;
+            let abs = val1 ^ sign1;
+            (val1, JPEG_NBITS(abs) as i32, b0 as i16)
+        } else {
+            let val = block[0] as i32 - last_dc_val as i32;
+            let sign1 = val >> (i32::BITS as u8 - 1);
+            let val1 = val + sign1;
+            let abs = val1 ^ sign1;
+            (val1, JPEG_NBITS(abs) as i32, block[0])
+        };
+
         unsafe {
             buf.PUT_CODE(
                 *dc_derived_tbl.ehufco.get_unchecked(bits as usize),
@@ -1163,11 +1188,18 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             if val == 0 {
                 r += 16;
             } else {
-                let sign1 = val >> (core::mem::size_of_val(&val) * 8 - 1);
-                let val1 = val + sign1;
-                let abs = val1 ^ sign1;
-
-                let bits = JPEG_NBITS_NONZERO(abs) as i32;
+                let (val1, bits) = if DQ {
+                    let val = coef_fix(val as i16, MAX_COEF_BITS) as i32;
+                    let sign1 = val >> (core::mem::size_of_val(&val) * 8 - 1);
+                    let val1 = val + sign1;
+                    let abs = val1 ^ sign1;
+                    (val1, JPEG_NBITS_NONZERO(abs) as i32)
+                } else {
+                    let sign1 = val >> (core::mem::size_of_val(&val) * 8 - 1);
+                    let val1 = val + sign1;
+                    let abs = val1 ^ sign1;
+                    (val1, JPEG_NBITS_NONZERO(abs) as i32)
+                };
 
                 while r >= 16 * 16 {
                     r -= 16 * 16;
@@ -1193,9 +1225,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
 
         buf.store();
+
+        b0
     }
 
-    fn encode_mcu(&mut self) {
+    fn encode_mcu(&mut self, DQ: bool) {
         let mut blkn = 0;
 
         for ci in 0..MAX_COMPONENTS {
@@ -1206,30 +1240,44 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             for _ in 0..MCU_height {
                 for _ in 0..MCU_width {
                     let last_dc_val = self.worker.last_dc_val[ci];
-                    Self::encode_one_block(
-                        &mut self.dst,
-                        &mut self.worker.huffState,
-                        unsafe { self.worker.bufs.mcu.get_unchecked(blkn) },
-                        last_dc_val,
-                        unsafe {
-                            self.worker
-                                .shared
-                                .jpegTbls
-                                .entropyTbls
-                                .dc_derived_tbls
-                                .get_unchecked(comp.dc_tbl_no as usize)
-                        },
-                        unsafe {
-                            self.worker
-                                .shared
-                                .jpegTbls
-                                .entropyTbls
-                                .ac_derived_tbls
-                                .get_unchecked(comp.ac_tbl_no as usize)
-                        },
-                    );
-                    self.worker.last_dc_val[ci] =
-                        (*unsafe { self.worker.bufs.mcu.get_unchecked(blkn) })[0];
+                    let dst = &mut self.dst;
+                    let state = &mut self.worker.huffState;
+                    let block = unsafe { self.worker.bufs.mcu.get_unchecked(blkn) };
+                    let dc_tbl = unsafe {
+                        self.worker
+                            .shared
+                            .jpegTbls
+                            .entropyTbls
+                            .dc_derived_tbls
+                            .get_unchecked(comp.dc_tbl_no as usize)
+                    };
+                    let ac_tbl = unsafe {
+                        self.worker
+                            .shared
+                            .jpegTbls
+                            .entropyTbls
+                            .ac_derived_tbls
+                            .get_unchecked(comp.ac_tbl_no as usize)
+                    };
+                    self.worker.last_dc_val[ci] = if DQ {
+                        Self::encode_one_block::<true>(
+                            dst,
+                            state,
+                            block,
+                            last_dc_val,
+                            dc_tbl,
+                            ac_tbl,
+                        )
+                    } else {
+                        Self::encode_one_block::<false>(
+                            dst,
+                            state,
+                            block,
+                            last_dc_val,
+                            dc_tbl,
+                            ac_tbl,
+                        )
+                    };
 
                     blkn += 1;
                 }
@@ -1283,7 +1331,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                     unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
                 },
             );
-            self.encode_mcu();
+            self.encode_mcu(!prev.is_null());
         }
     }
 
