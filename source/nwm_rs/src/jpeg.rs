@@ -39,9 +39,45 @@ pub struct JpegShared<'a> {
     pub screenSem: [Handle; SCREEN_COUNT as usize],
 }
 
+const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [2, 1, 1];
+const DELTA_Q_CACHE_MAX: u8 = {
+    let mut max = 0;
+    let mut i = 0;
+    loop {
+        if i >= MAX_COMPONENTS {
+            break;
+        }
+        if max < DELTA_Q_CACHE_COUNTS[i] {
+            max = DELTA_Q_CACHE_COUNTS[i];
+        }
+        i += 1;
+    }
+    max
+};
+const DELTA_Q_CACHE_TOTAL: u8 = {
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i >= MAX_COMPONENTS {
+            break;
+        }
+        total += DELTA_Q_CACHE_COUNTS[i];
+        i += 1;
+    }
+    total
+};
+
+pub struct DeltaQCache {
+    cache: JBlock,
+    blkn: u8,
+}
+
 pub struct JpegSharedMut {
     pub workInited: [bool; WORK_COUNT as usize],
     pub screenSemCount: [u8; SCREEN_COUNT as usize],
+    pub deltaQ: u8,
+    pub deltaQCache: [DeltaQCache; DELTA_Q_CACHE_TOTAL as usize],
+    pub rand32: Rand32,
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -281,8 +317,8 @@ impl<'b> Jpeg<'b> {
         hq: u32,
         deltaProg: bool,
     ) {
-        self.shared.quality = quality;
         let quality = if deltaProg { 100 } else { quality };
+        self.shared.quality = quality;
         self.shared.quantTbls.setQuality(quality);
         self.shared
             .divisors
@@ -1087,13 +1123,9 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     }
 
     #[named]
-    fn compress(
-        &mut self,
-        MCU_col_num: usize,
-        divParts: &[[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
-        divShifts: &[[u8; DCTSIZE2]; NUM_QUANT_TBLS],
-        prev: *mut JBlock,
-    ) {
+    fn compress(&mut self, MCU_col_num: usize, prev: *mut JBlock) {
+        let divParts = &self.worker.shared.divisors.divisors;
+
         let mut blkn = 0;
 
         if MCU_col_num > self.worker.shared.mcusPerRow {
@@ -1118,7 +1150,64 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         ypos,
                         xpos,
                         unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
-                        unsafe { divShifts.get_unchecked(comp.quant_tbl_no as usize) },
+                        unsafe {
+                            &self
+                                .worker
+                                .shared
+                                .divShifts
+                                .get_unchecked(comp.quant_tbl_no as usize)
+                        },
+                        if prev.is_null() {
+                            ptr::null_mut()
+                        } else {
+                            unsafe { prev.add(blkn) }
+                        },
+                    );
+
+                    xpos += DCTSIZE as u16;
+                    blkn += 1;
+                }
+                ypos += DCTSIZE as u16;
+            }
+        }
+    }
+
+    #[named]
+    fn compress_dq(&mut self, MCU_col_num: usize, prev: *mut JBlock) {
+        let divParts = &self.worker.shared.divisors.divisors;
+
+        let mut blkn = 0;
+
+        if MCU_col_num > self.worker.shared.mcusPerRow {
+            panic!();
+        }
+
+        for ci in 0..MAX_COMPONENTS {
+            let comp = &self.worker.shared.compInfos.infos[ci];
+            let MCU_width = comp.h_samp_factor;
+            let MCU_height = comp.v_samp_factor;
+
+            let MCU_sample_width = MCU_width as u16 * DCTSIZE as u16;
+            let xpos = MCU_col_num as u16 * MCU_sample_width;
+            let mut ypos = 0;
+
+            for _ in 0..MCU_height {
+                let mut xpos = xpos;
+                for _ in 0..MCU_width {
+                    Self::forward_DCT(
+                        &self.worker.bufs.prep[ci],
+                        unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
+                        ypos,
+                        xpos,
+                        unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
+                        unsafe {
+                            &self
+                                .worker
+                                .shared
+                                .divDeltaQShifts
+                                .get_unchecked(self.worker.shared_mut.deltaQ as usize)
+                                .get_unchecked(comp.quant_tbl_no as usize)
+                        },
                         if prev.is_null() {
                             ptr::null_mut()
                         } else {
@@ -1314,24 +1403,172 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         buf.store();
     }
 
-    fn process(
+    fn dq_cache_gen_unique_indices(
         &mut self,
-        divParts: &[[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
-        divShifts: &[[u8; DCTSIZE2]; NUM_QUANT_TBLS],
-        prev: *mut JBlock,
+        indices: &mut [u8; DELTA_Q_CACHE_MAX as usize],
+        n: u8,
+        m: u8,
     ) {
+        for i in 0..n {
+            let mut v = self.worker.shared_mut.rand32.rand_range(0..(m - i) as u32) as u8;
+            for j in 0..i {
+                if v >= indices[j as usize] {
+                    v += 1;
+                }
+            }
+            let mut done = false;
+            for j in 0..i {
+                if v < indices[j as usize] {
+                    for k in (j..i).rev() {
+                        indices[k as usize + 1] = indices[k as usize];
+                    }
+                    indices[j as usize] = v;
+                    done = true;
+                    break;
+                }
+            }
+            if !done {
+                indices[i as usize] = v;
+            }
+        }
+    }
+
+    fn compute_dq(&mut self, prev: *mut JBlock) {
+        unsafe {
+            let mut delta_cache_start = 0;
+            for i in 0..MAX_COMPONENTS {
+                let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
+
+                let comp = &self.worker.shared.compInfos.infos[i];
+                let MCU_we = comp.h_samp_exp;
+                let MCU_he = comp.v_samp_exp;
+
+                self.dq_cache_gen_unique_indices(
+                    &mut indices,
+                    DELTA_Q_CACHE_COUNTS[i],
+                    core::intrinsics::unchecked_shl(
+                        self.worker.shared.mcusPerRow as u8,
+                        MCU_we + MCU_he,
+                    ),
+                );
+                for j in 0..DELTA_Q_CACHE_COUNTS[i] {
+                    let delta_cache_i = delta_cache_start + j;
+                    let blkn = indices[j as usize];
+
+                    let cache = self
+                        .worker
+                        .shared_mut
+                        .deltaQCache
+                        .get_unchecked_mut(delta_cache_i as usize);
+
+                    let mcu_i = core::intrinsics::unchecked_shr(blkn, MCU_we + MCU_he);
+                    let mcu_r = blkn & (core::intrinsics::unchecked_shl(1, MCU_we + MCU_he) - 1);
+
+                    let xpos = mcu_r & (core::intrinsics::unchecked_shl(1, MCU_we) - 1);
+                    let ypos = core::intrinsics::unchecked_shr(mcu_r, MCU_we);
+
+                    let xpos = xpos + core::intrinsics::unchecked_shl(mcu_i, MCU_we);
+                    let xpos = xpos as usize * DCTSIZE;
+                    let ypos = ypos as usize * DCTSIZE;
+
+                    cache.blkn = blkn;
+                }
+
+                delta_cache_start += DELTA_Q_CACHE_COUNTS[i];
+            }
+
+            self.worker.shared_mut.deltaQ = DELTA_Q_COUNT - 1;
+        }
+    }
+
+    #[named]
+    fn process(&mut self, prev: *mut JBlock, row_i: u8) {
+        let dq = !prev.is_null();
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
-            self.compress(
-                MCU_col_num,
-                divParts,
-                divShifts,
-                if prev.is_null() {
-                    ptr::null_mut()
-                } else {
-                    unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
-                },
-            );
-            self.encode_mcu(!prev.is_null());
+            if dq {
+                if row_i == 0 && MCU_col_num == 0 {
+                    let w = self.worker.info.workIndex.get() as usize;
+                    let s = if self.worker.info.isTop { 0 } else { 1 };
+                    unsafe {
+                        if !AtomicBool::from_ptr(
+                            self.worker.shared_mut.workInited.get_unchecked_mut(w),
+                        )
+                        .swap(true, Ordering::Relaxed)
+                        {
+                            while !entries::reset_threads() {
+                                let res = svcWaitSynchronization(
+                                    *self.worker.shared.screenSem.get_unchecked(s),
+                                    THREAD_WAIT_NS,
+                                );
+                                if res != 0 {
+                                    if res != RES_TIMEOUT as s32 {
+                                        nsDbgPrint!(
+                                            waitForSyncFailed,
+                                            c_str!("jpeg screenSem"),
+                                            res
+                                        );
+                                        entries::set_reset_threads_ar();
+                                        return;
+                                    }
+                                    continue;
+                                }
+                                break;
+                            }
+
+                            self.compute_dq(prev);
+
+                            let mut count = mem::MaybeUninit::uninit();
+                            let res = svcReleaseSemaphore(
+                                count.as_mut_ptr(),
+                                *self.worker.shared.workSem.get_unchecked(w),
+                                self.worker.info.coreCount.get() as i32 - 1,
+                            );
+                            if res != 0 {
+                                nsDbgPrint!(
+                                    releaseSemaphoreFailed,
+                                    c_str!("jpeg workSem"),
+                                    w as u32,
+                                    res
+                                );
+                            }
+                        } else {
+                            while !entries::reset_threads() {
+                                let res = svcWaitSynchronization(
+                                    *self.worker.shared.workSem.get_unchecked(w),
+                                    THREAD_WAIT_NS,
+                                );
+                                if res != 0 {
+                                    if res != RES_TIMEOUT as s32 {
+                                        nsDbgPrint!(waitForSyncFailed, c_str!("jpeg workSem"), res);
+                                        entries::set_reset_threads_ar();
+                                        return;
+                                    }
+                                    continue;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                self.compress_dq(
+                    MCU_col_num,
+                    if prev.is_null() {
+                        ptr::null_mut()
+                    } else {
+                        unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
+                    },
+                );
+            } else {
+                self.compress(
+                    MCU_col_num,
+                    if prev.is_null() {
+                        ptr::null_mut()
+                    } else {
+                        unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
+                    },
+                );
+            }
+            self.encode_mcu(dq);
         }
     }
 
@@ -1353,66 +1590,13 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         self.reset_mcu();
 
         let delta_prog = RS && unsafe { entries::get_reliable_stream_delta_prog() };
-        let delta_q = (self.worker.shared.quality * (DELTA_Q_COUNT - 1) as u32 / 100) as u8;
-
-        let mut divShifts = &self.worker.shared.divShifts;
 
         let w = self.worker.info.workIndex.get() as usize;
         let s = if self.worker.info.isTop { 0 } else { 1 };
 
         let prev = unsafe {
             if delta_prog {
-                (delta_q_prev_coeffs[s] as *mut JBlock).add(
-                    self.worker.info.restartInterval as usize
-                        * self.worker.shared.maxBlocksInMcu
-                        * self.worker.threadId.get() as usize,
-                )
-            } else {
-                ptr::null_mut()
-            }
-        };
-        if delta_prog {
-            unsafe {
-                divShifts = &self
-                    .worker
-                    .shared
-                    .divDeltaQShifts
-                    .get_unchecked(delta_q as usize);
-
-                if !AtomicBool::from_ptr(self.worker.shared_mut.workInited.get_unchecked_mut(w))
-                    .swap(true, Ordering::Relaxed)
-                {
-                    while !entries::reset_threads() {
-                        let res = svcWaitSynchronization(
-                            *self.worker.shared.screenSem.get_unchecked(s),
-                            THREAD_WAIT_NS,
-                        );
-                        if res != 0 {
-                            if res != RES_TIMEOUT as s32 {
-                                nsDbgPrint!(waitForSyncFailed, c_str!("jpeg screenSem"), res);
-                                entries::set_reset_threads_ar();
-                                return;
-                            }
-                            continue;
-                        }
-                        break;
-                    }
-
-                    let mut count = mem::MaybeUninit::uninit();
-                    let res = svcReleaseSemaphore(
-                        count.as_mut_ptr(),
-                        *self.worker.shared.workSem.get_unchecked(w),
-                        self.worker.info.coreCount.get() as i32 - 1,
-                    );
-                    if res != 0 {
-                        nsDbgPrint!(
-                            releaseSemaphoreFailed,
-                            c_str!("jpeg workSem"),
-                            w as u32,
-                            res
-                        );
-                    }
-                } else {
+                if src.len() == 0 {
                     while !entries::reset_threads() {
                         let res = svcWaitSynchronization(
                             *self.worker.shared.workSem.get_unchecked(w),
@@ -1429,8 +1613,16 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         break;
                     }
                 }
+
+                (delta_q_prev_coeffs[s] as *mut JBlock).add(
+                    self.worker.info.restartInterval as usize
+                        * self.worker.shared.maxBlocksInMcu
+                        * self.worker.threadId.get() as usize,
+                )
+            } else {
+                ptr::null_mut()
             }
-        }
+        };
 
         if self.worker.shared.maxVSampFactor == MAX_SAMP_FACTOR {
             let src_chunks = src
@@ -1450,8 +1642,6 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
                 /* Compress and encode */
                 self.process(
-                    &self.worker.shared.divisors.divisors,
-                    divShifts,
                     if prev.is_null() {
                         ptr::null_mut()
                     } else {
@@ -1462,6 +1652,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                             )
                         }
                     },
+                    i as u8,
                 );
 
                 progress();
@@ -1475,8 +1666,6 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
                 /* Compress and encode */
                 self.process(
-                    &self.worker.shared.divisors.divisors,
-                    divShifts,
                     if prev.is_null() {
                         ptr::null_mut()
                     } else {
@@ -1487,6 +1676,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                             )
                         }
                     },
+                    i as u8,
                 );
 
                 progress();
@@ -1503,12 +1693,15 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             }
         } else if delta_prog {
             unsafe {
-                entries::jpeg_set_dyn_q(self.worker.info.workIndex, delta_q as u32);
-
                 let c = self.worker.shared_mut.screenSemCount.get_unchecked_mut(s);
                 if AtomicU8::from_ptr(c).fetch_sub(1, Ordering::Relaxed) == 1 {
                     *c = self.worker.info.coreCount.get() as u8;
                     *self.worker.shared_mut.workInited.get_unchecked_mut(w) = false;
+
+                    entries::jpeg_set_dyn_q(
+                        self.worker.info.workIndex,
+                        self.worker.shared_mut.deltaQ as u32,
+                    );
 
                     let mut count = mem::MaybeUninit::uninit();
                     let res = svcReleaseSemaphore(
