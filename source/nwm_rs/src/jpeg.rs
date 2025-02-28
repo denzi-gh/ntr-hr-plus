@@ -1093,26 +1093,26 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
-                if DQ {
-                    temp = i16::min(
-                        temp,
-                        (1 << MAX_COEF_BITS)
-                            - unsafe { core::intrinsics::unchecked_shl(1, dQShifts[i]) },
-                    );
-                }
+                // if DQ {
+                //     temp = i16::min(
+                //         temp,
+                //         (1 << MAX_COEF_BITS)
+                //             - unsafe { core::intrinsics::unchecked_shl(1, dQShifts[i]) },
+                //     );
+                // }
             }
 
             if DQ {
                 unsafe {
                     temp -= (*prev)[i];
-                    temp = Self::coef_fix(temp, MAX_COEF_BITS);
                     if temp < 0 {
                         temp = -core::intrinsics::unchecked_shr(-temp, dQShifts[i]);
                     } else {
                         temp = core::intrinsics::unchecked_shr(temp, dQShifts[i]);
                     }
                     (*prev)[i] += core::intrinsics::unchecked_shl(temp, dQShifts[i]);
-                    (*prev)[i] = Self::coef_fix((*prev)[i], MAX_COEF_BITS);
+                    // (*prev)[i] = Self::coef_fix((*prev)[i], MAX_COEF_BITS);
+                    temp = Self::coef_fix(temp, MAX_COEF_BITS);
                 }
             }
 
@@ -1232,7 +1232,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
         let (val1, bits, b0) = if DQ {
             let val = block[0] as i32 - last_dc_val as i32;
-            let val = Self::coef_fix(val as i16, MAX_COEF_BITS) as i32;
+            // let val = Self::coef_fix(val as i16, MAX_COEF_BITS) as i32;
             let sign1 = val >> (i32::BITS as u8 - 1);
             let val1 = val + sign1;
             let abs = val1 ^ sign1;
@@ -1327,7 +1327,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                             .get_unchecked(comp.ac_tbl_no as usize)
                     };
                     self.worker.last_dc_val[ci] = if DQ {
-                        Self::encode_one_block::<true>(
+                        Self::encode_one_block::</* true */ false>(
                             dst,
                             state,
                             block,
@@ -1457,11 +1457,16 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             }
 
             let s = if self.worker.info.isTop { 0 } else { 1 };
-            *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
-                self.worker
-                    .shared_mut
-                    .rand32
-                    .rand_range(0..DELTA_Q_COUNT as u32) as u8;
+            if self.worker.shared.quality <= 10 {
+                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
+                    self.worker
+                        .shared_mut
+                        .rand32
+                        .rand_range(0..DELTA_Q_COUNT as u32) as u8;
+            } else {
+                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
+                    (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8;
+            }
         }
     }
 
