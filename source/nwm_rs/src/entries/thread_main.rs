@@ -12,6 +12,15 @@ pub struct ThreadsStacks<'a> {
     nwm_bufs: [*mut u8; WORK_COUNT as usize],
 }
 
+const delta_q_prev_coeffs_top_size: usize = GSP_SCREEN_WIDTH as usize
+    * GSP_SCREEN_HEIGHT_TOP as usize
+    * crate::jpeg::vars::MAX_COMPONENTS
+    * mem::size_of::<crate::jpeg::vars::JCoef>();
+const delta_q_prev_coeffs_bot_size: usize = GSP_SCREEN_WIDTH as usize
+    * GSP_SCREEN_HEIGHT_BOTTOM as usize
+    * crate::jpeg::vars::MAX_COMPONENTS
+    * mem::size_of::<crate::jpeg::vars::JCoef>();
+
 mod first_time_init {
     use super::*;
 
@@ -19,6 +28,11 @@ mod first_time_init {
         let jpeg_mem = request_mem_from_pool::<{ mem::size_of::<crate::jpeg::Jpeg>() }>()?;
         crate::entries::work_thread::set_jpeg(jpeg_mem.0.assume_init_mut());
         crate::entries::work_thread::get_jpeg().shared.init();
+
+        delta_q_prev_coeffs[0] =
+            request_mem_from_pool::<delta_q_prev_coeffs_top_size>()?.to_ptr() as *mut _;
+        delta_q_prev_coeffs[1] =
+            request_mem_from_pool::<delta_q_prev_coeffs_bot_size>()?.to_ptr() as *mut _;
 
         Some(())
     }
@@ -310,6 +324,39 @@ mod loop_main {
             //     return None;
             // }
 
+            let jpeg = entries::work_thread::get_jpeg();
+            for w in 0..WORK_COUNT {
+                let res = svcCreateSemaphore(
+                    &mut jpeg.shared.workSem[w as usize],
+                    0,
+                    v.core_count.get() as i32 - 1,
+                );
+                if res != 0 {
+                    nsDbgPrint!(createSemaphoreFailed, c_str!("jpeg workSem"), res);
+                    return None;
+                }
+                jpeg.shared_mut.workInited[w as usize] = false;
+            }
+            for s in 0..SCREEN_COUNT {
+                let res = svcCreateSemaphore(&mut jpeg.shared.screenSem[s as usize], 1, 1);
+                if res != 0 {
+                    nsDbgPrint!(createSemaphoreFailed, c_str!("jpeg screenSem"), res);
+                    return None;
+                }
+                jpeg.shared_mut.screenSemCount[s as usize] = v.core_count.get() as u8;
+            }
+
+            slice::from_raw_parts_mut(
+                delta_q_prev_coeffs[0] as *mut u8,
+                delta_q_prev_coeffs_top_size,
+            )
+            .fill(0);
+            slice::from_raw_parts_mut(
+                delta_q_prev_coeffs[1] as *mut u8,
+                delta_q_prev_coeffs_bot_size,
+            )
+            .fill(0);
+
             Some(Self(v))
         }
     }
@@ -317,6 +364,14 @@ mod loop_main {
     impl Drop for InitCleanup {
         fn drop(&mut self) {
             unsafe {
+                let jpeg = entries::work_thread::get_jpeg();
+                for s in 0..SCREEN_COUNT {
+                    let _ = svcCloseHandle(jpeg.shared.screenSem[s as usize]);
+                }
+                for w in 0..WORK_COUNT {
+                    let _ = svcCloseHandle(jpeg.shared.workSem[w as usize]);
+                }
+
                 // let _ = svcCloseHandle(cur_seg_mem_lock);
                 // let _ = svcCloseHandle(cur_seg_mem_sem);
 

@@ -159,6 +159,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                 },
                 restartInterval: restart_interval as u16,
                 workIndex: w,
+                coreCount: core_count,
             };
 
             get_jpeg().setInfo(cinfo);
@@ -273,6 +274,9 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
             }
         };
 
+        if crate::entries::reset_threads() {
+            return false;
+        }
         true
     }
 }
