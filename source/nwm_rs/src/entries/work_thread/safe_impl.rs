@@ -53,11 +53,9 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
         return None;
     }
 
-    if !do_send_frame(&t, &v) {
-        return None;
-    }
+    let jpeg = do_send_frame(&t, &v)?;
 
-    v.release()?;
+    v.release(jpeg)?;
     Some(())
 }
 
@@ -201,7 +199,7 @@ fn bctx_init(v: &ThreadBeginVars) -> bool {
     }
 }
 
-fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
+fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegRet> {
     unsafe {
         let ctx = vars.blit_ctx();
         let w = vars.v().work_index();
@@ -228,7 +226,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
 
         let progress = || {};
 
-        match entries::thread_nwm::get_reliable_stream_method() {
+        let jpeg = match entries::thread_nwm::get_reliable_stream_method() {
             entries::thread_nwm::ReliableStreamMethod::None => {
                 let mut worker = get_jpeg().getWorker::<false>(w, *t);
 
@@ -247,7 +245,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
                     free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                     user,
                 };
-                worker.encode(dst, src, pre_progress, progress);
+                worker.encode(dst, src, pre_progress, progress)
             }
             entries::thread_nwm::ReliableStreamMethod::KCP => {
                 let mut worker = get_jpeg().getWorker::<true>(w, *t);
@@ -267,17 +265,17 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> bool {
                         free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                         user,
                     };
-                    worker.encode(dst, src, pre_progress, progress);
+                    worker.encode(dst, src, pre_progress, progress)
                 } else {
-                    return false;
+                    return None;
                 }
             }
         };
 
         if crate::entries::reset_threads() {
-            return false;
+            return None;
         }
-        true
+        Some(jpeg)
     }
 }
 

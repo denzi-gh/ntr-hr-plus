@@ -85,7 +85,6 @@ pub struct TermInfo {
 
 static mut term_infos: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut jpeg_quality: u32 = const_default();
-static mut jpeg_dyn_q: RangedArray<u32, WORK_COUNT> = const_default();
 static mut jpeg_chroma_ss: u32 = const_default();
 
 pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadId) -> bool {
@@ -111,7 +110,7 @@ const _arq_rp_quality_size_assert: () = {
 
 // FIXME endianness
 #[named]
-unsafe fn send_term_dsts(w: WorkIndex) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, jpeg: crate::jpeg::JpegRet) -> bool {
     if *term_dsts.get(&w).get(&ThreadId::init_unchecked(0)) == ptr::null_mut() {
         return true;
     }
@@ -172,7 +171,7 @@ unsafe fn send_term_dsts(w: WorkIndex) -> bool {
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
         | (info.core_count.get() as u16) << RP_KCP_HDR_QUALITY_NBITS
         | (if delta_prog {
-            *jpeg_dyn_q.get(&w) as u16
+            jpeg.deltaQ as u16
         } else {
             jpeg_quality as u16
         });
@@ -387,12 +386,7 @@ pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
 
     term_dsts = const_default();
     jpeg_quality = quality;
-    jpeg_dyn_q = const_default();
     jpeg_chroma_ss = chroma_ss;
-}
-
-pub unsafe fn jpeg_set_dyn_q(w: WorkIndex, q: u32) {
-    *jpeg_dyn_q.get_mut(&w) = q;
 }
 
 pub struct ThreadDoVars(crate::entries::thread_screen::ScreenWorkVars);
@@ -423,7 +417,7 @@ impl ThreadDoVars {
         }
     }
 
-    pub fn release(self) -> Option<()> {
+    pub fn release(self, jpeg: jpeg::JpegRet) -> Option<()> {
         unsafe {
             let w = self.v().work_index();
             let syn = (*syn_handles).works.get(&w);
@@ -431,7 +425,7 @@ impl ThreadDoVars {
             let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
             let core_count = get_core_count_in_use();
             if f == core_count.get() - 1 {
-                if !send_term_dsts(w) {
+                if !send_term_dsts(w, jpeg) {
                     return None;
                 }
 
