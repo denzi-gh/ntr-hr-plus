@@ -1,15 +1,29 @@
 #![allow(unused_macros)]
 
+use core::mem::MaybeUninit;
+
 use crate::*;
 pub mod vars;
 use vars::*;
 
+const DELTA_Q_COUNT: u8 = 32;
+const DELTA_Q_MAX: f32 = 7.0f32;
+
 #[derive(ConstDefault)]
-pub struct JpegShared {
+struct DeltaQTbl {
+    tbl: [u8; DCTSIZE2],
+    q: u16,
+}
+
+#[derive(ConstDefault)]
+pub struct JpegShared<'a> {
+    quality: u32,
     quantTbls: QuantTbls,
     divisors: Divisors,
+    divShifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    divDeltaQShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     coreCount: CoreCount,
-    compInfos: &'static CompInfos,
+    compInfos: &'a CompInfos,
     pub maxHSampFactor: usize,
     pub maxVSampFactor: usize,
     pub maxBlocksInMcu: usize,
@@ -18,6 +32,8 @@ pub struct JpegShared {
     pub mcusPerRow: usize,
     pub mcusTop: usize,
     pub mcusBot: usize,
+    jpegTbls: JpegTbls,
+    deltaQTbls: [[DeltaQTbl; DELTA_Q_COUNT as usize]; NUM_QUANT_TBLS],
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -27,14 +43,55 @@ const fn jdiv_round_up(a: usize, b: usize) -> usize
     (a + b - 1) / b
 }
 
-impl JpegShared {
-    fn setCompInfos(&mut self, hq: u32) {
+impl<'a> JpegShared<'a> {
+    #[named]
+    fn initDeltaQTbls(&mut self) {
+        unsafe {
+            for i in 0..NUM_QUANT_TBLS {
+                let dtbls = self.deltaQTbls.get_unchecked_mut(i);
+                let btbls = if i == 0 {
+                    &std_luminance_quant_tbl
+                } else {
+                    &std_chrominance_quant_tbl
+                };
+
+                let mut log2_tbls = MaybeUninit::<[f32; DCTSIZE2]>::uninit();
+                for i in 0..DCTSIZE2 {
+                    let v = log2f(*btbls.get_unchecked(i) as f32);
+                    // nsDbgPrint!(int, c_str!("log2"), v as i32);
+                    (*log2_tbls.as_mut_ptr())[i] = v;
+                }
+                let log2_tbls = log2_tbls.assume_init();
+
+                for d in 0..DELTA_Q_COUNT as usize {
+                    let f = DELTA_Q_MAX / DELTA_Q_COUNT as f32 * d as f32;
+
+                    let tbl = dtbls.get_unchecked_mut(d);
+
+                    tbl.q = 0;
+                    for i in 0..DCTSIZE2 {
+                        let v = roundf(f32::max(log2_tbls.get_unchecked(i) - f, 0.0f32)) as u8;
+                        *tbl.tbl.get_unchecked_mut(i) = v;
+                        tbl.q += v as u16;
+                    }
+                    // nsDbgPrint!(int, c_str!("tbl q"), tbl.q as i32);
+                }
+            }
+        }
+    }
+
+    pub fn init(&mut self) {
+        self.jpegTbls = JpegTbls::init();
+        self.initDeltaQTbls();
+    }
+
+    fn setCompInfos<'b: 'a>(&'b mut self, hq: u32) {
         if hq as u8_ == RP_CHROMASS_444 {
-            self.compInfos = &jpegTbls.compInfos444;
+            self.compInfos = &self.jpegTbls.compInfos444;
         } else if hq as u8_ == RP_CHROMASS_422 {
-            self.compInfos = &jpegTbls.compInfos422;
+            self.compInfos = &self.jpegTbls.compInfos422;
         } else {
-            self.compInfos = &jpegTbls.compInfos420;
+            self.compInfos = &self.jpegTbls.compInfos420;
         }
         self.maxHSampFactor = 1;
         self.maxVSampFactor = 1;
@@ -184,8 +241,8 @@ pub struct HuffState {
 pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 
 #[derive(ConstDefault)]
-pub struct JpegWorker<'a, const RS: bool> {
-    shared: &'a JpegShared,
+pub struct JpegWorker<'a, 'b, const RS: bool> {
+    shared: &'a JpegShared<'b>,
     bufs: &'a mut WorkerBufs,
     info: &'a mut CInfo,
     threadId: ThreadId,
@@ -193,22 +250,48 @@ pub struct JpegWorker<'a, const RS: bool> {
     last_dc_val: [i16; MAX_COMPONENTS],
 }
 
-pub struct JpegEncode<'a, 'c, const RS: bool> {
-    worker: &'c mut JpegWorker<'a, RS>,
+pub struct JpegEncode<'a, 'b, 'c, const RS: bool> {
+    worker: &'c mut JpegWorker<'a, 'b, RS>,
     dst: WorkerDst,
 }
 
 #[derive(ConstDefault)]
-pub struct Jpeg {
-    pub shared: JpegShared,
+pub struct Jpeg<'a> {
+    pub shared: JpegShared<'a>,
     bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
     info: [CInfo; WORK_COUNT as usize],
 }
 
-impl Jpeg {
-    pub fn reset<'a>(&'a mut self, quality: u32, coreCount: CoreCount, hq: u32) {
+impl<'b> Jpeg<'b> {
+    pub fn reset<'a: 'b>(
+        &'a mut self,
+        quality: u32,
+        coreCount: CoreCount,
+        hq: u32,
+        deltaProg: bool,
+    ) {
+        self.shared.quality = quality;
+        let quality = if deltaProg { 100 } else { quality };
         self.shared.quantTbls.setQuality(quality);
-        self.shared.divisors.setDivisors(&self.shared.quantTbls);
+        self.shared
+            .divisors
+            .setDivisors(&self.shared.quantTbls, &mut self.shared.divShifts);
+
+        if deltaProg {
+            for q in 0..DELTA_Q_COUNT {
+                let divShifts = &mut self.shared.divDeltaQShifts[q as usize];
+                for i in 0..NUM_QUANT_TBLS {
+                    let baseShifts = &self.shared.divShifts[i];
+                    let shifts = &mut divShifts[i];
+                    let ltbl = &self.shared.deltaQTbls[i][q as usize];
+
+                    for i in 0..DCTSIZE2 {
+                        shifts[i] = baseShifts[i] + ltbl.tbl[i];
+                    }
+                }
+            }
+        }
+
         self.shared.coreCount = coreCount;
         self.shared.setCompInfos(hq);
     }
@@ -217,11 +300,11 @@ impl Jpeg {
         *info.workIndex.index_into_mut(&mut self.info) = info;
     }
 
-    pub unsafe fn getWorker<const RS: bool>(
-        &mut self,
+    pub unsafe fn getWorker<'a, const RS: bool>(
+        &'a mut self,
         workIndex: WorkIndex,
         threadId: ThreadId,
-    ) -> JpegWorker<RS> {
+    ) -> JpegWorker<'a, 'b, RS> {
         JpegWorker::init(
             &self.shared,
             threadId.index_into_mut(&mut self.bufs),
@@ -476,7 +559,7 @@ fn JPEG_NBITS(x: i32) -> u8 {
     }
 }
 
-impl<'a, const RS: bool> JpegWorker<'a, RS> {
+impl<'a, 'b, const RS: bool> JpegWorker<'a, 'b, RS> {
     pub fn encode<F, G>(&'a mut self, dst: WorkerDst, src: &[u8], pre_progress: F, progress: G)
     where
         F: FnMut(),
@@ -486,7 +569,7 @@ impl<'a, const RS: bool> JpegWorker<'a, RS> {
     }
 
     pub fn init(
-        shared: &'a JpegShared,
+        shared: &'a JpegShared<'b>,
         bufs: &'a mut WorkerBufs,
         info: &'a mut CInfo,
         tid: ThreadId,
@@ -502,7 +585,7 @@ impl<'a, const RS: bool> JpegWorker<'a, RS> {
     }
 }
 
-impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
+impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     fn write_marker(&mut self, mark: u8)
     /* Emit a marker code */
     {
@@ -599,9 +682,9 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
     fn write_dht(&mut self, mut index: usize, is_ac: bool) {
         let tbl = if is_ac {
-            &jpegTbls.huffTbls.acHuffTbls[index]
+            &self.worker.shared.jpegTbls.huffTbls.acHuffTbls[index]
         } else {
-            &jpegTbls.huffTbls.dcHuffTbls[index]
+            &self.worker.shared.jpegTbls.huffTbls.dcHuffTbls[index]
         };
         if is_ac {
             index |= 0x10; /* output index has AC bit set */
@@ -722,24 +805,24 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             ColorSpace::XBGR => cconvert::<3, 2, 1, 4, { S }>(
                 input,
                 &mut self.worker.bufs.color,
-                &jpegTbls.colorConvTbls.rgb_ycc_tab,
+                &self.worker.shared.jpegTbls.colorConvTbls.rgb_ycc_tab,
             ),
             ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
                 input,
                 &mut self.worker.bufs.color,
-                &jpegTbls.colorConvTbls.rgb_ycc_tab,
+                &self.worker.shared.jpegTbls.colorConvTbls.rgb_ycc_tab,
             ),
             ColorSpace::RGB565 => cconvert2::<{ S }, _>(
                 input,
                 rgb565_comps,
                 &mut self.worker.bufs.color,
-                &jpegTbls.colorConvTbls,
+                &self.worker.shared.jpegTbls.colorConvTbls,
             ),
             ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
                 input,
                 rgb5a1_comps,
                 &mut self.worker.bufs.color,
-                &jpegTbls.colorConvTbls,
+                &self.worker.shared.jpegTbls.colorConvTbls,
             ),
             ColorSpace::RGB4 => todo!(),
         }
@@ -937,12 +1020,16 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         }
     }
 
-    fn quantize(inout: &mut JBlock, divisors: &[[i16; 3]; DCTSIZE2]) {
+    fn quantize(
+        inout: &mut JBlock,
+        divParts: &[DivisorPart; DCTSIZE2],
+        divShifts: &[u8; DCTSIZE2],
+    ) {
         for i in 0..DCTSIZE2 {
             let mut temp = inout[i];
-            let recip = divisors[i][0] as u16 as u32;
-            let corr = divisors[i][1] as u32;
-            let shift = divisors[i][2] as u32;
+            let recip = divParts[i].recip as u16 as u32;
+            let corr = divParts[i].corr as u32;
+            let shift = divShifts[i];
 
             if temp < 0 {
                 temp = -temp;
@@ -964,15 +1051,21 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         output: &mut JBlock,
         ypos: u16,
         xpos: u16,
-        divisors: &[[i16; 3]; DCTSIZE2],
+        divParts: &[DivisorPart; DCTSIZE2],
+        divShifts: &[u8; DCTSIZE2],
     ) {
         Self::convsamp(input, ypos, xpos, output);
         Self::fdct_ifast(output);
-        Self::quantize(output, divisors);
+        Self::quantize(output, divParts, divShifts);
     }
 
     #[named]
-    fn compress(&mut self, MCU_col_num: usize) {
+    fn compress(
+        &mut self,
+        MCU_col_num: usize,
+        divParts: &[[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
+        divShifts: &[[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    ) {
         let mut blkn = 0;
 
         if MCU_col_num > self.worker.shared.mcusPerRow {
@@ -996,13 +1089,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                         unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
                         ypos,
                         xpos,
-                        unsafe {
-                            self.worker
-                                .shared
-                                .divisors
-                                .divisors
-                                .get_unchecked(comp.quant_tbl_no as usize)
-                        },
+                        unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
+                        unsafe { divShifts.get_unchecked(comp.quant_tbl_no as usize) },
                     );
 
                     xpos += DCTSIZE as u16;
@@ -1095,13 +1183,17 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                         unsafe { self.worker.bufs.mcu.get_unchecked(blkn) },
                         last_dc_val,
                         unsafe {
-                            jpegTbls
+                            self.worker
+                                .shared
+                                .jpegTbls
                                 .entropyTbls
                                 .dc_derived_tbls
                                 .get_unchecked(comp.dc_tbl_no as usize)
                         },
                         unsafe {
-                            jpegTbls
+                            self.worker
+                                .shared
+                                .jpegTbls
                                 .entropyTbls
                                 .ac_derived_tbls
                                 .get_unchecked(comp.ac_tbl_no as usize)
@@ -1145,9 +1237,13 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
         buf.store();
     }
 
-    fn process(&mut self) {
+    fn process(
+        &mut self,
+        divParts: &[[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
+        divShifts: &[[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    ) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
-            self.compress(MCU_col_num);
+            self.compress(MCU_col_num, divParts, divShifts);
             self.encode_mcu();
         }
     }
@@ -1169,11 +1265,26 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
 
         self.reset_mcu();
 
+        let delta_prog = RS && unsafe { entries::get_reliable_stream_delta_prog() };
+        let delta_q = (self.worker.shared.quality * (DELTA_Q_COUNT - 1) as u32 / 100) as u8;
+
+        let mut divShifts = &self.worker.shared.divShifts;
+
+        if delta_prog {
+            divShifts = unsafe {
+                &self
+                    .worker
+                    .shared
+                    .divDeltaQShifts
+                    .get_unchecked(delta_q as usize)
+            };
+        }
+
         if self.worker.shared.maxVSampFactor == MAX_SAMP_FACTOR {
             let src_chunks = src
                 .chunks_exact(pitch)
                 .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
-            for (_, chunks) in src_chunks.enumerate() {
+            for (_i, chunks) in src_chunks.enumerate() {
                 /* Pre-process */
                 let mut chunks = chunks.array_chunks::<{ DCTSIZE }>();
 
@@ -1186,19 +1297,19 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
                 pre_progress();
 
                 /* Compress and encode */
-                self.process();
+                self.process(&self.worker.shared.divisors.divisors, divShifts);
 
                 progress();
             }
         } else {
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
-            for (_, chunk) in src_chunks.enumerate() {
+            for (_i, chunk) in src_chunks.enumerate() {
                 self.pre_process_no_vsubsamp(chunk);
 
                 pre_progress();
 
                 /* Compress and encode */
-                self.process();
+                self.process(&self.worker.shared.divisors.divisors, divShifts);
 
                 progress();
             }
@@ -1212,6 +1323,8 @@ impl<'a, 'c, const RS: bool> JpegEncode<'a, 'c, RS> {
             } else {
                 self.write_rst();
             }
+        } else if delta_prog {
+            unsafe { entries::jpeg_set_dyn_q(self.worker.info.workIndex, delta_q as u32) };
         }
 
         self.write_term();

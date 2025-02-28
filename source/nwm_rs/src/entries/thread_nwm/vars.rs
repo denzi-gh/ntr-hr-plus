@@ -75,7 +75,8 @@ unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
     };
 
     reliable_stream = flags & RP_CONFIG_RELIABLE_STREAM_FLAG > 0;
-    reliable_stream_delta_prog = flags & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG > 0;
+    reliable_stream_delta_prog =
+        reliable_stream && flags & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG > 0;
 
     set_packet_data_size();
 

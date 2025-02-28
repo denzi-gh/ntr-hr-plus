@@ -18,6 +18,7 @@ mod first_time_init {
     unsafe fn init_jpeg_compress() -> Option<()> {
         let jpeg_mem = request_mem_from_pool::<{ mem::size_of::<crate::jpeg::Jpeg>() }>()?;
         crate::entries::work_thread::set_jpeg(jpeg_mem.0.assume_init_mut());
+        crate::entries::work_thread::get_jpeg().shared.init();
 
         Some(())
     }
@@ -377,10 +378,6 @@ mod loop_main {
             thread_prio,
             qos,
         };
-        let jpeg = crate::entries::work_thread::get_jpeg();
-        let quality = config.quality_ar();
-        let chroma_ss = config.chroma_ss_ar();
-        jpeg.reset(quality, vars.core_count, chroma_ss);
 
         let cb = &mut *reliable_stream_cb;
         if mp_init(
@@ -417,8 +414,17 @@ mod loop_main {
             return None;
         }
 
-        crate::entries::work_thread::reset_vars(quality, chroma_ss);
         crate::entries::thread_nwm::reset_vars(dst_flags, qos)?;
+        let jpeg = crate::entries::work_thread::get_jpeg();
+        let quality = config.quality_ar();
+        let chroma_ss = config.chroma_ss_ar();
+        jpeg.reset(
+            quality,
+            vars.core_count,
+            chroma_ss,
+            entries::get_reliable_stream_delta_prog(),
+        );
+        crate::entries::work_thread::reset_vars(quality, chroma_ss);
 
         for i in WorkIndex::all() {
             for j in ThreadId::up_to(&core_count) {

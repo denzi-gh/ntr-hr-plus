@@ -6,4 +6,5 @@ mod thread_nwm;
 mod thread_screen;
 mod work_thread;
 
-pub use thread_nwm::{rp_send_buffer, NwmInfo};
+pub use thread_nwm::{get_reliable_stream_delta_prog, rp_send_buffer, NwmInfo};
+pub use work_thread::jpeg_set_dyn_q;

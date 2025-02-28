@@ -325,7 +325,7 @@ unsafe fn rp_term_notify() {
 
 #[derive(ConstDefault)]
 pub struct JpegGlobal {
-    jpeg: *mut crate::jpeg::Jpeg,
+    jpeg: *mut crate::jpeg::Jpeg<'static>,
 }
 
 unsafe impl core::marker::Sync for JpegGlobal {}
@@ -336,7 +336,7 @@ static mut jpeg_mem: JpegGlobal = const_default();
 pub unsafe fn set_jpeg(buf: &'static mut [u8; mem::size_of::<crate::jpeg::Jpeg>()]) {
     jpeg_mem.jpeg = buf.as_mut_ptr() as *mut crate::jpeg::Jpeg;
 }
-pub unsafe fn get_jpeg() -> &'static mut crate::jpeg::Jpeg {
+pub unsafe fn get_jpeg() -> &'static mut crate::jpeg::Jpeg<'static> {
     &mut *jpeg_mem.jpeg
 }
 
@@ -391,7 +391,6 @@ pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
     jpeg_chroma_ss = chroma_ss;
 }
 
-#[allow(unused)]
 pub unsafe fn jpeg_set_dyn_q(w: WorkIndex, q: u32) {
     *jpeg_dyn_q.get_mut(&w) = q;
 }

@@ -385,8 +385,14 @@ impl QuantTbls {
 }
 
 #[derive(ConstDefault)]
+pub struct DivisorPart {
+    pub recip: i16,
+    pub corr: i16,
+}
+
+#[derive(ConstDefault)]
 pub struct Divisors {
-    pub divisors: [[[i16; 3]; DCTSIZE2]; NUM_QUANT_TBLS],
+    pub divisors: [[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
 }
 
 const ONE: u32 = 1;
@@ -427,16 +433,16 @@ fn flss(mut val: u16) -> u32 {
     }
 }
 
-fn computeReciprocal(divisor: u16, divisors: &mut [i16; 3]) {
+fn computeReciprocal(divisor: u16, divPart: &mut DivisorPart, shift: &mut u8) {
     if divisor == 1 {
         /* divisor == 1 means unquantized, so these reciprocal/correction/shift
          * values will cause the C quantization algorithm to act like the
          * identity function.  Since only the C quantization algorithm is used in
          * these cases, the scale value is irrelevant.
          */
-        divisors[0] = 1; /* reciprocal */
-        divisors[1] = 0; /* correction */
-        divisors[2] = 0; /* shift */
+        divPart.recip = 1; /* reciprocal */
+        divPart.corr = 0; /* correction */
+        *shift = 0; /* shift */
         return;
     }
 
@@ -463,13 +469,17 @@ fn computeReciprocal(divisor: u16, divisors: &mut [i16; 3]) {
         fq += 1;
     }
 
-    divisors[0] = fq as i16; /* reciprocal */
-    divisors[1] = c as i16; /* correction + roundfactor */
-    divisors[2] = r as i16; /* shift */
+    divPart.recip = fq as i16; /* reciprocal */
+    divPart.corr = c as i16; /* correction + roundfactor */
+    *shift = r as u8; /* shift */
 }
 
 impl Divisors {
-    pub fn setDivisors(&mut self, quantTbls: &QuantTbls) {
+    pub fn setDivisors(
+        &mut self,
+        quantTbls: &QuantTbls,
+        divShifts: &mut [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    ) {
         for t in 0..NUM_QUANT_TBLS {
             let divisors = &mut self.divisors[t];
             let quantTbl = &quantTbls.quantTbls[t];
@@ -481,6 +491,7 @@ impl Divisors {
                         CONST_BITS as u32 - 3,
                     ),
                     &mut divisors[i],
+                    &mut divShifts[t][i],
                 );
             }
         }
@@ -677,7 +688,7 @@ pub struct JpegTbls {
 }
 
 impl JpegTbls {
-    const fn init() -> Self {
+    pub const fn init() -> Self {
         let mut tbls: Self = const_default();
         tbls.huffTbls.init();
         tbls.entropyTbls.setEntropyTbls(&tbls.huffTbls);
@@ -688,5 +699,3 @@ impl JpegTbls {
         tbls
     }
 }
-
-pub const jpegTbls: JpegTbls = JpegTbls::init();
