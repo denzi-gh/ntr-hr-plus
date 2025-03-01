@@ -1582,7 +1582,10 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             if self.worker.shared.quality <= 10 {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
-                    (self.worker.shared_mut.rand32.rand_range(0..2) * 4) as u8;
+                    self.worker
+                        .shared_mut
+                        .rand32
+                        .rand_range(0..DELTA_Q_COUNT as u32) as u8;
             } else {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
                     (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8;
