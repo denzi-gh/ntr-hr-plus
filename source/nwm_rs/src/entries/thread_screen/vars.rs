@@ -288,8 +288,8 @@ impl ScreenWorkVars {
         unsafe { screen_encode_vars.get(&self.work_index).dma }
     }
 
-    pub fn img_src(&self) -> *const u8_ {
-        ScreenThreadVars(()).img_dst(self.is_top()) as *const u8_
+    pub fn img_src(&self) -> *mut u8_ {
+        ScreenThreadVars(()).img_dst(self.is_top()) as *mut u8_
     }
 
     pub fn img_src_prev(&self) -> *const u8_ {

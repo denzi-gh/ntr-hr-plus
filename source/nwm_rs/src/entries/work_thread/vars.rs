@@ -3,7 +3,7 @@ use super::*;
 #[derive(ConstDefault)]
 pub struct BlitCtx {
     pub format: u32_,
-    pub src: *const u8_,
+    pub src: *mut u8_,
 
     pub frame_id: u8_,
     pub is_top: bool,
@@ -578,8 +578,32 @@ impl ThreadBeginVars {
             let curr = ctx.src;
             let prev = self.v().img_src_prev();
 
-            *slice::from_raw_parts(curr, src_len as usize)
-                != *slice::from_raw_parts(prev, src_len as usize)
+            // test pattern
+            if false {
+                let w = self.v().work_index().get();
+                let pitch = ctx.pitch();
+                let bpp = ctx.bpp();
+                for y in 0..ctx.height() {
+                    for x in 0..ctx.width() {
+                        let xpos = x / crate::jpeg::vars::DCTSIZE as u32;
+                        let ypos = y / crate::jpeg::vars::DCTSIZE as u32;
+                        let color = if (ypos % 2 > 0) ^ (xpos % 2 > 0) ^ (w % 2 > 0) {
+                            255
+                        } else {
+                            0
+                        };
+
+                        let c = curr.add((y * pitch as u32 + x * bpp) as usize);
+                        for b in 0..bpp {
+                            *c.add(b as usize) = color;
+                        }
+                    }
+                }
+                true
+            } else {
+                *slice::from_raw_parts(curr, src_len as usize)
+                    != *slice::from_raw_parts(prev, src_len as usize)
+            }
         }
     }
 
