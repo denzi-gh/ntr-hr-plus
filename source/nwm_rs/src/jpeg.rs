@@ -1113,7 +1113,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        dQLShifts: &[u8; DCTSIZE2],
+        _dQLShifts: &[u8; DCTSIZE2],
         rPShifts: &[u8; DCTSIZE2],
     ) {
         for i in 0..DCTSIZE2 {
@@ -1127,11 +1127,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
-                if DQ {
-                    temp = i16::min(temp, unsafe {
-                        core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
-                    });
-                }
+                // if DQ {
+                //     temp = i16::min(temp, unsafe {
+                //         core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
+                //     });
+                // }
                 temp = -temp;
             } else {
                 let mut product = (temp as u32 + corr) * recip;
@@ -1162,7 +1162,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                     let next = temp;
                     temp -= (*prev)[i];
                     (*prev)[i] = next;
-                    temp = Self::coef_fix(temp, dQLShifts[i]);
+                    // temp = Self::coef_fix(temp, dQLShifts[i]);
                 }
             }
 
@@ -1288,6 +1288,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         self.compress(MCU_col_num, prev);
     }
 
+    #[allow(unused)]
     fn coef_fix(s: i16, m: u8) -> i16 {
         unsafe {
             if s >= core::intrinsics::unchecked_shl(1, m) {
@@ -1575,12 +1576,12 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
                     let rPShifts = self.worker.shared_mut.rPShifts.get_unchecked_mut(t);
 
-                    let dQLShifts = self
-                        .worker
-                        .shared_mut
-                        .dQLShifts
-                        .get_unchecked_mut(s)
-                        .get_unchecked_mut(t);
+                    // let dQLShifts = self
+                    //     .worker
+                    //     .shared_mut
+                    //     .dQLShifts
+                    //     .get_unchecked_mut(s)
+                    //     .get_unchecked_mut(t);
 
                     for i in 0..DCTSIZE2 {
                         rPShifts[i] = if dQRescalePrev > 0 {
@@ -1589,7 +1590,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                             dQShifts[i] - dQShiftsPrev[i]
                         };
 
-                        dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
+                        // dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
                     }
                 }
             }
