@@ -1,7 +1,5 @@
 #![allow(unused_macros)]
 
-use core::mem::MaybeUninit;
-
 use crate::*;
 pub mod vars;
 use vars::*;
@@ -136,13 +134,12 @@ impl<'a> JpegShared<'a> {
                         &std_chrominance_quant_tbl
                     };
 
-                    let mut log2_tbls = MaybeUninit::<[f32; DCTSIZE2]>::uninit();
+                    let mut log2_tbls: [f32; DCTSIZE2] = const_default();
                     for i in 0..DCTSIZE2 {
                         let v = log2f(*btbls.get_unchecked(i) as f32);
                         // nsDbgPrint!(int, c_str!("log2"), v as i32);
-                        (*log2_tbls.as_mut_ptr())[i] = v;
+                        log2_tbls[i] = v;
                     }
-                    let log2_tbls = log2_tbls.assume_init();
 
                     // tbl.q = 0;
                     for i in 0..DCTSIZE2 {
@@ -1307,6 +1304,19 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
+    #[allow(unused)]
+    #[named]
+    fn coef_check(s: i16, m: u8) {
+        unsafe {
+            if s >= core::intrinsics::unchecked_shl(1, m)
+                || s <= -core::intrinsics::unchecked_shl(1, m)
+            {
+                nsDbgPrint!(int, c_str!("s"), s as i32);
+                nsDbgPrint!(int, c_str!("m"), m as i32);
+            }
+        }
+    }
+
     #[named]
     fn encode_one_block<const DQ: bool>(
         dst: &mut WorkerDst,
@@ -1572,10 +1582,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             if self.worker.shared.quality <= 10 {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
-                    self.worker
-                        .shared_mut
-                        .rand32
-                        .rand_range(0..DELTA_Q_COUNT as u32) as u8;
+                    (self.worker.shared_mut.rand32.rand_range(0..2) * 4) as u8;
             } else {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
                     (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8;
@@ -1623,6 +1630,8 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         } else {
                             dQShifts[i] - dQShiftsPrev[i]
                         };
+
+                        // nsDbgPrint!(int, c_str!("dQShifts"), dQShifts[i] as i32);
 
                         // dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
                     }
@@ -1844,11 +1853,12 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             }
         } else if delta_prog {
             unsafe {
+                deltaQ = *self.worker.shared_mut.deltaQ.get_unchecked(s);
+
                 let c = self.worker.shared_mut.screenSemCount.get_unchecked_mut(s);
                 if AtomicU8::from_ptr(c).fetch_sub(1, Ordering::Relaxed) == 1 {
                     *c = self.worker.info.coreCount.get() as u8;
                     *self.worker.shared_mut.workInited.get_unchecked_mut(w) = false;
-                    deltaQ = *self.worker.shared_mut.deltaQ.get_unchecked(s);
 
                     let mut count = mem::MaybeUninit::uninit();
                     let res = svcReleaseSemaphore(
