@@ -81,7 +81,7 @@ pub struct JpegSharedMut {
     pub screenSemCount: [u8; SCREEN_COUNT as usize],
     pub deltaQ: [u8; SCREEN_COUNT as usize],
     pub dQRescalePrev: [i8; SCREEN_COUNT as usize],
-    pub rPShifts: [[u8; DCTSIZE2]; SCREEN_COUNT as usize],
+    pub rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
     pub deltaQCache: [DeltaQCache; DELTA_Q_CACHE_TOTAL as usize],
     pub dQLShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
     pub rand32: Rand32,
@@ -1246,7 +1246,13 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                     .get_unchecked(comp.quant_tbl_no as usize)
             };
 
-            let rPShifts = unsafe { self.worker.shared_mut.rPShifts.get_unchecked(s) };
+            let rPShifts = unsafe {
+                self.worker
+                    .shared_mut
+                    .rPShifts
+                    .get_unchecked(s)
+                    .get_unchecked(comp.quant_tbl_no as usize)
+            };
 
             let MCU_width = comp.h_samp_factor;
             let MCU_height = comp.v_samp_factor;
@@ -1597,7 +1603,12 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         .get_unchecked(t)
                         .tbl;
 
-                    let rPShifts = self.worker.shared_mut.rPShifts.get_unchecked_mut(t);
+                    let rPShifts = self
+                        .worker
+                        .shared_mut
+                        .rPShifts
+                        .get_unchecked_mut(s)
+                        .get_unchecked_mut(t);
 
                     // let dQLShifts = self
                     //     .worker
