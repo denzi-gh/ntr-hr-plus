@@ -1387,28 +1387,51 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             let MCU_width = comp.h_samp_factor;
             let MCU_height = comp.v_samp_factor;
 
+            let dc_tbl = if DQ {
+                unsafe {
+                    self.worker
+                        .shared
+                        .jpegTbls
+                        .dQEntropyTbls
+                        .dc_derived_tbls
+                        .get_unchecked(comp.dc_tbl_no as usize)
+                }
+            } else {
+                unsafe {
+                    self.worker
+                        .shared
+                        .jpegTbls
+                        .entropyTbls
+                        .dc_derived_tbls
+                        .get_unchecked(comp.dc_tbl_no as usize)
+                }
+            };
+            let ac_tbl = if DQ {
+                unsafe {
+                    self.worker
+                        .shared
+                        .jpegTbls
+                        .dQEntropyTbls
+                        .ac_derived_tbls
+                        .get_unchecked(comp.ac_tbl_no as usize)
+                }
+            } else {
+                unsafe {
+                    self.worker
+                        .shared
+                        .jpegTbls
+                        .entropyTbls
+                        .ac_derived_tbls
+                        .get_unchecked(comp.ac_tbl_no as usize)
+                }
+            };
+
             for _ in 0..MCU_height {
                 for _ in 0..MCU_width {
                     let last_dc_val = self.worker.last_dc_val[ci];
                     let dst = &mut self.dst;
                     let state = &mut self.worker.huffState;
                     let block = unsafe { self.worker.bufs.mcu.get_unchecked(blkn) };
-                    let dc_tbl = unsafe {
-                        self.worker
-                            .shared
-                            .jpegTbls
-                            .entropyTbls
-                            .dc_derived_tbls
-                            .get_unchecked(comp.dc_tbl_no as usize)
-                    };
-                    let ac_tbl = unsafe {
-                        self.worker
-                            .shared
-                            .jpegTbls
-                            .entropyTbls
-                            .ac_derived_tbls
-                            .get_unchecked(comp.ac_tbl_no as usize)
-                    };
                     self.worker.last_dc_val[ci] = if DQ {
                         Self::encode_one_block::</* true */ false>(
                             dst,

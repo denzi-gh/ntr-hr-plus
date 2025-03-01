@@ -17,10 +17,11 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
             }
 
             let skip_frame =
-                !unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() }
-                    && !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
-                    && !format_changed
-                    && !v.frame_changed();
+                true || !unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() };
+            let skip_frame = skip_frame
+                && !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
+                && !format_changed
+                && !v.frame_changed();
 
             if !skip_frame {
                 if unsafe { entries::thread_nwm::get_reliable_stream_method() }

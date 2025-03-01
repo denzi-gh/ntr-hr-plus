@@ -132,6 +132,52 @@ impl HuffTbls {
             val_ac_chrominance.as_slice(),
         );
     }
+
+    pub fn init_dq(&mut self) {
+        let mut freq: [u16; 257] = const_default();
+
+        {
+            freq.fill(0);
+            let dc_lum_freq = &mut freq;
+            for i in 0..=12 {
+                dc_lum_freq[i] = (12 + 1 - i) as u16;
+            }
+            gen_optimal_table(&mut self.dcHuffTbls[0], dc_lum_freq);
+        }
+        {
+            freq.fill(0);
+            let dc_chrom_freq = &mut freq;
+            for i in 0..=12 {
+                dc_chrom_freq[i] = (12 + 1 - i) as u16;
+            }
+            gen_optimal_table(&mut self.dcHuffTbls[1], dc_chrom_freq);
+        }
+        let fill_ac_freq = |freq: &mut [u16; 257], base: &[u8]| {
+            let dq_freq = (0x0b..(0xfb + 1)).step_by(0x10);
+            let count = base.len() + dq_freq.len();
+            for (i, v) in base.iter().enumerate() {
+                freq[*v as usize] = (count - i) as u16;
+            }
+            let count = count - base.len();
+            for (i, v) in dq_freq.enumerate() {
+                freq[v as usize] = (count - i) as u16;
+            }
+        };
+        {
+            freq.fill(0);
+            let ac_lum_freq = &mut freq;
+            fill_ac_freq(ac_lum_freq, &val_ac_luminance);
+            gen_optimal_table(&mut self.acHuffTbls[0], ac_lum_freq);
+        }
+
+        {
+            freq.fill(0);
+            let ac_chrom_freq = &mut freq;
+            fill_ac_freq(ac_chrom_freq, &val_ac_chrominance);
+
+            gen_optimal_table(&mut self.acHuffTbls[1], ac_chrom_freq);
+        }
+    }
 }
 
 const MAXJSAMPLE: usize = 255;
@@ -511,7 +557,13 @@ pub struct EntropyTbls {
     pub ac_derived_tbls: [DerivedTbl; NUM_HUFF_TBLS],
 }
 
-const fn setDerivedTbl(tbl: &mut DerivedTbl, isDC: bool, tblno: usize, huffTbls: &HuffTbls) {
+const fn setDerivedTbl(
+    tbl: &mut DerivedTbl,
+    isDC: bool,
+    tblno: usize,
+    huffTbls: &HuffTbls,
+    isDQ: bool,
+) {
     /* Note that huffsize[] and huffcode[] are filled in code-length order,
      * paralleling the order of the symbols themselves in htbl->huffval[].
      */
@@ -587,7 +639,15 @@ const fn setDerivedTbl(tbl: &mut DerivedTbl, isDC: bool, tblno: usize, huffTbls:
      * lossy mode and 0..16 for DC in lossless mode.  (We could constrain them
      * further based on data depth and mode, but this seems enough.)
      */
-    let maxsymbol = if isDC { 15 } else { 255 };
+    let maxsymbol = if isDC {
+        if isDQ {
+            16
+        } else {
+            15
+        }
+    } else {
+        255
+    };
 
     let mut p = 0;
     loop {
@@ -605,11 +665,11 @@ const fn setDerivedTbl(tbl: &mut DerivedTbl, isDC: bool, tblno: usize, huffTbls:
 }
 
 impl EntropyTbls {
-    pub const fn setEntropyTbls(&mut self, huffTbls: &HuffTbls) {
+    pub const fn setEntropyTbls(&mut self, huffTbls: &HuffTbls, isDQ: bool) {
         let mut i = 0;
         loop {
-            setDerivedTbl(&mut self.dc_derived_tbls[i], true, i, huffTbls);
-            setDerivedTbl(&mut self.ac_derived_tbls[i], false, i, huffTbls);
+            setDerivedTbl(&mut self.dc_derived_tbls[i], true, i, huffTbls, isDQ);
+            setDerivedTbl(&mut self.ac_derived_tbls[i], false, i, huffTbls, isDQ);
 
             i += 1;
             if i >= NUM_HUFF_TBLS {
@@ -681,6 +741,8 @@ pub const jpeg_natural_order: [u8; DCTSIZE2] = [
 pub struct JpegTbls {
     pub huffTbls: HuffTbls,
     pub entropyTbls: EntropyTbls,
+    pub dQHuffTbls: HuffTbls,
+    pub dQEntropyTbls: EntropyTbls,
     pub colorConvTbls: ColorConvTabs,
     pub compInfos420: CompInfos,
     pub compInfos422: CompInfos,
@@ -688,14 +750,182 @@ pub struct JpegTbls {
 }
 
 impl JpegTbls {
-    pub const fn init() -> Self {
+    pub fn init() -> Self {
         let mut tbls: Self = const_default();
         tbls.huffTbls.init();
-        tbls.entropyTbls.setEntropyTbls(&tbls.huffTbls);
+        tbls.entropyTbls.setEntropyTbls(&tbls.huffTbls, false);
+        tbls.dQHuffTbls.init_dq();
+        tbls.dQEntropyTbls.setEntropyTbls(&tbls.dQHuffTbls, true);
         tbls.colorConvTbls.init();
         tbls.compInfos420.setColorSpaceYCbCr420();
         tbls.compInfos422.setColorSpaceYCbCr422();
         tbls.compInfos444.setColorSpaceYCbCr444();
         tbls
+    }
+}
+
+pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
+    #![allow(unused_assignments)]
+
+    const MAX_CLEN: usize = 32; /* assumed maximum initial code length */
+    let mut bits: [u8; MAX_CLEN + 1] = const_default(); /* bits[k] = # of symbols with code length k */
+    let mut bit_pos: [isize; MAX_CLEN + 1] = const_default(); /* # of symbols with smaller code length */
+    let mut codesize: [isize; 257] = const_default(); /* codesize[k] = code length of symbol k */
+    let mut nz_index: [isize; 257] = const_default(); /* index of nonzero symbol in the original freq
+                                                      array */
+    let mut others: [isize; 257] = const_default(); /* next symbol in current branch of tree */
+    let (mut c1, mut c2): (isize, isize) = const_default();
+    let (mut p, mut i, mut j): (isize, isize, isize) = const_default();
+    let mut num_nz_symbols: isize = const_default();
+    let (mut v, mut v2): (isize, isize) = const_default();
+
+    /* This algorithm is explained in section K.2 of the JPEG standard */
+
+    // bits.fill(0);
+    // codesize.fill(0);
+    for i in 0..257 {
+        others[i] = -1; /* init links to empty */
+    }
+
+    freq[256] = 1; /* make sure 256 has a nonzero count */
+    /* Including the pseudo-symbol 256 in the Huffman procedure guarantees
+     * that no real symbol is given code-value of all ones, because 256
+     * will be placed last in the largest codeword category.
+     */
+
+    /* Group nonzero frequencies together so we can more easily find the
+     * smallest.
+     */
+    num_nz_symbols = 0;
+    for i in 0..257 {
+        if freq[i] > 0 {
+            nz_index[num_nz_symbols as usize] = i as isize;
+            freq[num_nz_symbols as usize] = freq[i];
+            num_nz_symbols += 1;
+        }
+    }
+
+    /* Huffman's basic algorithm to assign optimal code lengths to symbols */
+
+    loop {
+        /* Find the two smallest nonzero frequencies; set c1, c2 = their symbols */
+        /* In case of ties, take the larger symbol number.  Since we have grouped
+         * the nonzero symbols together, checking for zero symbols is not
+         * necessary.
+         */
+        c1 = -1;
+        c2 = -1;
+        v = 30000isize;
+        v2 = 30000isize;
+        for i in 0..num_nz_symbols {
+            if freq[i as usize] <= v2 as u16 {
+                if freq[i as usize] <= v as u16 {
+                    c2 = c1;
+                    v2 = v;
+                    v = freq[i as usize] as isize;
+                    c1 = i;
+                } else {
+                    v2 = freq[i as usize] as isize;
+                    c2 = i;
+                }
+            }
+        }
+
+        /* Done if we've merged everything into one frequency */
+        if c2 < 0 {
+            break;
+        }
+
+        /* Else merge the two counts/trees */
+        freq[c1 as usize] += freq[c2 as usize];
+        /* Set the frequency to a very high value instead of zero, so we don't have
+         * to check for zero values.
+         */
+        freq[c2 as usize] = 30001u16;
+
+        /* Increment the codesize of everything in c1's tree branch */
+        codesize[c1 as usize] += 1;
+        while others[c1 as usize] >= 0 {
+            c1 = others[c1 as usize];
+            codesize[c1 as usize] += 1;
+        }
+
+        others[c1 as usize] = c2; /* chain c2 onto c1's tree branch */
+
+        /* Increment the codesize of everything in c2's tree branch */
+        codesize[c2 as usize] += 1;
+        while others[c2 as usize] >= 0 {
+            c2 = others[c2 as usize];
+            codesize[c2 as usize] += 1;
+        }
+    }
+
+    /* Now count the number of symbols of each code length */
+    for i in 0..num_nz_symbols {
+        /* The JPEG standard seems to think that this can't happen, */
+        /* but I'm paranoid... */
+        if codesize[i as usize] > MAX_CLEN as isize {
+            panic!();
+        }
+
+        bits[codesize[i as usize] as usize] += 1;
+    }
+
+    /* Count the number of symbols with a length smaller than i bits, so we can
+     * construct the symbol table more efficiently.  Note that this includes the
+     * pseudo-symbol 256, but since it is the last symbol, it will not affect the
+     * table.
+     */
+    p = 0;
+    for i in 0..=MAX_CLEN {
+        bit_pos[i] = p;
+        p += bits[i] as isize;
+    }
+
+    /* JPEG doesn't allow symbols with code lengths over 16 bits, so if the pure
+     * Huffman procedure assigned any such lengths, we must adjust the coding.
+     * Here is what Rec. ITU-T T.81 | ISO/IEC 10918-1 says about how this next
+     * bit works: Since symbols are paired for the longest Huffman code, the
+     * symbols are removed from this length category two at a time.  The prefix
+     * for the pair (which is one bit shorter) is allocated to one of the pair;
+     * then, skipping the BITS entry for that prefix length, a code word from the
+     * next shortest nonzero BITS entry is converted into a prefix for two code
+     * words one bit longer.
+     */
+
+    for i in (17..=MAX_CLEN).rev() {
+        while bits[i] > 0 {
+            j = i as isize - 2; /* find length of new prefix to be used */
+            while bits[j as usize] == 0 {
+                j -= 1;
+            }
+
+            bits[i] -= 2; /* remove two symbols */
+            bits[i - 1] += 1; /* one goes in this length */
+            bits[j as usize + 1] += 2; /* two new symbols in this length */
+            bits[j as usize] -= 1; /* symbol of this length is now a prefix */
+        }
+    }
+
+    i = 16;
+    /* Remove the count for the pseudo-symbol 256 from the largest codelength */
+    while bits[i as usize] == 0
+    /* find largest codelength still in use */
+    {
+        i -= 1;
+    }
+    bits[i as usize] -= 1;
+
+    /* Return final symbol counts (only for lengths 0..16) */
+    tbl.bits = bits[0..tbl.bits.len()].try_into().unwrap();
+
+    /* Return a list of the symbols sorted by code length */
+    /* It's not real clear to me why we don't need to consider the codelength
+     * changes made above, but Rec. ITU-T T.81 | ISO/IEC 10918-1 seems to think
+     * this works.
+     */
+    for i in 0..(num_nz_symbols - 1) {
+        tbl.huffval[bit_pos[codesize[i as usize] as usize] as usize] = nz_index[i as usize] as u8;
+        bit_pos[codesize[i as usize] as usize] += 1;
     }
 }
