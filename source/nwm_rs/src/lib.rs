@@ -20,6 +20,7 @@
 #![feature(ptr_sub_ptr)]
 #![feature(array_ptr_get)]
 #![feature(generic_arg_infer)]
+#![feature(get_many_mut)]
 #![allow(static_mut_refs)]
 
 use crate::dbg::*;

@@ -13,11 +13,6 @@ pub struct JpegRet {
     pub deltaQ: u8,
 }
 
-#[derive(ConstDefault)]
-struct DeltaQTbl {
-    tbl: [u8; DCTSIZE2],
-}
-
 // #[derive(ConstDefault)]
 pub struct JpegShared<'a> {
     quality: u32,
@@ -36,7 +31,8 @@ pub struct JpegShared<'a> {
     pub mcusTop: usize,
     pub mcusBot: usize,
     jpegTbls: JpegTbls,
-    deltaQTbls: [[DeltaQTbl; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
+    deltaQTbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
+    deltaQ0Tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     deltaQNs: [[u16; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub workSem: [Handle; WORK_COUNT as usize],
     pub screenSem: [Handle; SCREEN_COUNT as usize],
@@ -71,8 +67,11 @@ const DELTA_Q_CACHE_TOTAL: u8 = {
 };
 
 pub struct DeltaQCache {
-    _cache: JBlock,
-    blkn: u8,
+    cache: JBlock,
+    next: JBlock,
+    xpos: u16,
+    ypos: u16,
+    hit: bool,
 }
 
 pub struct JpegSharedMut {
@@ -82,7 +81,7 @@ pub struct JpegSharedMut {
     pub deltaQ: [u8; SCREEN_COUNT as usize],
     pub dQRescalePrev: [i8; SCREEN_COUNT as usize],
     pub rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
-    pub deltaQCache: [DeltaQCache; DELTA_Q_CACHE_TOTAL as usize],
+    pub deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; SCREEN_COUNT as usize],
     pub rand32: Rand32,
 }
 
@@ -106,14 +105,24 @@ impl<'a> JpegShared<'a> {
     #[named]
     fn initDeltaQTbls(&mut self) {
         unsafe {
-            for d in 0..DELTA_Q_COUNT as usize {
+            for d in (0..DELTA_Q_COUNT as usize).rev() {
                 let f = DELTA_Q_MAX / DELTA_Q_COUNT as f32 * d as f32;
 
-                let dtbls = self.deltaQTbls.get_unchecked_mut(d);
+                let [dQTbls, d0QTbls] = self.deltaQTbls.get_many_unchecked_mut([
+                    d,
+                    if d == DELTA_Q_COUNT as usize - 1 {
+                        0
+                    } else {
+                        DELTA_Q_COUNT as usize - 1
+                    },
+                ]);
+                let dQ0Tbls = self.deltaQ0Tbls.get_unchecked_mut(d);
                 let qns = self.deltaQNs.get_unchecked_mut(d);
 
                 for i in 0..NUM_QUANT_TBLS {
-                    let tbl = dtbls.get_unchecked_mut(i);
+                    let dQTbl = dQTbls.get_unchecked_mut(i);
+                    let dQ0Tbl = dQ0Tbls.get_unchecked_mut(i);
+                    let d0QTbl = d0QTbls.get_unchecked_mut(i);
                     let qn = qns.get_unchecked_mut(i);
                     let btbls = if i == 0 {
                         &std_luminance_quant_tbl
@@ -131,7 +140,13 @@ impl<'a> JpegShared<'a> {
                     *qn = 0;
                     for i in 0..DCTSIZE2 {
                         let v = roundf(f32::max(log2_tbls.get_unchecked(i) - f, 0.0f32)) as u8;
-                        *tbl.tbl.get_unchecked_mut(i) = v;
+                        *dQTbl.get_unchecked_mut(i) = v;
+                        if d == DELTA_Q_COUNT as usize - 1 {
+                            *dQ0Tbl.get_unchecked_mut(i) = 0;
+                        } else {
+                            *dQ0Tbl.get_unchecked_mut(i) = v - *d0QTbl.get_unchecked_mut(i);
+                        }
+
                         *qn += v as u16;
                     }
                     // nsDbgPrint!(int, c_str!("qn"), *qn as i32);
@@ -379,7 +394,7 @@ impl<'b> Jpeg<'b> {
                     let ltbl = &self.shared.deltaQTbls[q as usize][i];
 
                     for i in 0..DCTSIZE2 {
-                        shifts[i] = baseShifts[i] + ltbl.tbl[i];
+                        shifts[i] = baseShifts[i] + ltbl[i];
                     }
                 }
             }
@@ -1139,13 +1154,36 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         }
     }
 
-    fn quantize<const DIFF_PREV: bool, const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+    fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+        c: JCoef,
+        s: u8,
+    ) -> JCoef {
+        unsafe {
+            if RESCALE_PREV {
+                if RESCALE_PREV_SHR {
+                    if c < 0 {
+                        -core::intrinsics::unchecked_shr(-c, s)
+                    } else {
+                        core::intrinsics::unchecked_shr(c, s)
+                    }
+                } else {
+                    core::intrinsics::unchecked_shl(c, s)
+                }
+            } else {
+                c
+            }
+        }
+    }
+
+    fn quantize<const UPDATE_PREV: bool, const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
         inout: &mut JBlock,
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
         rPShifts: &[u8; DCTSIZE2],
-    ) {
+        next: *mut JBlock,
+    ) -> u32 {
+        let mut ret = 0;
         for i in 0..DCTSIZE2 {
             let mut temp = inout[i];
             let recip = divParts[i].recip as u16 as u32;
@@ -1157,39 +1195,53 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
+                if DELTA_Q && !UPDATE_PREV {
+                    ret += JPEG_NBITS_NONZERO(temp as i32) as u32;
+                }
                 temp = -temp;
             } else {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
+                if DELTA_Q && !UPDATE_PREV {
+                    ret += JPEG_NBITS_NONZERO(temp as i32) as u32;
+                }
                 temp = product as i16;
             }
 
-            if DIFF_PREV {
-                unsafe {
-                    if RESCALE_PREV {
-                        if RESCALE_PREV_SHR {
-                            if (*prev)[i] < 0 {
-                                (*prev)[i] =
-                                    -core::intrinsics::unchecked_shr(-(*prev)[i], rPShifts[i]);
-                            } else {
-                                (*prev)[i] =
-                                    core::intrinsics::unchecked_shr((*prev)[i], rPShifts[i]);
-                            }
-                        } else {
-                            (*prev)[i] = core::intrinsics::unchecked_shl((*prev)[i], rPShifts[i]);
-                        }
+            if DELTA_Q {
+                if UPDATE_PREV {
+                    unsafe {
+                        (*prev)[i] = Self::rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>(
+                            (*prev)[i],
+                            rPShifts[i],
+                        );
+                        let next = temp;
+                        temp -= (*prev)[i];
+                        (*prev)[i] = next;
                     }
-                    let next = temp;
-                    temp -= (*prev)[i];
-                    (*prev)[i] = next;
+                } else {
+                    unsafe {
+                        (*next)[i] = Self::rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>(
+                            (*prev)[i],
+                            rPShifts[i],
+                        );
+                        let next_temp = temp;
+                        temp -= (*next)[i];
+                        (*next)[i] = next_temp;
+                    }
                 }
             }
 
             inout[i] = temp;
         }
+        ret
     }
 
-    fn forward_DCT<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+    fn forward_DCT<
+        const UPDATE_PREV: bool,
+        const RESCALE_PREV: bool,
+        const RESCALE_PREV_SHR: bool,
+    >(
         input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
         output: &mut JBlock,
         ypos: u16,
@@ -1198,16 +1250,17 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
         rPShifts: &[u8; DCTSIZE2],
-    ) {
+        next: *mut JBlock,
+    ) -> u32 {
         Self::convsamp(input, ypos, xpos, output);
         Self::fdct_ifast(output);
-        Self::quantize::<DELTA_Q, RESCALE_PREV, RESCALE_PREV_SHR>(
-            output, divParts, divShifts, prev, rPShifts,
-        );
+        Self::quantize::<UPDATE_PREV, RESCALE_PREV, RESCALE_PREV_SHR>(
+            output, divParts, divShifts, prev, rPShifts, next,
+        )
     }
 
     #[named]
-    fn compress<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+    fn compress<const DELTA_CACHE: bool, const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
         &mut self,
         MCU_col_num: usize,
         prev: *mut JBlock,
@@ -1215,10 +1268,10 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         let divParts = &self.worker.shared.divisors.divisors;
         let s = if self.worker.info.isTop { 0 } else { 1 };
         let mut blkn = 0;
-
-        if MCU_col_num > self.worker.shared.mcusPerRow {
-            panic!();
-        }
+        let cache = unsafe { self.worker.shared_mut.deltaQCache.get_unchecked_mut(s) };
+        let deltaQ = unsafe { *self.worker.shared_mut.deltaQ.get_unchecked(s) as usize };
+        let deltaQ0 = unsafe { self.worker.shared.deltaQ0Tbls.get_unchecked(deltaQ) };
+        let mut delta_cache_start = 0;
 
         for ci in 0..MAX_COMPONENTS {
             let comp = &self.worker.shared.compInfos.infos[ci];
@@ -1228,7 +1281,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     self.worker
                         .shared
                         .divDeltaQShifts
-                        .get_unchecked(*self.worker.shared_mut.deltaQ.get_unchecked(s) as usize)
+                        .get_unchecked(deltaQ)
                         .get_unchecked(comp.quant_tbl_no as usize)
                 }
             } else {
@@ -1258,36 +1311,88 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             for _ in 0..MCU_height {
                 let mut xpos = xpos;
                 for _ in 0..MCU_width {
-                    Self::forward_DCT::<RESCALE_PREV, RESCALE_PREV_SHR>(
-                        &self.worker.bufs.prep[ci],
-                        unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
-                        ypos,
-                        xpos,
-                        unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
-                        divShifts,
-                        if !DELTA_Q {
-                            ptr::null_mut()
-                        } else {
-                            unsafe { prev.add(blkn) }
-                        },
-                        rPShifts,
-                    );
+                    let mut cache_hit = false;
+                    let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
+                    let prev = if !DELTA_Q {
+                        ptr::null_mut()
+                    } else {
+                        unsafe { prev.add(blkn as usize) }
+                    };
+
+                    if DELTA_CACHE {
+                        for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
+                            let delta_cache_i = delta_cache_start + qi;
+                            let cache = unsafe { cache.get_unchecked_mut(delta_cache_i as usize) };
+
+                            if cache.hit {
+                                continue;
+                            }
+
+                            if cache.xpos == xpos && cache.ypos == ypos {
+                                if deltaQ == DELTA_Q_COUNT as usize - 1 {
+                                    *output = cache.cache;
+                                    unsafe { *prev = cache.next };
+                                } else {
+                                    let deltaQ0 = unsafe {
+                                        deltaQ0.get_unchecked(comp.quant_tbl_no as usize)
+                                    };
+                                    for i in 0..DCTSIZE2 {
+                                        output[i] = Self::rescale_prev::<true, true>(
+                                            cache.cache[i],
+                                            deltaQ0[i],
+                                        );
+                                        unsafe {
+                                            (*prev)[i] = Self::rescale_prev::<true, true>(
+                                                cache.next[i],
+                                                deltaQ0[i],
+                                            );
+                                        }
+                                    }
+                                }
+                                // nsDbgPrint!(int, c_str!("blkn"), blkn as i32);
+                                cache.hit = true;
+                                cache_hit = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !cache_hit {
+                        Self::forward_DCT::<true, RESCALE_PREV, RESCALE_PREV_SHR>(
+                            &self.worker.bufs.prep[ci],
+                            output,
+                            ypos,
+                            xpos,
+                            unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
+                            divShifts,
+                            prev,
+                            rPShifts,
+                            ptr::null_mut(),
+                        );
+                    }
 
                     xpos += DCTSIZE as u16;
                     blkn += 1;
                 }
                 ypos += DCTSIZE as u16;
             }
+
+            delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
         }
     }
 
     #[named]
     fn compress_dq<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
         &mut self,
+        delta_cache: bool,
         MCU_col_num: usize,
         prev: *mut JBlock,
     ) {
-        self.compress::<RESCALE_PREV, RESCALE_PREV_SHR>(MCU_col_num, prev);
+        if delta_cache {
+            self.compress::<true, RESCALE_PREV, RESCALE_PREV_SHR>(MCU_col_num, prev);
+        } else {
+            self.compress::<false, RESCALE_PREV, RESCALE_PREV_SHR>(MCU_col_num, prev);
+        }
     }
 
     #[allow(unused)]
@@ -1489,13 +1594,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
     }
 
     fn dq_cache_gen_unique_indices(
-        &mut self,
+        rand32: &mut Rand32,
         indices: &mut [u8; DELTA_Q_CACHE_MAX as usize],
         n: u8,
         m: u8,
     ) {
         for i in 0..n {
-            let mut v = self.worker.shared_mut.rand32.rand_range(0..(m - i) as u32) as u8;
+            let mut v = rand32.rand_range(0..(m - i) as u32) as u8;
             for j in 0..i {
                 if v >= indices[j as usize] {
                     v += 1;
@@ -1519,33 +1624,47 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
     }
 
     #[named]
-    fn compute_dq(&mut self, _prev: *mut JBlock) {
+    fn compute_dq(&mut self, prev: *mut JBlock) {
         unsafe {
+            let s = if self.worker.info.isTop { 0 } else { 1 };
+            let rand32 = &mut self.worker.shared_mut.rand32;
+            let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(s);
+            let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
+            let deltaQ0 = self
+                .worker
+                .shared
+                .deltaQ0Tbls
+                .get_unchecked(prevDeltaQ as usize);
+            let divParts = &self.worker.shared.divisors.divisors;
+            let divShifts = self
+                .worker
+                .shared
+                .divDeltaQShifts
+                .get_unchecked(DELTA_Q_COUNT as usize - 1);
+
             let mut delta_cache_start = 0;
-            for i in 0..MAX_COMPONENTS {
+            let mut blkn_start = 0;
+            for ci in 0..MAX_COMPONENTS {
                 let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
-                let comp = &self.worker.shared.compInfos.infos[i];
+                let comp = &self.worker.shared.compInfos.infos[ci];
                 let MCU_we = comp.h_samp_exp;
                 let MCU_he = comp.v_samp_exp;
 
-                self.dq_cache_gen_unique_indices(
+                Self::dq_cache_gen_unique_indices(
+                    rand32,
                     &mut indices,
-                    DELTA_Q_CACHE_COUNTS[i],
+                    DELTA_Q_CACHE_COUNTS[ci],
                     core::intrinsics::unchecked_shl(
                         self.worker.shared.mcusPerRow as u8,
                         MCU_we + MCU_he,
                     ),
                 );
-                for j in 0..DELTA_Q_CACHE_COUNTS[i] {
-                    let delta_cache_i = delta_cache_start + j;
-                    let blkn = indices[j as usize];
+                for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
+                    let delta_cache_i = delta_cache_start + qi;
+                    let blkn = indices[qi as usize];
 
-                    let cache = self
-                        .worker
-                        .shared_mut
-                        .deltaQCache
-                        .get_unchecked_mut(delta_cache_i as usize);
+                    let cache = cache.get_unchecked_mut(delta_cache_i as usize);
 
                     let mcu_i = core::intrinsics::unchecked_shr(blkn, MCU_we + MCU_he);
                     let mcu_r = blkn & (core::intrinsics::unchecked_shl(1, MCU_we + MCU_he) - 1);
@@ -1554,17 +1673,51 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     let ypos = core::intrinsics::unchecked_shr(mcu_r, MCU_we);
 
                     let xpos = xpos + core::intrinsics::unchecked_shl(mcu_i, MCU_we);
-                    let _xpos = xpos as usize * DCTSIZE;
-                    let _ypos = ypos as usize * DCTSIZE;
+                    let xpos = xpos as usize * DCTSIZE;
+                    let ypos = ypos as usize * DCTSIZE;
 
-                    cache.blkn = blkn;
+                    cache.xpos = xpos as u16;
+                    cache.ypos = ypos as u16;
+                    cache.hit = false;
+
+                    let prev = prev.add(
+                        mcu_i as usize * self.worker.shared.maxBlocksInMcu
+                            + mcu_r as usize
+                            + blkn_start,
+                    );
+
+                    let _qn = if prevDeltaQ == DELTA_Q_COUNT - 1 {
+                        Self::forward_DCT::<false, false, false>(
+                            &self.worker.bufs.prep[ci],
+                            &mut cache.cache,
+                            ypos as u16,
+                            xpos as u16,
+                            divParts.get_unchecked(comp.quant_tbl_no as usize),
+                            divShifts.get_unchecked(comp.quant_tbl_no as usize),
+                            prev,
+                            deltaQ0.get_unchecked(comp.quant_tbl_no as usize),
+                            &mut cache.next,
+                        )
+                    } else {
+                        Self::forward_DCT::<false, true, false>(
+                            &self.worker.bufs.prep[ci],
+                            &mut cache.cache,
+                            ypos as u16,
+                            xpos as u16,
+                            divParts.get_unchecked(comp.quant_tbl_no as usize),
+                            divShifts.get_unchecked(comp.quant_tbl_no as usize),
+                            prev,
+                            deltaQ0.get_unchecked(comp.quant_tbl_no as usize),
+                            &mut cache.next,
+                        )
+                    };
                 }
 
-                delta_cache_start += DELTA_Q_CACHE_COUNTS[i];
+                delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
+                blkn_start += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he);
             }
 
             let s = if self.worker.info.isTop { 0 } else { 1 };
-            let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             if self.worker.shared.quality <= 10 {
                 *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
                     self.worker
@@ -1587,16 +1740,14 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         .shared
                         .deltaQTbls
                         .get_unchecked(*self.worker.shared_mut.deltaQ.get_unchecked(s) as usize)
-                        .get_unchecked(t)
-                        .tbl;
+                        .get_unchecked(t);
 
                     let dQShiftsPrev = &self
                         .worker
                         .shared
                         .deltaQTbls
                         .get_unchecked(prevDeltaQ as usize)
-                        .get_unchecked(t)
-                        .tbl;
+                        .get_unchecked(t);
 
                     let rPShifts = self
                         .worker
@@ -1619,6 +1770,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
     #[named]
     fn process(&mut self, prev: *mut JBlock, row_i: u8) {
+        let mut delta_cache = false;
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if DELTA_Q {
                 let s = if self.worker.info.isTop { 0 } else { 1 };
@@ -1654,6 +1806,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             let pcomp_size =
                                 self.worker.shared_mut.compressedSize.get_unchecked_mut(w);
                             *pcomp_size = 0;
+                            delta_cache = true;
 
                             let mut count = mem::MaybeUninit::uninit();
                             let res = svcReleaseSemaphore(
@@ -1693,14 +1846,14 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let prev = unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) };
 
                 if dQRescalePrev > 0 {
-                    self.compress_dq::<true, false>(MCU_col_num, prev);
+                    self.compress_dq::<true, false>(delta_cache, MCU_col_num, prev);
                 } else if dQRescalePrev < 0 {
-                    self.compress_dq::<true, true>(MCU_col_num, prev);
+                    self.compress_dq::<true, true>(delta_cache, MCU_col_num, prev);
                 } else {
-                    self.compress_dq::<false, false>(MCU_col_num, prev);
+                    self.compress_dq::<false, false>(delta_cache, MCU_col_num, prev);
                 }
             } else {
-                self.compress::<false, false>(MCU_col_num, ptr::null_mut());
+                self.compress::<false, false, false>(MCU_col_num, ptr::null_mut());
             }
             self.encode_mcu();
         }
