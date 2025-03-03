@@ -622,8 +622,9 @@ where
     }
 
     unsafe fn PUT_AND_FLUSH(&mut self, code: u32, size: u8) {
-        self.state.c = (self.state.c << (size as isize + self.state.free_bits))
-            | core::intrinsics::unchecked_shr(code, -self.state.free_bits);
+        self.state.c =
+            core::intrinsics::unchecked_shl(self.state.c, size as isize + self.state.free_bits)
+                | core::intrinsics::unchecked_shr(code, -self.state.free_bits);
         self.FLUSH();
         self.state.free_bits += BIT_BUF_SIZE as isize;
         self.state.c = code;
@@ -634,13 +635,13 @@ where
         if self.state.free_bits < 0 {
             self.PUT_AND_FLUSH(code, size);
         } else {
-            self.state.c = (self.state.c << size) | code;
+            self.state.c = core::intrinsics::unchecked_shl(self.state.c, size) | code;
         }
     }
 
     pub unsafe fn PUT_CODE(&mut self, code: u32, size: u8, mut temp: i32, mut nbits: i32) {
-        temp &= (1 << nbits) - 1;
-        temp |= (code as i32) << nbits;
+        temp &= core::intrinsics::unchecked_shl(1, nbits) - 1;
+        temp |= core::intrinsics::unchecked_shl(code as i32, nbits);
         nbits += size as i32;
         self.PUT_BITS(temp as u32, nbits as u8);
     }
