@@ -1185,7 +1185,7 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
         }
     }
 
-    fn forward_DCT(
+    fn forward_DCT<const RP: bool, const RPShr: bool>(
         input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
         output: &mut JBlock,
         ypos: u16,
@@ -1193,30 +1193,21 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        dQRescalePrev: i8,
         rPShifts: &[u8; DCTSIZE2],
     ) {
         Self::convsamp(input, ypos, xpos, output);
         Self::fdct_ifast(output);
-        if !DQ {
-            Self::quantize::<false, false>(output, divParts, divShifts, prev, rPShifts);
-        } else {
-            if dQRescalePrev > 0 {
-                Self::quantize::<true, false>(output, divParts, divShifts, prev, rPShifts);
-            } else if dQRescalePrev < 0 {
-                Self::quantize::<true, true>(output, divParts, divShifts, prev, rPShifts);
-            } else {
-                Self::quantize::<false, false>(output, divParts, divShifts, prev, rPShifts);
-            }
-        }
+        Self::quantize::<RP, RPShr>(output, divParts, divShifts, prev, rPShifts);
     }
 
     #[named]
-    fn compress(&mut self, MCU_col_num: usize, prev: *mut JBlock) {
+    fn compress<const RP: bool, const RPShr: bool>(
+        &mut self,
+        MCU_col_num: usize,
+        prev: *mut JBlock,
+    ) {
         let divParts = &self.worker.shared.divisors.divisors;
         let s = if self.worker.info.isTop { 0 } else { 1 };
-        let dQRescalePrev = unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(s) };
-
         let mut blkn = 0;
 
         if MCU_col_num > self.worker.shared.mcusPerRow {
@@ -1261,7 +1252,7 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
             for _ in 0..MCU_height {
                 let mut xpos = xpos;
                 for _ in 0..MCU_width {
-                    Self::forward_DCT(
+                    Self::forward_DCT::<RP, RPShr>(
                         &self.worker.bufs.prep[ci],
                         unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) },
                         ypos,
@@ -1273,7 +1264,6 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
                         } else {
                             unsafe { prev.add(blkn) }
                         },
-                        dQRescalePrev,
                         rPShifts,
                     );
 
@@ -1286,8 +1276,12 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
     }
 
     #[named]
-    fn compress_dq(&mut self, MCU_col_num: usize, prev: *mut JBlock) {
-        self.compress(MCU_col_num, prev);
+    fn compress_dq<const RP: bool, const RPShr: bool>(
+        &mut self,
+        MCU_col_num: usize,
+        prev: *mut JBlock,
+    ) {
+        self.compress::<RP, RPShr>(MCU_col_num, prev);
     }
 
     #[allow(unused)]
@@ -1621,9 +1615,9 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
     fn process(&mut self, prev: *mut JBlock, row_i: u8) {
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if DQ {
+                let s = if self.worker.info.isTop { 0 } else { 1 };
                 if row_i == 0 && MCU_col_num == 0 {
                     let w = self.worker.info.workIndex.get() as usize;
-                    let s = if self.worker.info.isTop { 0 } else { 1 };
                     unsafe {
                         if !AtomicBool::from_ptr(
                             self.worker.shared_mut.workInited.get_unchecked_mut(w),
@@ -1688,23 +1682,19 @@ impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> 
                         }
                     }
                 }
-                self.compress_dq(
-                    MCU_col_num,
-                    if !DQ {
-                        ptr::null_mut()
-                    } else {
-                        unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
-                    },
-                );
+                let dQRescalePrev =
+                    unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(s) };
+                let prev = unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) };
+
+                if dQRescalePrev > 0 {
+                    self.compress_dq::<true, false>(MCU_col_num, prev);
+                } else if dQRescalePrev < 0 {
+                    self.compress_dq::<true, true>(MCU_col_num, prev);
+                } else {
+                    self.compress_dq::<false, false>(MCU_col_num, prev);
+                }
             } else {
-                self.compress(
-                    MCU_col_num,
-                    if !DQ {
-                        ptr::null_mut()
-                    } else {
-                        unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
-                    },
-                );
+                self.compress::<false, false>(MCU_col_num, ptr::null_mut());
             }
             self.encode_mcu();
         }
