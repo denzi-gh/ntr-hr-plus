@@ -1337,11 +1337,18 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                                         deltaQ0.get_unchecked(comp.quant_tbl_no as usize)
                                     };
                                     for i in 0..DCTSIZE2 {
-                                        output[i] = Self::rescale_prev::<true, true>(
-                                            cache.cache[i],
-                                            deltaQ0[i],
-                                        );
                                         unsafe {
+                                            output[i] = if cache.next[i] < 0 {
+                                                -core::intrinsics::unchecked_shr(
+                                                    -cache.cache[i],
+                                                    deltaQ0[i],
+                                                )
+                                            } else {
+                                                core::intrinsics::unchecked_shr(
+                                                    cache.cache[i],
+                                                    deltaQ0[i],
+                                                )
+                                            };
                                             (*prev)[i] = Self::rescale_prev::<true, true>(
                                                 cache.next[i],
                                                 deltaQ0[i],
