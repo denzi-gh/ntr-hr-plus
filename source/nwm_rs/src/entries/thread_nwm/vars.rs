@@ -109,16 +109,27 @@ pub unsafe fn get_packet_data_size() -> usize {
     packet_data_size
 }
 
+pub const fn get_packet_data_size_const<const RS: bool>() -> usize {
+    if RS {
+        packet_data_size_kcp
+    } else {
+        packet_data_size_method_none
+    }
+}
+
 const packet_data_size_method_none: usize = {
     let size = (PACKET_SIZE - DATA_HDR_SIZE) as usize;
     assert!(size % mem::size_of::<usize>() == 0);
     size
 };
 
+pub const packet_data_size_kcp: usize =
+    (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize;
+
 unsafe fn set_packet_data_size() {
     packet_data_size = match get_reliable_stream_method() {
-        ReliableStreamMethod::None => packet_data_size_method_none,
-        ReliableStreamMethod::KCP => (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize,
+        ReliableStreamMethod::None => get_packet_data_size_const::<false>(),
+        ReliableStreamMethod::KCP => get_packet_data_size_const::<true>(),
     }
 }
 
@@ -272,79 +283,86 @@ pub unsafe fn release_nwm_ready(w: &WorkIndex) {
     }
 }
 
+pub unsafe fn rp_dq_update_size(w: WorkIndex, size: u32) {
+    AtomicU32::from_ptr(
+        entries::work_thread::get_jpeg()
+            .shared_mut
+            .compressedSize
+            .get_unchecked_mut(w.get() as usize),
+    )
+    .fetch_add(size, Ordering::Relaxed);
+}
+
 #[named]
-pub unsafe fn rp_send_buffer(dst: &mut crate::jpeg::WorkerDst, term: bool) -> bool {
-    let rp_packet_data_size = get_packet_data_size();
+pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut crate::jpeg::WorkerDst, term: bool) -> bool {
+    let rp_packet_data_size = get_packet_data_size_const::<RS>();
     let mut size = rp_packet_data_size;
     const term_flag: u8 = 0x10;
     if term {
         size -= dst.free_in_bytes as usize;
     }
 
-    dst.dst = match get_reliable_stream_method() {
-        ReliableStreamMethod::None => {
-            let ninfo = &*dst.user.info;
-            let dinfo = &ninfo.info;
+    dst.dst = if !RS {
+        let ninfo = &*dst.user.info;
+        let dinfo = &ninfo.info;
 
-            let mut pos_next = (*dinfo.pos.as_ptr()).add(size);
+        let mut pos_next = (*dinfo.pos.as_ptr()).add(size);
 
-            dinfo.pos.store(pos_next, Ordering::Release);
-            if term {
-                dinfo.flag.store(term_flag as u32, Ordering::Release);
-            }
-
-            if !term && pos_next > ninfo.buf_packet_last {
-                pos_next = ninfo.buf_packet_last;
-                nsDbgPrint!(sendBufferOverflow);
-            }
-
-            let res = svcSignalEvent((*syn_handles).nwm_ready);
-            if res != 0 {
-                nsDbgPrint!(nwmEventSignalFailed, res);
-            }
-
-            pos_next
+        dinfo.pos.store(pos_next, Ordering::Release);
+        if term {
+            dinfo.flag.store(term_flag as u32, Ordering::Release);
         }
-        ReliableStreamMethod::KCP => {
-            let hdr = &dst.user.hdr;
-            let mut dst = if term {
-                dst.dst
-                    .sub(rp_packet_data_size - dst.free_in_bytes as usize)
-            } else {
-                // assert!(dst.free_in_bytes == 0);
-                dst.dst.sub(rp_packet_data_size)
-            };
 
-            let mut size = size as u32;
-            if !term {
-                dst = dst.sub(ARQ_DATA_HDR_SIZE as usize);
-                size += ARQ_DATA_HDR_SIZE;
-                hdr.write_hdr(dst);
-            }
+        if !term && pos_next > ninfo.buf_packet_last {
+            pos_next = ninfo.buf_packet_last;
+            nsDbgPrint!(sendBufferOverflow);
+        }
 
-            ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1);
+        let res = svcSignalEvent((*syn_handles).nwm_ready);
+        if res != 0 {
+            nsDbgPrint!(nwmEventSignalFailed, res);
+        }
 
-            if term {
-                return entries::work_thread::set_term_dst(dst, hdr.w, hdr.t);
-            } else {
-                let cb = &mut *reliable_stream_cb;
-                while !entries::work_thread::reset_threads() {
-                    let res = rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _);
-                    if res == 0 {
-                        break;
-                    }
-                    if res != RES_TIMEOUT as s32 {
-                        nsDbgPrint!(waitForSyncFailed, c_str!("nwm_syn.rp_syn_rel1"), res);
-                        entries::work_thread::set_reset_threads_ar();
-                        return false;
-                    }
+        pos_next
+    } else {
+        let hdr = &dst.user.hdr;
+        let mut dst = if term {
+            dst.dst
+                .sub(rp_packet_data_size - dst.free_in_bytes as usize)
+        } else {
+            // assert!(dst.free_in_bytes == 0);
+            dst.dst.sub(rp_packet_data_size)
+        };
+
+        let mut size = size as u32;
+        if !term {
+            dst = dst.sub(ARQ_DATA_HDR_SIZE as usize);
+            size += ARQ_DATA_HDR_SIZE;
+            hdr.write_hdr(dst);
+        }
+
+        ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1);
+
+        if term {
+            return entries::work_thread::set_term_dst(dst, hdr.w, hdr.t);
+        } else {
+            let cb = &mut *reliable_stream_cb;
+            while !entries::work_thread::reset_threads() {
+                let res = rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _);
+                if res == 0 {
+                    break;
                 }
-
-                if let Some(dst) = rp_data_buf_malloc() {
-                    dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE + ARQ_DATA_HDR_SIZE) as usize)
-                } else {
+                if res != RES_TIMEOUT as s32 {
+                    nsDbgPrint!(waitForSyncFailed, c_str!("nwm_syn.rp_syn_rel1"), res);
+                    entries::work_thread::set_reset_threads_ar();
                     return false;
                 }
+            }
+
+            if let Some(dst) = rp_data_buf_malloc() {
+                dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE + ARQ_DATA_HDR_SIZE) as usize)
+            } else {
+                return false;
             }
         }
     };

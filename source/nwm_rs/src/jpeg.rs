@@ -6,6 +6,7 @@ use vars::*;
 
 const DELTA_Q_COUNT: u8 = 32;
 const DELTA_Q_MAX: f32 = 7.0f32;
+#[allow(unused)]
 const MAX_COEF_BITS: u8 = 8 + 2;
 
 pub struct JpegRet {
@@ -15,7 +16,6 @@ pub struct JpegRet {
 #[derive(ConstDefault)]
 struct DeltaQTbl {
     tbl: [u8; DCTSIZE2],
-    // q: u16,
 }
 
 // #[derive(ConstDefault)]
@@ -37,6 +37,7 @@ pub struct JpegShared<'a> {
     pub mcusBot: usize,
     jpegTbls: JpegTbls,
     deltaQTbls: [[DeltaQTbl; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
+    deltaQNs: [[u16; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub workSem: [Handle; WORK_COUNT as usize],
     pub screenSem: [Handle; SCREEN_COUNT as usize],
 }
@@ -75,36 +76,20 @@ pub struct DeltaQCache {
 }
 
 pub struct JpegSharedMut {
+    pub compressedSize: [u32; WORK_COUNT as usize],
     pub workInited: [bool; WORK_COUNT as usize],
     pub screenSemCount: [u8; SCREEN_COUNT as usize],
     pub deltaQ: [u8; SCREEN_COUNT as usize],
     pub dQRescalePrev: [i8; SCREEN_COUNT as usize],
     pub rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
     pub deltaQCache: [DeltaQCache; DELTA_Q_CACHE_TOTAL as usize],
-    pub dQLShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
     pub rand32: Rand32,
 }
 
 impl JpegSharedMut {
-    pub fn init(&mut self, shared: &JpegShared) {
+    pub fn init(&mut self) {
         for s in 0..SCREEN_COUNT {
             self.deltaQ[s as usize] = DELTA_Q_COUNT - 1;
-
-            for t in 0..NUM_QUANT_TBLS {
-                let dQShifts = unsafe {
-                    &shared
-                        .deltaQTbls
-                        .get_unchecked(self.deltaQ[s as usize] as usize)
-                        .get_unchecked(t)
-                        .tbl
-                };
-
-                let dQLShifts = &mut self.dQLShifts[s as usize][t];
-
-                for i in 0..DCTSIZE2 {
-                    dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
-                }
-            }
         }
         self.rand32 = Rand32::new(unsafe { svcGetSystemTick() });
     }
@@ -125,9 +110,11 @@ impl<'a> JpegShared<'a> {
                 let f = DELTA_Q_MAX / DELTA_Q_COUNT as f32 * d as f32;
 
                 let dtbls = self.deltaQTbls.get_unchecked_mut(d);
+                let qns = self.deltaQNs.get_unchecked_mut(d);
 
                 for i in 0..NUM_QUANT_TBLS {
                     let tbl = dtbls.get_unchecked_mut(i);
+                    let qn = qns.get_unchecked_mut(i);
                     let btbls = if i == 0 {
                         &std_luminance_quant_tbl
                     } else {
@@ -141,13 +128,13 @@ impl<'a> JpegShared<'a> {
                         log2_tbls[i] = v;
                     }
 
-                    // tbl.q = 0;
+                    *qn = 0;
                     for i in 0..DCTSIZE2 {
                         let v = roundf(f32::max(log2_tbls.get_unchecked(i) - f, 0.0f32)) as u8;
                         *tbl.tbl.get_unchecked_mut(i) = v;
-                        // tbl.q += v as u16;
+                        *qn += v as u16;
                     }
-                    // nsDbgPrint!(int, c_str!("tbl q"), tbl.q as i32);
+                    // nsDbgPrint!(int, c_str!("qn"), *qn as i32);
                 }
             }
         }
@@ -221,6 +208,21 @@ impl ArqRpHdr {
     }
 }
 
+const fn subsamp_constraint<const HS: bool, const VS: bool>() {
+    match (HS, VS) {
+        (true, true) => (),
+        (true, false) => (),
+        (false, true) => panic!(),
+        (false, false) => (),
+    }
+}
+
+struct SubSampConst<const HS: bool, const VS: bool>;
+
+impl<const HS: bool, const VS: bool> SubSampConst<HS, VS> {
+    const ASSERT: () = subsamp_constraint::<HS, VS>();
+}
+
 #[derive(Copy, Clone, ConstDefault)]
 pub union WorkderDstUser {
     pub info: *const crate::entries::NwmInfo,
@@ -229,15 +231,16 @@ pub union WorkderDstUser {
 
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
+    pub w: WorkIndex,
     pub dst: *mut u8,
     pub free_in_bytes: u16,
     pub user: WorkderDstUser,
 }
 
 impl WorkerDst {
-    fn write_byte(&mut self, byte: u8) -> bool {
+    fn write_byte<const RS: bool, const DQ: bool>(&mut self, byte: u8) -> bool {
         if self.free_in_bytes == 0 {
-            if !self.flush() {
+            if !self.flush::<RS, DQ>() {
                 return false;
             }
         }
@@ -248,7 +251,7 @@ impl WorkerDst {
         true
     }
 
-    fn write_bytes(&mut self, bytes: &[u8]) -> bool {
+    fn write_bytes<const RS: bool, const DQ: bool>(&mut self, bytes: &[u8]) -> bool {
         let mut src = bytes.as_ptr();
         let mut len = bytes.len() as u16;
 
@@ -261,12 +264,12 @@ impl WorkerDst {
                 src = unsafe { src.add(self.free_in_bytes as usize) };
                 unsafe { self.dst = self.dst.add(self.free_in_bytes as usize) };
                 self.free_in_bytes = 0;
-                if !self.flush() {
+                if !self.flush::<RS, DQ>() {
                     return false;
                 }
             }
         } else {
-            if !self.flush() {
+            if !self.flush::<RS, DQ>() {
                 return false;
             }
         }
@@ -281,12 +284,26 @@ impl WorkerDst {
         true
     }
 
-    fn flush(&mut self) -> bool {
-        unsafe { crate::entries::rp_send_buffer(self, false) }
+    fn flush<const RS: bool, const DQ: bool>(&mut self) -> bool {
+        if DQ {
+            unsafe {
+                entries::rp_dq_update_size(self.w, entries::packet_data_size_kcp as u32);
+            }
+        }
+        unsafe { crate::entries::rp_send_buffer::<RS>(self, false) }
     }
 
-    fn term(&mut self) -> bool {
-        unsafe { crate::entries::rp_send_buffer(self, true) }
+    fn term<const RS: bool, const DQ: bool>(&mut self) -> bool {
+        if DQ {
+            unsafe {
+                entries::rp_dq_update_size(
+                    self.w,
+                    entries::packet_data_size_kcp as u32 - self.free_in_bytes as u32,
+                );
+            }
+        }
+
+        unsafe { crate::entries::rp_send_buffer::<RS>(self, true) }
     }
 
     pub unsafe fn advance_to(&mut self, dst: *mut u8) {
@@ -325,7 +342,7 @@ pub struct JpegWorker<'a, 'b, const RS: bool> {
     last_dc_val: [i16; MAX_COMPONENTS],
 }
 
-pub struct JpegEncode<'a, 'b, 'c, const RS: bool> {
+pub struct JpegEncode<'a, 'b, 'c, const RS: bool, const DQ: bool> {
     worker: &'c mut JpegWorker<'a, 'b, RS>,
     dst: WorkerDst,
 }
@@ -418,20 +435,14 @@ fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, cons
     [(); GSP_SCREEN_WIDTH as usize * P]:,
 {
     let [output0, output1, output2] = output;
-    let output0 = if output0.ptr == ptr::null_mut() {
-        &mut output0.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output0 = unsafe {
+        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
-    let output1 = if output1.ptr == ptr::null_mut() {
-        &mut output1.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output1 = unsafe {
+        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
-    let output2 = if output2.ptr == ptr::null_mut() {
-        &mut output2.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output2 = unsafe {
+        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
     for i in 0..N {
         let input: &[u8; GSP_SCREEN_WIDTH as usize * P] = input[i].try_into().unwrap();
@@ -465,20 +476,14 @@ fn cconvert2<const N: usize, F>(
     [(); GSP_SCREEN_WIDTH as usize * 2]:,
 {
     let [output0, output1, output2] = output;
-    let output0 = if output0.ptr == ptr::null_mut() {
-        &mut output0.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output0 = unsafe {
+        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
-    let output1 = if output1.ptr == ptr::null_mut() {
-        &mut output1.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output1 = unsafe {
+        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
-    let output2 = if output2.ptr == ptr::null_mut() {
-        &mut output2.buf
-    } else {
-        unsafe { slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N) }
+    let output2 = unsafe {
+        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
     };
     for i in 0..N {
         let input: &[u8; GSP_SCREEN_WIDTH as usize * 2] = input[i].try_into().unwrap();
@@ -529,14 +534,14 @@ enum EncodeBufferBase<'a, const N: usize> {
     Dst,
 }
 
-struct EncodeBuffer<'a, 'c, 'd, const N: usize, const RS: bool> {
+struct EncodeBuffer<'a, 'c, 'd, const N: usize, const RS: bool, const DQ: bool> {
     buf: *mut u8,
     base: EncodeBufferBase<'a, N>,
     state: &'c mut HuffState,
     dst: &'d mut WorkerDst,
 }
 
-impl<'a, 'c, 'd, const N: usize, const RS: bool> EncodeBuffer<'a, 'c, 'd, N, RS>
+impl<'a, 'c, 'd, const N: usize, const RS: bool, const DQ: bool> EncodeBuffer<'a, 'c, 'd, N, RS, DQ>
 where
     'a: 'd,
 {
@@ -567,7 +572,7 @@ where
             EncodeBufferBase::Local(buf) => {
                 let len = unsafe { self.buf.sub_ptr(buf.as_ptr()) };
                 self.dst
-                    .write_bytes(unsafe { slice::from_raw_parts(buf.as_ptr(), len) });
+                    .write_bytes::<RS, DQ>(unsafe { slice::from_raw_parts(buf.as_ptr(), len) });
             }
             EncodeBufferBase::Dst => unsafe { self.dst.advance_to(self.buf) },
         }
@@ -648,7 +653,12 @@ impl<'a, 'b, const RS: bool> JpegWorker<'a, 'b, RS> {
         F: FnMut(),
         G: FnMut(),
     {
-        JpegEncode { worker: self, dst }.encode(src, pre_progress, progress)
+        let delta_prog = RS && unsafe { entries::get_reliable_stream_delta_prog() };
+        if delta_prog {
+            JpegEncode::<_, true> { worker: self, dst }.encode(src, pre_progress, progress)
+        } else {
+            JpegEncode::<_, false> { worker: self, dst }.encode(src, pre_progress, progress)
+        }
     }
 
     pub fn init(
@@ -670,7 +680,7 @@ impl<'a, 'b, const RS: bool> JpegWorker<'a, 'b, RS> {
     }
 }
 
-impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
+impl<'a, 'b, 'c, const RS: bool, const DQ: bool> JpegEncode<'a, 'b, 'c, RS, DQ> {
     fn write_marker(&mut self, mark: u8)
     /* Emit a marker code */
     {
@@ -679,7 +689,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     }
 
     fn write_byte(&mut self, value: u8) {
-        self.dst.write_byte(value);
+        self.dst.write_byte::<RS, DQ>(value);
     }
 
     fn write_2bytes(&mut self, value: u16)
@@ -859,7 +869,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     }
 
     fn write_term(&mut self) {
-        self.dst.term();
+        self.dst.term::<RS, DQ>();
     }
 
     pub fn get_bpp_for_format(&self) -> u8 {
@@ -870,14 +880,33 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
-    pub fn color_convert<const S: usize>(&mut self, input: &[&[u8]; S], output_base: usize) {
+    fn need_subsamp<const C: u8, const HS: bool, const VS: bool>() -> bool {
+        (HS || VS) && C != 0
+    }
+
+    fn need_subsamp_ci<const HS: bool, const VS: bool>(ci: u8) -> bool {
+        if ci == 0 {
+            Self::need_subsamp::<0, HS, VS>()
+        } else if ci == 1 {
+            Self::need_subsamp::<1, HS, VS>()
+        } else if ci == 2 {
+            Self::need_subsamp::<2, HS, VS>()
+        } else {
+            false
+        }
+    }
+
+    pub fn color_convert<const S: usize, const HS: bool, const VS: bool>(
+        &mut self,
+        input: &[&[u8]; S],
+        output_base: usize,
+    ) {
+        let _ssamp_const = SubSampConst::<HS, VS>::ASSERT;
+
         for ci in 0..MAX_COMPONENTS {
-            let comp = &self.worker.shared.compInfos.infos[ci];
             let color = &mut self.worker.bufs.color[ci];
-            if comp.v_samp_factor < self.worker.shared.maxVSampFactor as u8
-                || comp.h_samp_factor < self.worker.shared.maxHSampFactor as u8
-            {
-                color.ptr = ptr::null_mut();
+            if Self::need_subsamp_ci::<HS, VS>(ci as u8) {
+                color.ptr = &mut color.buf[0][0];
             } else {
                 let output_base = output_base * S as usize;
                 let output_step = S;
@@ -949,12 +978,13 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
-    pub fn downsample(&mut self, output_base: usize) {
+    pub fn downsample<const HS: bool, const VS: bool>(&mut self, output_base: usize) {
+        let _ssamp_const = SubSampConst::<HS, VS>::ASSERT;
+
         for ci in 0..MAX_COMPONENTS {
-            let comp = &self.worker.shared.compInfos.infos[ci];
             let input = &self.worker.bufs.color[ci];
-            if input.ptr == ptr::null_mut() {
-                if comp.v_samp_factor < self.worker.shared.maxVSampFactor as u8 {
+            if Self::need_subsamp_ci::<HS, VS>(ci as u8) {
+                if VS {
                     let output = &mut self.worker.bufs.prep[ci][output_base];
                     Self::h2v2_downsample(&input.buf, output);
                 } else {
@@ -968,15 +998,15 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     fn pre_process(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {
         for (base, chunk) in src.array_chunks::<{ MAX_SAMP_FACTOR }>().enumerate() {
             let output_base = if which_half { base + DCTSIZE / 2 } else { base };
-            self.color_convert(chunk, output_base);
-            self.downsample(output_base);
+            self.color_convert::<_, true, true>(chunk, output_base);
+            self.downsample::<true, true>(output_base);
         }
     }
 
-    fn pre_process_no_vsubsamp(&mut self, src: [&[u8]; DCTSIZE]) {
+    fn pre_process_no_vsubsamp<const HS: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
         for (base, chunk) in src.array_chunks::<1>().enumerate() {
-            self.color_convert(chunk, base);
-            self.downsample(base);
+            self.color_convert::<_, HS, false>(chunk, base);
+            self.downsample::<HS, false>(base);
         }
     }
 
@@ -1105,12 +1135,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         }
     }
 
-    fn quantize<const DQ: bool, const RP: bool, const RPShr: bool>(
+    fn quantize<const RP: bool, const RPShr: bool>(
         inout: &mut JBlock,
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        _dQLShifts: &[u8; DCTSIZE2],
         rPShifts: &[u8; DCTSIZE2],
     ) {
         for i in 0..DCTSIZE2 {
@@ -1124,21 +1153,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
-                // if DQ {
-                //     temp = i16::min(temp, unsafe {
-                //         core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
-                //     });
-                // }
                 temp = -temp;
             } else {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
-                // if DQ {
-                //     temp = i16::min(temp, unsafe {
-                //         core::intrinsics::unchecked_shl(1, dQLShifts[i]) - 1
-                //     });
-                // }
             }
 
             if DQ {
@@ -1159,7 +1178,6 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                     let next = temp;
                     temp -= (*prev)[i];
                     (*prev)[i] = next;
-                    // temp = Self::coef_fix(temp, dQLShifts[i]);
                 }
             }
 
@@ -1175,29 +1193,20 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         divParts: &[DivisorPart; DCTSIZE2],
         divShifts: &[u8; DCTSIZE2],
         prev: *mut JBlock,
-        dQLShifts: &[u8; DCTSIZE2],
         dQRescalePrev: i8,
         rPShifts: &[u8; DCTSIZE2],
     ) {
         Self::convsamp(input, ypos, xpos, output);
         Self::fdct_ifast(output);
-        if prev.is_null() {
-            Self::quantize::<false, false, false>(
-                output, divParts, divShifts, prev, dQLShifts, rPShifts,
-            );
+        if !DQ {
+            Self::quantize::<false, false>(output, divParts, divShifts, prev, rPShifts);
         } else {
             if dQRescalePrev > 0 {
-                Self::quantize::<true, true, false>(
-                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
-                );
+                Self::quantize::<true, false>(output, divParts, divShifts, prev, rPShifts);
             } else if dQRescalePrev < 0 {
-                Self::quantize::<true, true, true>(
-                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
-                );
+                Self::quantize::<true, true>(output, divParts, divShifts, prev, rPShifts);
             } else {
-                Self::quantize::<true, false, false>(
-                    output, divParts, divShifts, prev, dQLShifts, rPShifts,
-                );
+                Self::quantize::<false, false>(output, divParts, divShifts, prev, rPShifts);
             }
         }
     }
@@ -1207,7 +1216,6 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         let divParts = &self.worker.shared.divisors.divisors;
         let s = if self.worker.info.isTop { 0 } else { 1 };
         let dQRescalePrev = unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(s) };
-        let deltaQ = !prev.is_null();
 
         let mut blkn = 0;
 
@@ -1218,7 +1226,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         for ci in 0..MAX_COMPONENTS {
             let comp = &self.worker.shared.compInfos.infos[ci];
 
-            let divShifts = if deltaQ {
+            let divShifts = if DQ {
                 unsafe {
                     self.worker
                         .shared
@@ -1233,14 +1241,6 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         .divShifts
                         .get_unchecked(comp.quant_tbl_no as usize)
                 }
-            };
-
-            let dQLShifts = unsafe {
-                self.worker
-                    .shared_mut
-                    .dQLShifts
-                    .get_unchecked(s)
-                    .get_unchecked(comp.quant_tbl_no as usize)
             };
 
             let rPShifts = unsafe {
@@ -1268,12 +1268,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         xpos,
                         unsafe { divParts.get_unchecked(comp.quant_tbl_no as usize) },
                         divShifts,
-                        if deltaQ {
-                            unsafe { prev.add(blkn) }
-                        } else {
+                        if !DQ {
                             ptr::null_mut()
+                        } else {
+                            unsafe { prev.add(blkn) }
                         },
-                        dQLShifts,
                         dQRescalePrev,
                         rPShifts,
                     );
@@ -1318,7 +1317,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
     }
 
     #[named]
-    fn encode_one_block<const DQ: bool>(
+    fn encode_one_block(
         dst: &mut WorkerDst,
         state: &mut HuffState,
         block: &[i16; DCTSIZE2],
@@ -1327,7 +1326,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         ac_derived_tbl: &DerivedTbl,
     ) -> i16 {
         let mut localbuf: [u8; BUFSIZE] = const_default();
-        let mut buf = EncodeBuffer::<_, RS>::init(state, dst, &mut localbuf);
+        let mut buf = EncodeBuffer::<_, RS, DQ>::init(state, dst, &mut localbuf);
 
         let (val1, bits, b0) = if DQ {
             let val = block[0] as i32 - last_dc_val as i32;
@@ -1395,7 +1394,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
         b0
     }
 
-    fn encode_mcu(&mut self, DQ: bool) {
+    fn encode_mcu(&mut self) {
         let mut blkn = 0;
 
         for ci in 0..MAX_COMPONENTS {
@@ -1448,25 +1447,8 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                     let dst = &mut self.dst;
                     let state = &mut self.worker.huffState;
                     let block = unsafe { self.worker.bufs.mcu.get_unchecked(blkn) };
-                    self.worker.last_dc_val[ci] = if DQ {
-                        Self::encode_one_block::</* true */ false>(
-                            dst,
-                            state,
-                            block,
-                            last_dc_val,
-                            dc_tbl,
-                            ac_tbl,
-                        )
-                    } else {
-                        Self::encode_one_block::<false>(
-                            dst,
-                            state,
-                            block,
-                            last_dc_val,
-                            dc_tbl,
-                            ac_tbl,
-                        )
-                    };
+                    self.worker.last_dc_val[ci] =
+                        Self::encode_one_block(dst, state, block, last_dc_val, dc_tbl, ac_tbl);
 
                     blkn += 1;
                 }
@@ -1485,8 +1467,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
         let mut localbuf: [u8; mem::size_of::<BitBufType>() * 4] = const_default();
         let put_buffer = self.worker.huffState.c;
-        let mut buf =
-            EncodeBuffer::<_, RS>::init(&mut self.worker.huffState, &mut self.dst, &mut localbuf);
+        let mut buf = EncodeBuffer::<_, RS, DQ>::init(
+            &mut self.worker.huffState,
+            &mut self.dst,
+            &mut localbuf,
+        );
 
         while put_bits >= 8 {
             put_bits -= 8;
@@ -1620,23 +1605,12 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                         .get_unchecked_mut(s)
                         .get_unchecked_mut(t);
 
-                    // let dQLShifts = self
-                    //     .worker
-                    //     .shared_mut
-                    //     .dQLShifts
-                    //     .get_unchecked_mut(s)
-                    //     .get_unchecked_mut(t);
-
                     for i in 0..DCTSIZE2 {
                         rPShifts[i] = if dQRescalePrev > 0 {
                             dQShiftsPrev[i] - dQShifts[i]
                         } else {
                             dQShifts[i] - dQShiftsPrev[i]
                         };
-
-                        // nsDbgPrint!(int, c_str!("dQShifts"), dQShifts[i] as i32);
-
-                        // dQLShifts[i] = MAX_COEF_BITS - dQShifts[i];
                     }
                 }
             }
@@ -1645,9 +1619,8 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
     #[named]
     fn process(&mut self, prev: *mut JBlock, row_i: u8) {
-        let dq = !prev.is_null();
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
-            if dq {
+            if DQ {
                 if row_i == 0 && MCU_col_num == 0 {
                     let w = self.worker.info.workIndex.get() as usize;
                     let s = if self.worker.info.isTop { 0 } else { 1 };
@@ -1678,6 +1651,9 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                             }
 
                             self.compute_dq(prev);
+                            let pcomp_size =
+                                self.worker.shared_mut.compressedSize.get_unchecked_mut(w);
+                            *pcomp_size = 0;
 
                             let mut count = mem::MaybeUninit::uninit();
                             let res = svcReleaseSemaphore(
@@ -1714,7 +1690,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 }
                 self.compress_dq(
                     MCU_col_num,
-                    if prev.is_null() {
+                    if !DQ {
                         ptr::null_mut()
                     } else {
                         unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
@@ -1723,14 +1699,14 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             } else {
                 self.compress(
                     MCU_col_num,
-                    if prev.is_null() {
+                    if !DQ {
                         ptr::null_mut()
                     } else {
                         unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) }
                     },
                 );
             }
-            self.encode_mcu(dq);
+            self.encode_mcu();
         }
     }
 
@@ -1751,13 +1727,11 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
         self.reset_mcu();
 
-        let delta_prog = RS && unsafe { entries::get_reliable_stream_delta_prog() };
-
         let w = self.worker.info.workIndex.get() as usize;
         let s = if self.worker.info.isTop { 0 } else { 1 };
 
         let prev = unsafe {
-            if delta_prog {
+            if DQ {
                 if src.len() == 0 {
                     while !entries::reset_threads() {
                         let res = svcWaitSynchronization(
@@ -1786,7 +1760,10 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             }
         };
 
-        if self.worker.shared.maxVSampFactor == MAX_SAMP_FACTOR {
+        let hss = self.worker.shared.maxHSampFactor == MAX_SAMP_FACTOR;
+        let vss = self.worker.shared.maxVSampFactor == MAX_SAMP_FACTOR;
+
+        if vss {
             let src_chunks = src
                 .chunks_exact(pitch)
                 .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
@@ -1804,7 +1781,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
 
                 /* Compress and encode */
                 self.process(
-                    if prev.is_null() {
+                    if !DQ {
                         ptr::null_mut()
                     } else {
                         unsafe {
@@ -1820,15 +1797,21 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
                 progress();
             }
         } else {
+            let pre_process = if hss {
+                Self::pre_process_no_vsubsamp::<true>
+            } else {
+                Self::pre_process_no_vsubsamp::<false>
+            };
+
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
             for (i, chunk) in src_chunks.enumerate() {
-                self.pre_process_no_vsubsamp(chunk);
+                pre_process(self, chunk);
 
                 pre_progress();
 
                 /* Compress and encode */
                 self.process(
-                    if prev.is_null() {
+                    if !DQ {
                         ptr::null_mut()
                     } else {
                         unsafe {
@@ -1854,7 +1837,7 @@ impl<'a, 'b, 'c, const RS: bool> JpegEncode<'a, 'b, 'c, RS> {
             } else {
                 self.write_rst();
             }
-        } else if delta_prog {
+        } else if DQ {
             unsafe {
                 deltaQ = *self.worker.shared_mut.deltaQ.get_unchecked(s);
 
