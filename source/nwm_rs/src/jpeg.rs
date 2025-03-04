@@ -1162,11 +1162,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         unsafe {
             if RESCALE_PREV {
                 if RESCALE_PREV_SHR {
-                    if c < 0 {
-                        -core::intrinsics::unchecked_shr(-c, s)
-                    } else {
-                        core::intrinsics::unchecked_shr(c, s)
-                    }
+                    let mask = core::intrinsics::unchecked_shl(1, s) - 1;
+                    let off = (c >> (JCoef::BITS as u8 - 1)) & ((c & mask) > 0) as JCoef;
+                    core::intrinsics::unchecked_shr(c, s) + off
                 } else {
                     core::intrinsics::unchecked_shl(c, s)
                 }
@@ -1222,13 +1220,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 } else {
                     unsafe {
-                        (*next)[i] = Self::rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>(
+                        (*prev)[i] = Self::rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>(
                             (*prev)[i],
                             rPShifts[i],
                         );
-                        let next_temp = temp;
-                        temp -= (*next)[i];
-                        (*next)[i] = next_temp;
+                        (*next)[i] = temp;
+                        temp -= (*prev)[i];
                     }
                 }
             }
@@ -1339,21 +1336,38 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                                     };
                                     for i in 0..DCTSIZE2 {
                                         unsafe {
-                                            output[i] = if cache.next[i] < 0 {
-                                                -core::intrinsics::unchecked_shr(
-                                                    -cache.cache[i],
-                                                    deltaQ0[i],
-                                                )
-                                            } else {
-                                                core::intrinsics::unchecked_shr(
-                                                    cache.cache[i],
-                                                    deltaQ0[i],
-                                                )
-                                            };
-                                            (*prev)[i] = Self::rescale_prev::<true, true>(
+                                            let (off_prev, off_diff) =
+                                                if RESCALE_PREV && RESCALE_PREV_SHR {
+                                                    let mask = core::intrinsics::unchecked_shl(
+                                                        1, deltaQ0[i],
+                                                    ) - 1;
+                                                    let off_next = (cache.next[i]
+                                                        >> (JCoef::BITS as u8 - 1))
+                                                        & ((cache.next[i] & mask) > 0) as JCoef;
+                                                    let off_prev = ((*prev)[i]
+                                                        >> (JCoef::BITS as u8 - 1))
+                                                        & (((*prev)[i] & mask) > 0) as JCoef;
+                                                    let off_diff = (((*prev)[i] & mask)
+                                                        > (cache.next[i] & mask))
+                                                        as JCoef;
+                                                    (off_next, off_next - off_prev + off_diff)
+                                                } else {
+                                                    let mask = core::intrinsics::unchecked_shl(
+                                                        1, deltaQ0[i],
+                                                    ) - 1;
+                                                    let off_next = (cache.next[i]
+                                                        >> (JCoef::BITS as u8 - 1))
+                                                        & ((cache.next[i] & mask) > 0) as JCoef;
+                                                    (off_next, off_next)
+                                                };
+                                            (*prev)[i] = core::intrinsics::unchecked_shr(
                                                 cache.next[i],
                                                 deltaQ0[i],
-                                            );
+                                            ) + off_prev;
+                                            output[i] = core::intrinsics::unchecked_shr(
+                                                cache.cache[i],
+                                                deltaQ0[i],
+                                            ) + off_diff;
                                         }
                                     }
                                 }
