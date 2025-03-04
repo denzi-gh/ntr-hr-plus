@@ -1194,16 +1194,10 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
                 temp = product as i16;
-                if DELTA_Q && !UPDATE_PREV {
-                    ret += JPEG_NBITS_NONZERO(temp as i32) as u32;
-                }
                 temp = -temp;
             } else {
                 let mut product = (temp as u32 + corr) * recip;
                 product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
-                if DELTA_Q && !UPDATE_PREV {
-                    ret += JPEG_NBITS_NONZERO(temp as i32) as u32;
-                }
                 temp = product as i16;
             }
 
@@ -1226,6 +1220,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         );
                         (*next)[i] = temp;
                         temp -= (*prev)[i];
+                        ret += JPEG_NBITS_NONZERO(temp.abs() as i32) as u32;
                     }
                 }
             }
