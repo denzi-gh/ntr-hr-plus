@@ -1831,7 +1831,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
             if comp_size != 0 {
                 let qf = calc_qf(prevDeltaQ);
-                const rb: f32 = 6f32;
+                const rb: f32 = 4f32;
                 const r: f32 = (rb - 1f32) / rb;
                 qc.p = qc.p * r + comp_size as f32;
                 qc.q = f32::max(1f32, qc.q * r + qf + qc.n);
@@ -1852,8 +1852,10 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 DELTA_Q_COUNT
             } else {
                 (DELTA_Q_COUNT as u32 / 6
-                    + DELTA_Q_COUNT as u32 * self.worker.shared.quality as u32 / 120)
-                    as u8
+                    + DELTA_Q_COUNT as u32
+                        * self.worker.shared.quality
+                        * self.worker.shared.quality
+                        / 12000) as u8
             };
             // nsDbgPrint!(int, c_str!("qr"), qr as i32);
             let q = loop {
@@ -1900,6 +1902,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     *deltaQ = q;
                     qc.c = 0;
                 }
+            } else {
+                qc.c = 0;
             }
             // nsDbgPrint!(int, c_str!("q"), q as i32);
             // *deltaQ = if self.worker.shared.quality <= 10 {
