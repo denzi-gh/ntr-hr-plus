@@ -19,6 +19,7 @@ struct DeltaQManager {
     n: f32,
     p: f32,
     q: f32,
+    c: u8,
 }
 
 pub struct JpegShared<'a> {
@@ -425,12 +426,14 @@ impl<'b> Jpeg<'b> {
                 n: 1750f32,
                 p: 0f32,
                 q: 0f32,
+                c: 0,
             },
             DeltaQManager {
                 m: 40f32,
                 n: 1400f32,
                 p: 0f32,
                 q: 0f32,
+                c: 0,
             },
         ];
     }
@@ -1677,7 +1680,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
     fn compute_dq(&mut self, prev: *mut JBlock) {
         unsafe {
             let s = if self.worker.info.isTop { 0 } else { 1 };
-            nsDbgPrint!(int, c_str!("s"), s as i32);
+            // nsDbgPrint!(int, c_str!("s"), s as i32);
             let deltaQ = self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             let rand32 = &mut self.worker.shared_mut.rand32;
             let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(s);
@@ -1851,8 +1854,20 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 };
             };
-            *deltaQ = q;
-            nsDbgPrint!(int, c_str!("q"), q as i32);
+            const qr: u8 = 2;
+            if q > *deltaQ {
+                qc.c -= 1;
+                if qc.c == 0 {
+                    *deltaQ = q;
+                    qc.c = qr;
+                }
+            } else if q < *deltaQ {
+                *deltaQ = q;
+                qc.c = qr;
+            } else {
+                qc.c = 1;
+            }
+            // nsDbgPrint!(int, c_str!("q"), q as i32);
             // *deltaQ = if self.worker.shared.quality <= 10 {
             //     self.worker
             //         .shared_mut

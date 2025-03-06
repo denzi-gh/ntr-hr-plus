@@ -150,8 +150,8 @@ unsafe fn init_min_send_interval(qos: u32_) {
     );
 }
 
-pub fn rp_delta_q_qos() -> u32_ {
-    unsafe { u32::min(max_qos, current_qos.load(Ordering::Relaxed) + max_qos / 2) }
+pub fn rp_delta_q_qos() -> u32 {
+    unsafe { (max_qos + current_qos.load(Ordering::Relaxed)) / 2 }
 }
 
 #[no_mangle]

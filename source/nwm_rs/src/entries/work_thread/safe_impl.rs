@@ -12,14 +12,16 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
 
             let timing = unsafe { svcGetSystemTick() as u32_ };
             let last_timing = v.get_last_frame_timing();
-            if timing - last_timing >= SYSCLOCK_ARM11 {
+            let timing_allowance =
+                if unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() } {
+                    SYSCLOCK_ARM11 / 2
+                } else {
+                    SYSCLOCK_ARM11
+                };
+            if timing - last_timing >= timing_allowance {
                 unsafe { crate::entries::thread_screen::set_no_skip_frame(is_top) };
             }
-
-            let skip_frame =
-                true || !unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() };
-            let skip_frame = skip_frame
-                && !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
+            let skip_frame = !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
                 && !format_changed
                 && !v.frame_changed();
 
