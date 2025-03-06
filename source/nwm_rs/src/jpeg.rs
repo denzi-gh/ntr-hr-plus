@@ -19,7 +19,8 @@ struct DeltaQManager {
     n: f32,
     p: f32,
     q: f32,
-    c: u8,
+    s: f32,
+    c: i8,
 }
 
 pub struct JpegShared<'a> {
@@ -48,7 +49,7 @@ pub struct JpegShared<'a> {
     targetFrameRate: u8,
 }
 
-const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [2, 1, 1];
+const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [6, 4, 4];
 const DELTA_Q_CACHE_MAX: u8 = {
     let mut max = 0;
     let mut i = 0;
@@ -416,7 +417,7 @@ impl<'b> Jpeg<'b> {
         }
 
         self.shared.coreCount = coreCount;
-        self.shared.targetFrameRate = 120;
+        self.shared.targetFrameRate = 60;
         self.shared.chromaSS = hq as u8;
         self.shared.setCompInfos(hq);
         // crude initial estimate
@@ -426,6 +427,7 @@ impl<'b> Jpeg<'b> {
                 n: 1750f32,
                 p: 0f32,
                 q: 0f32,
+                s: 0f32,
                 c: 0,
             },
             DeltaQManager {
@@ -433,6 +435,7 @@ impl<'b> Jpeg<'b> {
                 n: 1400f32,
                 p: 0f32,
                 q: 0f32,
+                s: 0f32,
                 c: 0,
             },
         ];
@@ -1811,27 +1814,51 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 }
                 qf
             };
+            let s1 = if s == 0 { 1 } else { 0 };
+            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
+                / entries::frame_time_factor;
+            let frame_rate = u32::min(
+                self.worker.shared.targetFrameRate as u32,
+                SYSCLOCK_ARM11 / frame_time,
+            );
+            let (qs0, qs1) = {
+                (
+                    self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s).s,
+                    self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s1).s,
+                )
+            };
             let qc = self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s);
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
             if comp_size != 0 {
-                let qf = calc_qf(*deltaQ);
-                const r: f32 = 0.8f32;
+                let qf = calc_qf(prevDeltaQ);
+                const rb: f32 = 6f32;
+                const r: f32 = (rb - 1f32) / rb;
                 qc.p = qc.p * r + comp_size as f32;
-                qc.q = f32::max(0f32, qc.q * r + qf + qc.n);
-                qc.m = qc.p / qc.q;
+                qc.q = f32::max(1f32, qc.q * r + qf + qc.n);
+                qc.m = f32::min(f32::max(1f32, qc.p / qc.q), 80f32);
+                qc.s = (qc.p / rb + comp_size as f32) / qc.q / rb / 2f32 * frame_rate as f32;
             }
 
-            let qos_adj = 1f32 + self.worker.shared.quality as f32 / 100f32;
-            let qos = entries::rp_delta_q_qos() as f32 / self.worker.shared.targetFrameRate as f32
-                * mcus as f32
-                * (2f32 * qos_adj)
-                / (self.worker.shared.mcusTop + self.worker.shared.mcusBot) as f32;
+            let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 250f32;
+            let qos = entries::rp_delta_q_qos() as f32 / frame_rate as f32 * mcus as f32 * qos_adj
+                / (self.worker.shared.mcusTop + self.worker.shared.mcusBot) as f32
+                * f32::min(qs0, qc.s)
+                * 2f32
+                / (qs0 + qs1);
             let qt = qos / qc.m - qc.n;
             // nsDbgPrint!(int, c_str!("qt"), qt as i32);
 
+            let qr = if self.worker.shared.quality == 100 {
+                DELTA_Q_COUNT
+            } else {
+                (DELTA_Q_COUNT as u32 / 6
+                    + DELTA_Q_COUNT as u32 * self.worker.shared.quality as u32 / 120)
+                    as u8
+            };
+            // nsDbgPrint!(int, c_str!("qr"), qr as i32);
             let q = loop {
                 let mut q_min = 0;
-                let mut q_max = DELTA_Q_COUNT;
+                let mut q_max = qr; // exclusive range
                 let mut q_prev = 0;
                 break loop {
                     let q = (q_max - q_min) / 2 + q_min;
@@ -1854,18 +1881,25 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 };
             };
-            const qr: u8 = 2;
-            if q > *deltaQ {
-                qc.c -= 1;
-                if qc.c == 0 {
-                    *deltaQ = q;
-                    qc.c = qr;
+            let qr = (qr as u32 * 6 / DELTA_Q_COUNT as u32) as u8;
+            if q != *deltaQ {
+                if q > *deltaQ {
+                    if qc.c >= 0 {
+                        qc.c += 1;
+                    } else {
+                        qc.c = 0;
+                    }
+                } else {
+                    if qc.c <= 0 {
+                        qc.c -= 1;
+                    } else {
+                        qc.c = 0;
+                    }
                 }
-            } else if q < *deltaQ {
-                *deltaQ = q;
-                qc.c = qr;
-            } else {
-                qc.c = 1;
+                if qc.c.abs() >= qr as i8 {
+                    *deltaQ = q;
+                    qc.c = 0;
+                }
             }
             // nsDbgPrint!(int, c_str!("q"), q as i32);
             // *deltaQ = if self.worker.shared.quality <= 10 {

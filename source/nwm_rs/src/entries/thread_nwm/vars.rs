@@ -135,17 +135,17 @@ unsafe fn set_packet_data_size() {
     }
 }
 
-static mut min_send_interval_tick: u32_ = 0;
+static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
 static mut current_qos: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {
     current_qos.store(qos, Ordering::Relaxed);
-    min_send_interval_tick =
-        core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_)
-            as u32_;
+    let tick =
+        core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_);
+    min_send_interval_tick.store(tick as u32_, Ordering::Relaxed);
     min_send_interval_ns.store(
-        (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
+        (tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
         Ordering::Relaxed,
     );
 }
@@ -168,7 +168,8 @@ pub unsafe fn reset_vars(dst_flags: u32, qos: u32) -> Option<()> {
     }
     nwm_work_index = WorkIndex::init();
     nwm_thread_id = ThreadId::init();
-    rp_output_next_tick = svcGetSystemTick() as s64 + min_send_interval_tick as s64;
+    rp_output_next_tick =
+        svcGetSystemTick() as s64 + min_send_interval_tick.load(Ordering::Relaxed) as s64;
     next_send_tick = rp_output_next_tick as u32_;
     cur_seg_mem_count = 0;
     Some(())
@@ -220,7 +221,7 @@ impl ThreadVars {
     }
 
     pub fn min_send_interval_tick(&self) -> u32_ {
-        unsafe { min_send_interval_tick }
+        unsafe { min_send_interval_tick.load(Ordering::Relaxed) }
     }
 
     pub fn data_buf_hdr(&self) -> &mut DataHdr {
@@ -456,9 +457,9 @@ unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> 
         curr_tick = svcGetSystemTick() as s64;
     }
     let next_interval = if (*kcp).session_established && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
-        min_send_interval_tick as s64 * len as s64 / PACKET_SIZE as s64
+        min_send_interval_tick.load(Ordering::Relaxed) as s64 * len as s64 / PACKET_SIZE as s64
     } else {
-        min_send_interval_tick as s64
+        min_send_interval_tick.load(Ordering::Relaxed) as s64
     };
     (*kcp).seg_send_time = curr_tick as u32_;
     rp_output_next_tick = curr_tick + next_interval;
@@ -773,7 +774,8 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                     0
                 } else {
                     let delay = rp_output_next_tick - svcGetSystemTick() as s64
-                        + ((send_delay - 1) as u32 * min_send_interval_tick) as s64;
+                        + ((send_delay - 1) as u32 * min_send_interval_tick.load(Ordering::Relaxed))
+                            as s64;
                     if delay > 0 {
                         delay * 1_000_000_000 / SYSCLOCK_ARM11 as s64
                     } else {

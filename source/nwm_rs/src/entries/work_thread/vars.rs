@@ -347,6 +347,12 @@ static mut core_count_in_use: CoreCount = CoreCount::init();
 
 static mut current_frame_ids: RangedArray<u8_, SCREEN_COUNT> = const_default();
 static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
+static mut frame_times: [u32; SCREEN_COUNT as usize] = const_default();
+
+pub const frame_time_factor: u32 = 5;
+pub fn get_frame_time(s: ScreenIndex) -> u32 {
+    unsafe { *frame_times.get_unchecked(s.get() as usize) }
+}
 
 pub fn reset_threads() -> bool {
     unsafe { reset_threads_flag.load(Ordering::Relaxed) }
@@ -615,10 +621,22 @@ impl ThreadBeginVars {
     }
 
     #[named]
-    pub fn release_and_capture_screen(self, t: &ThreadId) -> ThreadDoVars {
+    pub fn release_and_capture_screen(self, t: &ThreadId, frame_time: u32) -> ThreadDoVars {
         unsafe {
-            self.v().set_skip_frame(false);
+            let skip_frame = self.v().set_skip_frame(false);
             self.v().clear_screen_synced();
+
+            let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
+            const fr: f32 = 0.8f32;
+            ft.store(
+                (ft.load(Ordering::Relaxed) as f32 * fr
+                    + (if skip_frame {
+                        frame_time
+                    } else {
+                        u32::min(frame_time, SYSCLOCK_ARM11 / 30)
+                    }) as f32) as u32,
+                Ordering::Relaxed,
+            );
 
             let mut count = mem::MaybeUninit::uninit();
             for j in ThreadId::up_to(&get_core_count_in_use()) {

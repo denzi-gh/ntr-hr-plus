@@ -18,7 +18,8 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
                 } else {
                     SYSCLOCK_ARM11
                 };
-            if timing - last_timing >= timing_allowance {
+            let frame_time = timing - last_timing;
+            if frame_time >= timing_allowance {
                 unsafe { crate::entries::thread_screen::set_no_skip_frame(is_top) };
             }
             let skip_frame = !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
@@ -40,7 +41,7 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
 
                 v.set_last_frame_timing(timing);
 
-                break v.release_and_capture_screen(&t);
+                break v.release_and_capture_screen(&t, frame_time);
             }
 
             if let Some(_) = v.release_skip_frame(&t) {

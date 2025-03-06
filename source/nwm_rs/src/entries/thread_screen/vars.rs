@@ -317,8 +317,11 @@ impl ScreenWorkVars {
         iinfo.index.store(index.get(), Ordering::Release);
     }
 
-    pub unsafe fn set_skip_frame(&self, skip_frame: bool) {
-        *skip_frames.get_mut(&self.work_index) = skip_frame;
+    pub unsafe fn set_skip_frame(&self, skip_frame: bool) -> bool {
+        let s = skip_frames.get_mut(&self.work_index);
+        let ret = *s;
+        *s = skip_frame;
+        ret
     }
 
     pub unsafe fn clear_screen_synced(&self) {
