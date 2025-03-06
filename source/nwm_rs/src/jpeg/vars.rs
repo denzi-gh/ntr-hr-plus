@@ -266,13 +266,12 @@ pub struct CompInfo {
     /* These values are fixed over the whole image. */
     /* For compression, they must be supplied by parameter setup; */
     /* for decompression, they are read from the SOF marker. */
-    pub component_id: u8,    /* identifier for this component (0..255) */
-    pub component_index: u8, /* its index in SOF or cinfo->comp_info[] */
-    pub h_samp_factor: u8,   /* horizontal sampling factor (1..4) */
-    pub v_samp_factor: u8,   /* vertical sampling factor (1..4) */
-    pub h_samp_exp: u8,      /* horizontal sampling factor (1..4) */
-    pub v_samp_exp: u8,      /* vertical sampling factor (1..4) */
-    pub quant_tbl_no: u8,    /* quantization table selector (0..3) */
+    pub component_id: u8,  /* identifier for this component (0..255) */
+    pub h_samp_factor: u8, /* horizontal sampling factor (1..4) */
+    pub v_samp_factor: u8, /* vertical sampling factor (1..4) */
+    pub h_samp_exp: u8,    /* horizontal sampling factor (1..4) */
+    pub v_samp_exp: u8,    /* vertical sampling factor (1..4) */
+    pub quant_tbl_no: u8,  /* quantization table selector (0..3) */
     /* These values may vary between scans. */
     /* For compression, they must be supplied by parameter setup; */
     /* for decompression, they are read from the SOS marker. */
@@ -301,7 +300,6 @@ impl CompInfos {
     ) {
         let comp = &mut self.infos[index];
         comp.component_id = id;
-        comp.component_index = index as u8;
         comp.h_samp_exp = hsamp;
         comp.v_samp_exp = vsamp;
         comp.h_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, hsamp) };

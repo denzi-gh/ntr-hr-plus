@@ -13,9 +13,17 @@ pub struct JpegRet {
     pub deltaQ: u8,
 }
 
-// #[derive(ConstDefault)]
+#[derive(ConstDefault)]
+struct DeltaQManager {
+    m: f32,
+    n: f32,
+    p: f32,
+    q: f32,
+}
+
 pub struct JpegShared<'a> {
     quality: u32,
+    chromaSS: u8,
     quantTbls: QuantTbls,
     divisors: Divisors,
     divShifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
@@ -36,6 +44,7 @@ pub struct JpegShared<'a> {
     deltaQNs: [[u16; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub workSem: [Handle; WORK_COUNT as usize],
     pub screenSem: [Handle; SCREEN_COUNT as usize],
+    targetFrameRate: u8,
 }
 
 const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [2, 1, 1];
@@ -75,21 +84,19 @@ pub struct DeltaQCache {
 }
 
 pub struct JpegSharedMut {
-    pub compressedSize: [u32; WORK_COUNT as usize],
+    pub compressedSize: [u32; SCREEN_COUNT as usize],
     pub workInited: [bool; WORK_COUNT as usize],
     pub screenSemCount: [u8; SCREEN_COUNT as usize],
-    pub deltaQ: [u8; SCREEN_COUNT as usize],
-    pub dQRescalePrev: [i8; SCREEN_COUNT as usize],
-    pub rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
-    pub deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; SCREEN_COUNT as usize],
-    pub rand32: Rand32,
+    deltaQ: [u8; SCREEN_COUNT as usize],
+    dQRescalePrev: [i8; SCREEN_COUNT as usize],
+    rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
+    deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; SCREEN_COUNT as usize],
+    deltaQCalc: [DeltaQManager; SCREEN_COUNT as usize],
+    rand32: Rand32,
 }
 
 impl JpegSharedMut {
     pub fn init(&mut self) {
-        for s in 0..SCREEN_COUNT {
-            self.deltaQ[s as usize] = DELTA_Q_COUNT - 1;
-        }
         self.rand32 = Rand32::new(unsafe { svcGetSystemTick() });
     }
 }
@@ -141,13 +148,16 @@ impl<'a> JpegShared<'a> {
                     for i in 0..DCTSIZE2 {
                         let v = roundf(f32::max(log2_tbls.get_unchecked(i) - f, 0.0f32)) as u8;
                         *dQTbl.get_unchecked_mut(i) = v;
-                        if d == DELTA_Q_COUNT as usize - 1 {
-                            *dQ0Tbl.get_unchecked_mut(i) = 0;
+                        let d = if d == DELTA_Q_COUNT as usize - 1 {
+                            0
                         } else {
-                            *dQ0Tbl.get_unchecked_mut(i) = v - *d0QTbl.get_unchecked_mut(i);
-                        }
+                            v - *d0QTbl.get_unchecked_mut(i)
+                        };
 
-                        *qn += v as u16;
+                        *dQ0Tbl.get_unchecked_mut(i) = d;
+                        if i != 0 {
+                            *qn += d as u16;
+                        }
                     }
                     // nsDbgPrint!(int, c_str!("qn"), *qn as i32);
                 }
@@ -246,7 +256,7 @@ pub union WorkderDstUser {
 
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
-    pub w: WorkIndex,
+    pub s: ScreenIndex,
     pub dst: *mut u8,
     pub free_in_bytes: u16,
     pub user: WorkderDstUser,
@@ -302,7 +312,7 @@ impl WorkerDst {
     fn flush<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self) -> bool {
         if DELTA_Q {
             unsafe {
-                entries::rp_dq_update_size(self.w, entries::packet_data_size_kcp as u32);
+                entries::rp_dq_update_size(self.s, entries::packet_data_size_kcp as u32);
             }
         }
         unsafe { crate::entries::rp_send_buffer::<REL_STREAM>(self, false) }
@@ -312,7 +322,7 @@ impl WorkerDst {
         if DELTA_Q {
             unsafe {
                 entries::rp_dq_update_size(
-                    self.w,
+                    self.s,
                     entries::packet_data_size_kcp as u32 - self.free_in_bytes as u32,
                 );
             }
@@ -398,10 +408,31 @@ impl<'b> Jpeg<'b> {
                     }
                 }
             }
+            self.shared_mut.compressedSize = const_default();
+            for s in 0..SCREEN_COUNT {
+                self.shared_mut.deltaQ[s as usize] = DELTA_Q_COUNT - 1;
+            }
         }
 
         self.shared.coreCount = coreCount;
+        self.shared.targetFrameRate = 120;
+        self.shared.chromaSS = hq as u8;
         self.shared.setCompInfos(hq);
+        // crude initial estimate
+        self.shared_mut.deltaQCalc = [
+            DeltaQManager {
+                m: 40f32,
+                n: 1750f32,
+                p: 0f32,
+                q: 0f32,
+            },
+            DeltaQManager {
+                m: 40f32,
+                n: 1400f32,
+                p: 0f32,
+                q: 0f32,
+            },
+        ];
     }
 
     pub fn setInfo(&mut self, info: CInfo) {
@@ -1220,7 +1251,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         );
                         (*next)[i] = temp;
                         temp -= (*prev)[i];
-                        ret += JPEG_NBITS_NONZERO(temp.abs() as i32) as u32;
+                        if i != 0 {
+                            ret += JPEG_NBITS_NONZERO(temp.abs() as i32) as u32;
+                        }
                     }
                 }
             }
@@ -1644,9 +1677,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
     fn compute_dq(&mut self, prev: *mut JBlock) {
         unsafe {
             let s = if self.worker.info.isTop { 0 } else { 1 };
+            nsDbgPrint!(int, c_str!("s"), s as i32);
+            let deltaQ = self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             let rand32 = &mut self.worker.shared_mut.rand32;
             let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(s);
-            let prevDeltaQ = *self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
+            let prevDeltaQ = *deltaQ;
             let deltaQ0 = self
                 .worker
                 .shared
@@ -1661,10 +1696,15 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
             let mut delta_cache_start = 0;
             let mut blkn_start = 0;
+
+            let mut qnv: [f32; NUM_QUANT_TBLS] = const_default();
+            let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
+
             for ci in 0..MAX_COMPONENTS {
                 let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
                 let comp = &self.worker.shared.compInfos.infos[ci];
+                let qni = comp.quant_tbl_no;
                 let MCU_we = comp.h_samp_exp;
                 let MCU_he = comp.v_samp_exp;
 
@@ -1703,7 +1743,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             + blkn_start,
                     );
 
-                    let _qn = if prevDeltaQ == DELTA_Q_COUNT - 1 {
+                    let qn = if prevDeltaQ == DELTA_Q_COUNT - 1 {
                         Self::forward_DCT::<false, false, false>(
                             &self.worker.bufs.prep[ci],
                             &mut cache.cache,
@@ -1728,25 +1768,113 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             &mut cache.next,
                         )
                     };
+                    *qnv.get_unchecked_mut(qni as usize) += qn as f32;
+                    *qnc.get_unchecked_mut(qni as usize) += 1;
                 }
 
                 delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
                 blkn_start += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he);
             }
 
-            let s = if self.worker.info.isTop { 0 } else { 1 };
-            if self.worker.shared.quality <= 10 {
-                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
-                    self.worker
-                        .shared_mut
-                        .rand32
-                        .rand_range(0..DELTA_Q_COUNT as u32) as u8;
+            let mcus = if self.worker.info.isTop {
+                self.worker.shared.mcusTop
             } else {
-                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) =
-                    (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8;
+                self.worker.shared.mcusBot
+            };
+            for i in 0..NUM_QUANT_TBLS {
+                qnv[i] /= qnc[i] as f32;
+                // nsDbgPrint!(int, c_str!("qnv"), qnv[i] as i32);
             }
-            let dQRescalePrev =
-                *self.worker.shared_mut.deltaQ.get_unchecked_mut(s) as i8 - prevDeltaQ as i8;
+
+            let calc_qf = |q| {
+                let mut qns: [f32; NUM_QUANT_TBLS] = const_default();
+                let mut qf = 0.0f32;
+                for i in 0..NUM_QUANT_TBLS {
+                    qns[i] = qnv[i]
+                        - *self
+                            .worker
+                            .shared
+                            .deltaQNs
+                            .get_unchecked(q as usize)
+                            .get_unchecked(i) as f32;
+                }
+                for ci in 0..MAX_COMPONENTS {
+                    let comp = &self.worker.shared.compInfos.infos[ci];
+                    let MCU_we = comp.h_samp_exp;
+                    let MCU_he = comp.v_samp_exp;
+
+                    qf += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he) as f32
+                        * qns.get_unchecked(comp.quant_tbl_no as usize);
+                }
+                qf
+            };
+            let qc = self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s);
+            let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
+            if comp_size != 0 {
+                let qf = calc_qf(*deltaQ);
+                const r: f32 = 0.8f32;
+                qc.p = qc.p * r + comp_size as f32;
+                qc.q = f32::max(0f32, qc.q * r + qf + qc.n);
+                qc.m = qc.p / qc.q;
+            }
+
+            let qos_adj = 1f32 + self.worker.shared.quality as f32 / 100f32;
+            let qos = entries::rp_delta_q_qos() as f32 / self.worker.shared.targetFrameRate as f32
+                * mcus as f32
+                * (2f32 * qos_adj)
+                / (self.worker.shared.mcusTop + self.worker.shared.mcusBot) as f32;
+            let qt = qos / qc.m - qc.n;
+            // nsDbgPrint!(int, c_str!("qt"), qt as i32);
+
+            let q = loop {
+                let mut q_min = 0;
+                let mut q_max = DELTA_Q_COUNT;
+                let mut q_prev = 0;
+                break loop {
+                    let q = (q_max - q_min) / 2 + q_min;
+                    if q == q_prev {
+                        break q;
+                    }
+                    let qf = calc_qf(q);
+                    // nsDbgPrint!(int, c_str!("qf"), qf as i32);
+                    q_prev = q;
+                    if qf > qt {
+                        if q_max == q {
+                            break q;
+                        }
+                        q_max = q;
+                    } else {
+                        if q_min == q {
+                            break q;
+                        }
+                        q_min = q;
+                    }
+                };
+            };
+            *deltaQ = q;
+            nsDbgPrint!(int, c_str!("q"), q as i32);
+            // *deltaQ = if self.worker.shared.quality <= 10 {
+            //     self.worker
+            //         .shared_mut
+            //         .rand32
+            //         .rand_range(0..DELTA_Q_COUNT as u32) as u8
+            // } else {
+            //     (self.worker.shared.quality * (DELTA_Q_COUNT as u32 - 1) / 100) as u8
+            // };
+            // for i in 0..NUM_QUANT_TBLS {
+            //     nsDbgPrint!(
+            //         int,
+            //         c_str!("qn"),
+            //         *self
+            //             .worker
+            //             .shared
+            //             .deltaQNs
+            //             .get_unchecked(*deltaQ as usize)
+            //             .get_unchecked(i) as i32
+            //     );
+            // }
+
+            let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;
             *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(s) = dQRescalePrev;
 
             if dQRescalePrev != 0 {
@@ -1820,9 +1948,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             }
 
                             self.compute_dq(prev);
-                            let pcomp_size =
-                                self.worker.shared_mut.compressedSize.get_unchecked_mut(w);
-                            *pcomp_size = 0;
+                            *self.worker.shared_mut.compressedSize.get_unchecked_mut(s) = 0;
                             delta_cache = true;
 
                             let mut count = mem::MaybeUninit::uninit();
@@ -2011,6 +2137,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 if AtomicU8::from_ptr(c).fetch_sub(1, Ordering::Relaxed) == 1 {
                     *c = self.worker.info.coreCount.get() as u8;
                     *self.worker.shared_mut.workInited.get_unchecked_mut(w) = false;
+
+                    // nsDbgPrint!(
+                    //     int,
+                    //     c_str!("compressedSize"),
+                    //     *self.worker.shared_mut.compressedSize.get_unchecked(s) as i32
+                    // );
 
                     let mut count = mem::MaybeUninit::uninit();
                     let res = svcReleaseSemaphore(

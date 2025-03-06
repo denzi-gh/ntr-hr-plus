@@ -227,6 +227,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
 
         let progress = || {};
 
+        let s = ScreenIndex::init_unchecked(if ctx.is_top { 0 } else { 1 });
         let jpeg = match entries::thread_nwm::get_reliable_stream_method() {
             entries::thread_nwm::ReliableStreamMethod::None => {
                 let mut worker = get_jpeg().getWorker::<false>(w, *t);
@@ -242,7 +243,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
                 })();
 
                 let dst = crate::jpeg::WorkerDst {
-                    w,
+                    s,
                     dst: dst as *mut u8,
                     free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                     user,
@@ -263,7 +264,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
                     Some((jpeg::WorkderDstUser { hdr }, dst))
                 })() {
                     let dst = crate::jpeg::WorkerDst {
-                        w,
+                        s,
                         dst: dst as *mut u8,
                         free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                         user,

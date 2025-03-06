@@ -66,6 +66,7 @@ pub unsafe fn get_reliable_stream_delta_prog() -> bool {
 }
 
 static mut kcp_conv_count: u8 = 0;
+static mut max_qos: u32 = 0;
 
 unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
     let nwm_lock = if let Some(l) = NwmCbLock::lock() {
@@ -77,6 +78,7 @@ unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
     reliable_stream = flags & RP_CONFIG_RELIABLE_STREAM_FLAG > 0;
     reliable_stream_delta_prog =
         reliable_stream && flags & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG > 0;
+    max_qos = qos;
 
     set_packet_data_size();
 
@@ -135,8 +137,10 @@ unsafe fn set_packet_data_size() {
 
 static mut min_send_interval_tick: u32_ = 0;
 static mut min_send_interval_ns: AtomicU32 = const_default();
+static mut current_qos: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {
+    current_qos.store(qos, Ordering::Relaxed);
     min_send_interval_tick =
         core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_)
             as u32_;
@@ -144,6 +148,10 @@ unsafe fn init_min_send_interval(qos: u32_) {
         (min_send_interval_tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
         Ordering::Relaxed,
     );
+}
+
+pub fn rp_delta_q_qos() -> u32_ {
+    unsafe { u32::min(max_qos, current_qos.load(Ordering::Relaxed) + max_qos / 2) }
 }
 
 #[no_mangle]
@@ -283,12 +291,12 @@ pub unsafe fn release_nwm_ready(w: &WorkIndex) {
     }
 }
 
-pub unsafe fn rp_dq_update_size(w: WorkIndex, size: u32) {
+pub unsafe fn rp_dq_update_size(s: ScreenIndex, size: u32) {
     AtomicU32::from_ptr(
         entries::work_thread::get_jpeg()
             .shared_mut
             .compressedSize
-            .get_unchecked_mut(w.get() as usize),
+            .get_unchecked_mut(s.get() as usize),
     )
     .fetch_add(size, Ordering::Relaxed);
 }
