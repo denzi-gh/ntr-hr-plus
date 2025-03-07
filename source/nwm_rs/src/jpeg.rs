@@ -20,9 +20,9 @@ struct DeltaQManager {
     p: f32,
     q: f32,
     s: f32,
-    c: i8,
+    // c: i8,
     cc: i8,
-    cn: u8,
+    cn: i8,
     qnv: [f32; NUM_QUANT_TBLS],
 }
 
@@ -431,7 +431,7 @@ impl<'b> Jpeg<'b> {
                 p: 0f32,
                 q: 0f32,
                 s: 0f32,
-                c: 0,
+                // c: 0,
                 cc: 0,
                 cn: 0,
                 qnv: const_default(),
@@ -442,7 +442,7 @@ impl<'b> Jpeg<'b> {
                 p: 0f32,
                 q: 0f32,
                 s: 0f32,
-                c: 0,
+                // c: 0,
                 cc: 0,
                 cn: 0,
                 qnv: const_default(),
@@ -1896,39 +1896,59 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 };
             };
             let qr = (qr as u32 * 6 / DELTA_Q_COUNT as u32) as u8;
-            let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager| {
-                *deltaQ = q;
-                qc.cc = 0;
-                qc.cn = qr;
-                qc.c = 0;
+            let mut q_done = false;
+            let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager, q_done: &mut bool| {
+                *deltaQ = (*deltaQ + q) / 2;
+                if qc.cc > 0 {
+                    qc.cc = qr as i8;
+                    qc.cn = qr as i8;
+                } else {
+                    qc.cc = -(qr as i8);
+                    qc.cn = -(qr as i8);
+                }
+                // qc.c = 0;
+                *q_done = true;
             };
             if q != *deltaQ {
                 if q > *deltaQ {
-                    if qc.c >= 0 {
-                        qc.c += 1;
-                    } else {
-                        qc.c = 0;
+                    // if qc.c >= 0 {
+                    //     qc.c += 1;
+                    // } else {
+                    //     qc.c = 0;
+                    // }
+                    qc.cc = qc.cc / 2 + (q as i8 - *deltaQ as i8);
+                    if qc.cc >= qr as i8 && qc.cn >= 0 {
+                        set_q(deltaQ, qc, &mut q_done);
                     }
                 } else {
-                    if qc.c <= 0 {
-                        qc.c -= 1;
-                    } else {
-                        qc.c = 0;
+                    // if qc.c <= 0 {
+                    //     qc.c -= 1;
+                    // } else {
+                    //     qc.c = 0;
+                    // }
+                    qc.cc = qc.cc / 2 - (*deltaQ as i8 - q as i8);
+                    if qc.cc <= -(qr as i8) && qc.cn <= 0 {
+                        set_q(deltaQ, qc, &mut q_done);
                     }
                 }
-                qc.cc += q as i8 - *deltaQ as i8;
-                if qc.cn == 0 {
-                    if qc.cc.abs() > qr as i8 {
-                        set_q(deltaQ, qc);
+
+                if !q_done {
+                    if qc.cn > 0 {
+                        qc.cn -= 1;
+                    } else if qc.cn < 0 {
+                        qc.cn += 1;
                     }
-                } else {
-                    qc.cn -= 1;
+
+                    if qc.cn == 0 && qc.cc.abs() >= qr as i8 {
+                        set_q(deltaQ, qc, &mut q_done);
+                    }
                 }
-                if qc.c.abs() >= qr as i8 {
-                    set_q(deltaQ, qc);
-                }
+
+                // if !q_done && qc.c.abs() >= qr as i8 {
+                //     set_q(deltaQ, qc, &mut q_done);
+                // }
             } else {
-                qc.c = 0;
+                // qc.c = 0;
             }
             qc.qnv = qnv;
             // nsDbgPrint!(int, c_str!("q"), q as i32);
