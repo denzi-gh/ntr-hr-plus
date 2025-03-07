@@ -21,6 +21,9 @@ struct DeltaQManager {
     q: f32,
     s: f32,
     c: i8,
+    cc: i8,
+    cn: u8,
+    qnv: [f32; NUM_QUANT_TBLS],
 }
 
 pub struct JpegShared<'a> {
@@ -429,6 +432,9 @@ impl<'b> Jpeg<'b> {
                 q: 0f32,
                 s: 0f32,
                 c: 0,
+                cc: 0,
+                cn: 0,
+                qnv: const_default(),
             },
             DeltaQManager {
                 m: 40f32,
@@ -437,6 +443,9 @@ impl<'b> Jpeg<'b> {
                 q: 0f32,
                 s: 0f32,
                 c: 0,
+                cc: 0,
+                cn: 0,
+                qnv: const_default(),
             },
         ];
     }
@@ -1792,7 +1801,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 // nsDbgPrint!(int, c_str!("qnv"), qnv[i] as i32);
             }
 
-            let calc_qf = |q| {
+            let calc_qf = |q, qnv: &mut [f32; NUM_QUANT_TBLS]| {
                 let mut qns: [f32; NUM_QUANT_TBLS] = const_default();
                 let mut qf = 0.0f32;
                 for i in 0..NUM_QUANT_TBLS {
@@ -1830,12 +1839,15 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let qc = self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s);
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
             if comp_size != 0 {
-                let qf = calc_qf(prevDeltaQ);
+                let qf = calc_qf(prevDeltaQ, &mut qc.qnv);
                 const rb: f32 = 4f32;
                 const r: f32 = (rb - 1f32) / rb;
-                qc.p = qc.p * r + comp_size as f32;
-                qc.q = f32::max(1f32, qc.q * r + qf + qc.n);
-                qc.m = f32::min(f32::max(1f32, qc.p / qc.q), 80f32);
+                let qq = qc.q * r + qf + qc.n;
+                if qq > 1f32 {
+                    qc.p = qc.p * r + comp_size as f32;
+                    qc.q = qq;
+                    qc.m = f32::min(f32::max(1f32, qc.p / qc.q), 80f32);
+                }
                 qc.s = (qc.p / rb + comp_size as f32) / qc.q / rb / 2f32 * frame_rate as f32;
             }
 
@@ -1867,7 +1879,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     if q == q_prev {
                         break q;
                     }
-                    let qf = calc_qf(q);
+                    let qf = calc_qf(q, &mut qnv);
                     // nsDbgPrint!(int, c_str!("qf"), qf as i32);
                     q_prev = q;
                     if qf > qt {
@@ -1884,6 +1896,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 };
             };
             let qr = (qr as u32 * 6 / DELTA_Q_COUNT as u32) as u8;
+            let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager| {
+                *deltaQ = q;
+                qc.cc = 0;
+                qc.cn = qr;
+                qc.c = 0;
+            };
             if q != *deltaQ {
                 if q > *deltaQ {
                     if qc.c >= 0 {
@@ -1898,13 +1916,21 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         qc.c = 0;
                     }
                 }
+                qc.cc += q as i8 - *deltaQ as i8;
+                if qc.cn == 0 {
+                    if qc.cc.abs() > qr as i8 {
+                        set_q(deltaQ, qc);
+                    }
+                } else {
+                    qc.cn -= 1;
+                }
                 if qc.c.abs() >= qr as i8 {
-                    *deltaQ = q;
-                    qc.c = 0;
+                    set_q(deltaQ, qc);
                 }
             } else {
                 qc.c = 0;
             }
+            qc.qnv = qnv;
             // nsDbgPrint!(int, c_str!("q"), q as i32);
             // *deltaQ = if self.worker.shared.quality <= 10 {
             //     self.worker
