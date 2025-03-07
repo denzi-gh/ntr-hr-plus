@@ -246,16 +246,22 @@ static void pmWaitFreeLoaderMemPool(void) {
 
 static int pmAllocLoaderMemPool(Handle hGameProcess, int loaderMem) {
 	s32 ret;
-	if (loaderMem)
+	if (loaderMem) {
 		ret = mapRemoteMemoryInLoader(hGameProcess, (u32)plgLoader, plgLoaderEx->memSizeTotal, MEMOP_ALLOC);
-	else
+		if (ret != 0) {
+			nsDbgPrint("Alloc plugin memory in loader failed: %08"PRIx32"\n", ret);
+			return ret;
+		}
+	} else {
 		ret = mapRemoteMemory(hGameProcess, (u32)plgLoader, plgLoaderEx->memSizeTotal, MEMOP_ALLOC);
-	if (ret != 0) {
-		nsDbgPrint("Alloc plugin memory failed: %08"PRIx32"\n", ret);
-		return ret;
+		if (ret != 0) {
+			nsDbgPrint("Alloc plugin memory failed: %08"PRIx32"\n", ret);
+			return ret;
+		}
 	}
 
-	if (loaderMem) {
+
+	if (0 && plgThreadStack && loaderMem) { /* disabled as it doesn't do much most of the time */
 		loaderMemPoolSize = plgLoaderEx->memSizeTotal;
 		ret = svcDuplicateHandle(&loaderMemGameHandle, hGameProcess);
 		if (ret != 0) {
@@ -291,9 +297,18 @@ static int pmSaveToMenu(void *addr, u32 size) {
 }
 
 static int pmInitGamePlg(Handle hGameProcess, int loaderMem) {
-	s32 ret = pmAllocLoaderMemPool(hGameProcess, loaderMem);
-	if (ret != 0) {
-		return ret;
+	int retries = 3;
+	s32 ret;
+	while (1) {
+		ret = pmAllocLoaderMemPool(hGameProcess, loaderMem);
+		if (ret != 0) {
+			if (--retries){
+				svcSleepThread(100000000);
+				continue;
+			}
+			return ret;
+		}
+		break;
 	}
 
 	ret = protectRemoteMemory(hGameProcess, plgLoader, plgLoaderEx->memSizeTotal, MEMPERM_READWRITE | MEMPERM_EXECUTE);
@@ -412,6 +427,7 @@ void mainPre(void) {
 	}
 	rtInitHook(&svcRunHook, ntrConfig->PMSvcRunAddr, (u32)svcRunCallback);
 	rtEnableHook(&svcRunHook);
+	nsDbgPrint("pm svcRun hook installed at %08"PRIx32"\n", ntrConfig->PMSvcRunAddr);
 }
 
 void mainPost(void) {
@@ -469,9 +485,11 @@ void mainThread(void *) {
 		goto fs_fail;
 	}
 
-	plgThreadStack = (u32 *)plgRequestMemoryFromPool(SMALL_STACK_SIZE, 1);
-	if (!plgThreadStack) {
-		goto fs_fail;
+	if (0) {
+		plgThreadStack = (u32 *)plgRequestMemoryFromPool(SMALL_STACK_SIZE, 1);
+		if (!plgThreadStack) {
+			goto fs_fail;
+		}
 	}
 
 	goto final;

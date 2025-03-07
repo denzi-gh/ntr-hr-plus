@@ -16,13 +16,18 @@ typedef u32 (*SetBufferSwapTypedef)(u32 isDisplay1, u32 a2, u32 addr, u32 addrB,
 typedef u32 (*SetBufferSwapTypedef2)(u32 r0, u32 *params, u32 isBottom, u32 arg);
 static RT_HOOK SetBufferSwapHook;
 
+static int rpPortSend(u32 isTop);
 static void plgSetBufferSwapCommon(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format) {
-	if (plgLoaderEx->remotePlayBoost && plgOverlayEvent && *plgOverlayEvent) {
-		ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
-		s32 ret;
-		ret = svcSignalEvent(*plgOverlayEvent);
-		if (ret != 0) {
-			nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
+	if (plgLoaderEx->remotePlayBoost) {
+		if (plgOverlayEvent && *plgOverlayEvent) {
+			ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
+			s32 ret;
+			ret = svcSignalEvent(*plgOverlayEvent);
+			if (ret != 0) {
+				nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
+			}
+		} else {
+			rpPortSend(isDisplay1 ? 0 : 1);
 		}
 	}
 
@@ -139,10 +144,16 @@ static u32 plgSearchBytes(u32 startAddr, u32 endAddr, const u32 *pat, int patlen
 	return 0;
 }
 
-static void plgCreateOverlayThread(u32 fp) {
-	plgOverlayThreadStack = (void *)plgRequestMemoryFromPool(SMALL_STACK_SIZE, 1);
+static int plgCreateOverlayThread(u32 fp, u32 *stack) {
 	if (!plgOverlayThreadStack) {
-		return;
+		if (stack) {
+			plgOverlayThreadStack = stack;
+		} else {
+			plgOverlayThreadStack = (void *)plgRequestMemoryFromPool(SMALL_STACK_SIZE, 1);
+			if (!plgOverlayThreadStack) {
+				return -1;
+			}
+		}
 	}
 	plgOverlayEvent = plgOverlayThreadStack;
 	s32 ret;
@@ -150,16 +161,18 @@ static void plgCreateOverlayThread(u32 fp) {
 	if (ret != 0) {
 		nsDbgPrint("Create plgOverlayEvent failed: %08"PRIx32"\n", ret);
 		*plgOverlayEvent = 0;
-		return;
+		return ret;
 	}
 	Handle hThread;
 	ret = svcCreateThread(&hThread, plgOverlayThread, fp, &plgOverlayThreadStack[(SMALL_STACK_SIZE / 4) - 10], 0x18, -2);
 	if (ret != 0) {
 		nsDbgPrint("Create plgOverlayThread failed: %08"PRIx32"\n", ret);
+		return ret;
 	}
+	return 0;
 }
 
-void plgInitScreenOverlay(void) {
+void plgInitScreenOverlay(u32 *stack) {
 	if (plgLoaderEx->CTRPFCompat) {
 		plgOverlayStatus = 2;
 		return;
@@ -200,7 +213,10 @@ void plgInitScreenOverlay(void) {
 
 	nsDbgPrint("Overlay addr: %"PRIx32"; fp: %"PRIx32"; fp2: %"PRIx32"\n", addr, fp, fp2);
 
-	plgCreateOverlayThread(fp || fp2);
+	if (plgLoaderEx->remotePlayBoost && plgCreateOverlayThread(fp || fp2, stack) != 0) {
+		nsDbgPrint("Overlay thread create failed\n");
+		// return;
+	}
 
 	if (fp) {
 		rtInitHook(&SetBufferSwapHook, fp, (u32)plgSetBufferSwapCallback);
@@ -214,7 +230,7 @@ void plgInitScreenOverlay(void) {
 }
 
 void plgInitScreenOverlayDirectly(u32 funcAddr) {
-	plgCreateOverlayThread(1);
+	plgCreateOverlayThread(1, NULL);
 	rtInitHook(&SetBufferSwapHook, funcAddr, (u32)plgSetBufferSwapCallback);
 	rtEnableHook(&SetBufferSwapHook);
 }

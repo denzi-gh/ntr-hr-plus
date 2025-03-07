@@ -65,7 +65,7 @@ void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32
 
 void mainPost(void) {
 	if (plgLoaderEx->remotePlayBoost)
-		plgInitScreenOverlay();
+		plgInitScreenOverlay(NULL);
 
 	if (plgLoaderEx->memSizeTotal != 0) {
 		disp(100, DBG_CL_USE_INJECT);
@@ -108,7 +108,7 @@ final:
 
 u32 plgRegisterCallback(u32 type, void *callback, u32) {
 	if (type == CALLBACK_TYPE_OVERLAY) {
-		plgInitScreenOverlay();
+		plgInitScreenOverlay(NULL);
 
 		if (plgOverlayStatus != 1) {
 			return -1;
