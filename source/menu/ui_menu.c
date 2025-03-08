@@ -297,6 +297,8 @@ const char *plgTranslate(const char *msg) {
 void showMsgRaw2(const char *title, const char *msg) {
 	acquireVideo();
 	while(1) {
+		if (waitKeysOverride & KEY_B)
+			break;
 		blank();
 		if (title && *title) {
 			print(title, 10, 10, 255, 0, 255);
@@ -346,6 +348,12 @@ s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], con
 	}
 
 	while(1) {
+		if (waitKeysOverride & KEY_B) {
+			if (keysPressed) {
+				*keysPressed = waitKeysOverride;
+				return -1;
+			}
+		}
 		blank();
 		pos = 10;
 		print(title, x, pos, 255, 0, 0);

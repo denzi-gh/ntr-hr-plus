@@ -635,14 +635,15 @@ static RT_HOOK menuRecvNotificationHook;
 static Handle menuPtmSysmHandle;
 #define PTM_SYSM_NAME "ptm:sysm"
 
+static Handle *menuSrvHandle;
+
 static Result menuSrvReceiveNotification(u32 *notificationIdOut) {
 	Result rc = 0;
 	u32 *cmdbuf = getThreadCommandBuffer();
 
 	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
 
-	Handle *srvHandle = (Handle *)0x0033c14c;
-	rc = svcSendSyncRequest(*srvHandle);
+	rc = svcSendSyncRequest(*menuSrvHandle);
 	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
 	if (notificationIdOut)
 		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
@@ -688,23 +689,66 @@ static Result menuRecvNotificationCallback(u32* notificationIdOut) {
 typedef Result (*srvSubscribeTypedef)(u32 notificationId);
 typedef Result (*srvGetServiceHandleTypedef)(Handle *out, const char *name, s32 name_len, u32 blocking_policy);
 
+static u32 searchBytes(u32 startAddr, u32 endAddr, u8 *pat, u32 patlen, u32 step) {
+	while (1) {
+		if (startAddr + patlen > endAddr) {
+			return 0;
+		}
+		if (memcmp((u32 *)startAddr, pat, patlen) == 0) {
+			return startAddr;
+		}
+		startAddr += step;
+	}
+	return 0;
+}
+
+u32 findNearestSTMFD(u32 base, u32 pos) {
+	if (pos < base) {
+		return 0;
+	}
+	pos = pos - pos % 4;
+	u32 term = pos - 0x1000;
+	if (term < base) {
+		term = base;
+	}
+	while (pos >= term) {
+		if (*(u16 *)(pos + 2) == 0xe92d) {
+			return pos;
+		}
+		pos -= 4;
+	}
+	return 0;
+}
+
 static void menuNotificationHook(void) {
-#define RP_MENU_HDR_SIZE (8)
+	u32 codeStartAddress;
+	u32 codeTotalSize;
+
+	s64 textStartAddress, textTotalRoundedSize, rodataTotalRoundedSize, dataTotalRoundedSize;
+	Handle processHandle = CUR_PROCESS_HANDLE;
+
+	svcGetProcessInfo(&textTotalRoundedSize, processHandle, 0x10002);
+	svcGetProcessInfo(&rodataTotalRoundedSize, processHandle, 0x10003);
+	svcGetProcessInfo(&dataTotalRoundedSize, processHandle, 0x10004);
+
+	svcGetProcessInfo(&textStartAddress, processHandle, 0x10005);
+
+	codeTotalSize = (u32)(textTotalRoundedSize + rodataTotalRoundedSize + dataTotalRoundedSize);
+	codeStartAddress = (u32)textStartAddress; //should be 0x00100000, rarely 0x14000000
+
 	srvSubscribeTypedef menuSrvSubscribe;
 	{
-		u8 desiredHeader[RP_MENU_HDR_SIZE] = {
-			0x10, 0x40, 0x2d, 0xe9, 0x70, 0x4f, 0x1d, 0xee,
+		u8 desiredPat[] = {
+			0x40, 0x00, 0x09, 0x00,
 		};
-		u32 remotePC = 0x00215c98;
-		u8 buf[RP_MENU_HDR_SIZE] = { 0 };
 
-		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
-		if (ret != 0) {
-			nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
-			goto final;
+		u32 remotePC = searchBytes(codeStartAddress, codeStartAddress + codeTotalSize, desiredPat, sizeof(desiredPat), 4);
+		if (remotePC != 0) {
+			menuSrvHandle = (Handle *)*(u32 *)(remotePC + 4);
 		}
+		remotePC = findNearestSTMFD(codeStartAddress, remotePC);
 
-		if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+		if (remotePC == 0) {
 			nsDbgPrint("Unexpected menu memory content\n");
 			goto final;
 		}
@@ -714,19 +758,12 @@ static void menuNotificationHook(void) {
 
 	srvGetServiceHandleTypedef menuSrvGetServiceHandle;
 	{
-		u8 desiredHeader[RP_MENU_HDR_SIZE] = {
-			0x20, 0xc0, 0x9f, 0xe5, 0x04, 0xc0, 0x9c, 0xe5,
+		u8 desiredPat[] = {
+			0x20, 0xc0, 0x9f, 0xe5, 0x04, 0xc0, 0x9c, 0xe5, 0x00, 0x00, 0x5c, 0xe3, 0x18, 0x00, 0x9f, 0xd5,
 		};
-		u32 remotePC = 0x00235aa4;
-		u8 buf[RP_MENU_HDR_SIZE] = { 0 };
+		u32 remotePC = searchBytes(codeStartAddress, codeStartAddress + codeTotalSize, desiredPat, sizeof(desiredPat), 4);
 
-		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
-		if (ret != 0) {
-			nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
-			goto final;
-		}
-
-		if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+		if (remotePC == 0) {
 			nsDbgPrint("Unexpected menu memory content\n");
 			goto final;
 		}
@@ -734,19 +771,19 @@ static void menuNotificationHook(void) {
 		menuSrvGetServiceHandle = (srvGetServiceHandleTypedef)remotePC;
 	}
 
-	u8 desiredHeader[RP_MENU_HDR_SIZE] = {
-		0x70, 0x40, 0x2d, 0xe9, 0x00, 0x50, 0xa0, 0xe1,
+	u8 desiredPat[] = {
+		0x0b, 0x08, 0xa0, 0xe3,
 	};
-	u32 remotePC = 0x0010f63c;
-	u8 buf[RP_MENU_HDR_SIZE] = { 0 };
-
-	s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
-	if (ret != 0) {
-		nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
-		goto final;
+	u32 remotePC = searchBytes(codeStartAddress, codeStartAddress + codeTotalSize, desiredPat, sizeof(desiredPat), 4);
+	if (remotePC != 0) {
+		if (searchBytes(remotePC, remotePC + 0x40, (u8 *)&menuSrvHandle, sizeof(Handle *), 4) == 0) {
+			nsDbgPrint("Unexpected menu memory content\n");
+			goto final;
+		}
 	}
+	remotePC = findNearestSTMFD(codeStartAddress, remotePC);
 
-	if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+	if (remotePC == 0) {
 		nsDbgPrint("Unexpected menu memory content\n");
 		goto final;
 	}
@@ -757,6 +794,7 @@ static void menuNotificationHook(void) {
 		PTMNOTIFID_SLEEP_DENIED,
 		PTMNOTIFID_FULLY_AWAKE,
 	};
+	s32 ret;
 	for (unsigned i = 0; i < sizeof(notifications) / sizeof(*notifications); ++i) {
 		ret = menuSrvSubscribe(notifications[i]);
 		if (ret != 0) {

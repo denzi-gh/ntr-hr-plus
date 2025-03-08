@@ -85,6 +85,7 @@ static int nwmValParamCallback(u8 *buf, int) {
 }
 
 static RT_HOOK nwmRecvNotificationHook;
+static Handle *nwmSrvHandle = (Handle *)0x001547fc;
 
 void nwmPause(bool);
 void nwmUnpause();
@@ -95,8 +96,7 @@ static Result nwmSrvReceiveNotification(u32 *notificationIdOut) {
 
 	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
 
-	Handle *srvHandle = (Handle *)0x001547fc;
-	rc = svcSendSyncRequest(*srvHandle);
+	rc = svcSendSyncRequest(*nwmSrvHandle);
 	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
 	if (notificationIdOut)
 		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
@@ -129,22 +129,21 @@ static Result nwmRecvNotificationCallback(u32* notificationIdOut) {
 typedef Result (*srvSubscribeTypedef)(u32 notificationId);
 
 static void nwmNotificationHook(void) {
-#define RP_NWM_HDR_SIZE (8)
 	srvSubscribeTypedef nwmSrvSubscribe;
 	{
-		u8 desiredHeader[RP_NWM_HDR_SIZE] = {
+		u8 desiredHeader[] = {
 			0x1c, 0xb5, 0x04, 0x46, 0x1f, 0xf0, 0x0e, 0xee,
 		};
 		u32 remotePC = 0x0010455c;
-		u8 buf[RP_NWM_HDR_SIZE] = { 0 };
+		u8 buf[sizeof(desiredHeader)] = { 0 };
 
-		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_NWM_HDR_SIZE);
+		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, sizeof(desiredHeader));
 		if (ret != 0) {
 			nsDbgPrint("Read NWM memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
 			goto final;
 		}
 
-		if (memcmp(buf, desiredHeader, RP_NWM_HDR_SIZE) != 0) {
+		if (memcmp(buf, desiredHeader, sizeof(desiredHeader)) != 0) {
 			nsDbgPrint("Unexpected NWM memory content\n");
 			goto final;
 		}
@@ -152,19 +151,19 @@ static void nwmNotificationHook(void) {
 		nwmSrvSubscribe = (srvSubscribeTypedef)(remotePC + 1);
 	}
 
-	u8 desiredHeader[RP_NWM_HDR_SIZE] = {
+	u8 desiredHeader[] = {
 		0x1c, 0xb5, 0x04, 0x46, 0x22, 0xf0, 0xf2, 0xee,
 	};
 	u32 remotePC = 0x00101394;
-	u8 buf[RP_NWM_HDR_SIZE] = { 0 };
+	u8 buf[sizeof(desiredHeader)] = { 0 };
 
-	s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_NWM_HDR_SIZE);
+	s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, sizeof(desiredHeader));
 	if (ret != 0) {
 		nsDbgPrint("Read NWM memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
 		goto final;
 	}
 
-	if (memcmp(buf, desiredHeader, RP_NWM_HDR_SIZE) != 0) {
+	if (memcmp(buf, desiredHeader, sizeof(desiredHeader)) != 0) {
 		nsDbgPrint("Unexpected NWM memory content\n");
 		goto final;
 	}
