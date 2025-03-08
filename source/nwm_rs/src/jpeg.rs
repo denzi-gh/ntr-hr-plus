@@ -1851,7 +1851,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 qc.s = (qc.p / rb + comp_size as f32) / qc.q / rb / 2f32 * frame_rate as f32;
             }
 
-            let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 250f32;
+            let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 500f32;
             let qos = entries::rp_delta_q_qos() as f32 / frame_rate as f32 * mcus as f32 * qos_adj
                 / (self.worker.shared.mcusTop + self.worker.shared.mcusBot) as f32
                 * f32::min(qs0, qc.s)

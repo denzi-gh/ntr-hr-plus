@@ -141,8 +141,11 @@ static mut current_qos: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {
     current_qos.store(qos, Ordering::Relaxed);
-    let tick =
-        core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_);
+    let delta_prog = get_reliable_stream_delta_prog();
+    let tick = core::intrinsics::unchecked_div(
+        SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_,
+        if delta_prog { max_qos } else { qos } as u64_,
+    );
     min_send_interval_tick.store(tick as u32_, Ordering::Relaxed);
     min_send_interval_ns.store(
         (tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
