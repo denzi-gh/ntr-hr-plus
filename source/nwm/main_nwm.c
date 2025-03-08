@@ -1,6 +1,9 @@
 #include "global.h"
 
 #include "3ds/srv.h"
+#include "3ds/ipc.h"
+#include "3ds/result.h"
+#include "3ds/services/ptmsysm.h"
 #include "3ds/allocator/mappable.h"
 #include "3ds/os.h"
 
@@ -8,6 +11,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <memory.h>
 
 sendPacketTypedef nwmSendPacket;
 static RT_HOOK nwmValParamHook;
@@ -80,6 +84,108 @@ static int nwmValParamCallback(u8 *buf, int) {
 	return 0;
 }
 
+static RT_HOOK nwmRecvNotificationHook;
+
+void nwmPause(bool);
+void nwmUnpause();
+
+static Result nwmSrvReceiveNotification(u32 *notificationIdOut) {
+	Result rc = 0;
+	u32 *cmdbuf = getThreadCommandBuffer();
+
+	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
+
+	Handle *srvHandle = (Handle *)0x001547fc;
+	rc = svcSendSyncRequest(*srvHandle);
+	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
+	if (notificationIdOut)
+		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
+
+	return rc;
+}
+
+static Result nwmRecvNotificationCallback(u32* notificationIdOut) {
+	Result res = nwmSrvReceiveNotification(notificationIdOut);
+	if (res != 0)
+		return res;
+
+	// showDbg("notification %"PRIx32" received", *notificationIdOut);
+	switch (*notificationIdOut) {
+		case PTMNOTIFID_FULLY_WAKING_UP:
+			nwmUnpause();
+			break;
+		case PTMNOTIFID_SLEEP_ALLOWED:
+			nwmPause(true);
+			break;
+		case PTMNOTIFID_SHUTDOWN:
+			nwmPause(false);
+			return -1;
+		default:
+			break;
+	}
+	return res;
+}
+
+typedef Result (*srvSubscribeTypedef)(u32 notificationId);
+
+static void nwmNotificationHook(void) {
+#define RP_NWM_HDR_SIZE (8)
+	srvSubscribeTypedef nwmSrvSubscribe;
+	{
+		u8 desiredHeader[RP_NWM_HDR_SIZE] = {
+			0x1c, 0xb5, 0x04, 0x46, 0x1f, 0xf0, 0x0e, 0xee,
+		};
+		u32 remotePC = 0x0010455c;
+		u8 buf[RP_NWM_HDR_SIZE] = { 0 };
+
+		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_NWM_HDR_SIZE);
+		if (ret != 0) {
+			nsDbgPrint("Read NWM memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
+			goto final;
+		}
+
+		if (memcmp(buf, desiredHeader, RP_NWM_HDR_SIZE) != 0) {
+			nsDbgPrint("Unexpected NWM memory content\n");
+			goto final;
+		}
+
+		nwmSrvSubscribe = (srvSubscribeTypedef)(remotePC + 1);
+	}
+
+	u8 desiredHeader[RP_NWM_HDR_SIZE] = {
+		0x1c, 0xb5, 0x04, 0x46, 0x22, 0xf0, 0xf2, 0xee,
+	};
+	u32 remotePC = 0x00101394;
+	u8 buf[RP_NWM_HDR_SIZE] = { 0 };
+
+	s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_NWM_HDR_SIZE);
+	if (ret != 0) {
+		nsDbgPrint("Read NWM memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
+		goto final;
+	}
+
+	if (memcmp(buf, desiredHeader, RP_NWM_HDR_SIZE) != 0) {
+		nsDbgPrint("Unexpected NWM memory content\n");
+		goto final;
+	}
+
+	u32 notifications[] = {
+		PTMNOTIFID_SHUTDOWN,
+	};
+	for (unsigned i = 0; i < sizeof(notifications) / sizeof(*notifications); ++i) {
+		ret = nwmSrvSubscribe(notifications[i]);
+		if (ret != 0) {
+			nsDbgPrint("NWM %"PRIx32" notification subscribe failed: %08"PRIx32"\n", notifications[i], ret);
+		}
+	}
+
+	rtInitHookThumb(&nwmRecvNotificationHook, remotePC, (u32)nwmRecvNotificationCallback);
+	rtEnableHook(&nwmRecvNotificationHook);
+
+final:
+	return;
+}
+
 void mainPre(void) {
 	if (svcCreateEvent(&nwmReadyEvent, RESET_ONESHOT) != 0) {
 		nwmReadyEvent = 0;
@@ -88,6 +194,8 @@ void mainPre(void) {
 	nwmSendPacket = (sendPacketTypedef)nsConfig->startupInfo[12];
 	rtInitHookThumb(&nwmValParamHook, nsConfig->startupInfo[11], (u32)nwmValParamCallback);
 	rtEnableHook(&nwmValParamHook);
+
+	nwmNotificationHook();
 }
 
 void _ReturnToUser(void);
@@ -96,7 +204,7 @@ int setUpReturn(void) {
 	buf[0] = 0xe3b00000; // return 0;
 	buf[1] = 0xe12fff1e;
 
-	return rtFlushInstructionCache((void *)_ReturnToUser, 8);;
+	return rtFlushInstructionCache((void *)_ReturnToUser, 8);
 }
 
 u32 __apt_appid;

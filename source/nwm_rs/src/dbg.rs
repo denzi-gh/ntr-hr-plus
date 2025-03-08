@@ -73,6 +73,12 @@ impl nsDbgPrint_t {
 
     nsDbgPrint_fn!(initJpegFailed, "JPEG init failed\n");
 
+    nsDbgPrint_fn!(createRestartEventFailed, "Create restart event failed %08x\n", ret: s32);
+
+    nsDbgPrint_fn!(signalRestartEventFailed, "Signal restart event failed %08x\n", ret: s32);
+
+    nsDbgPrint_fn!(waitRestartEventFailed, "Wait restart event failed %08x\n", ret: s32);
+
     nsDbgPrint_fn!(createPortEventFailed, "Create port event failed %08x\n", ret: s32);
 
     nsDbgPrint_fn!(createNwmEventFailed, "Create nwm event failed %08x\n", ret: s32);

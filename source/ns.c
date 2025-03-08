@@ -498,13 +498,13 @@ int nsStartup(void) {
 fail_soc:
 	res = socExit();
 	if (res != 0) {
-		nsDbgPrint("socExit failed: %08"PRIx32"\n", ret);
+		nsDbgPrint("socExit failed: %08"PRIx32"\n", res);
 	}
 
 fail_alloc:
 	res = svcControlMemory(&outAddr, base, base, bufferSize, MEMOP_FREE, 0);
 	if (res != 0) {
-		nsDbgPrint("svcControlMemory free failed: %08"PRIx32"\n", ret);
+		nsDbgPrint("svcControlMemory free failed: %08"PRIx32"\n", res);
 	}
 
 fail:

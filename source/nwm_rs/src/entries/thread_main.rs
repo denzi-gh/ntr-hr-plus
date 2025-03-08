@@ -53,6 +53,17 @@ mod first_time_init {
             return None;
         }
 
+        let res = create_event(&mut restart_ready_event);
+        if res != 0 {
+            nsDbgPrint!(createRestartEventFailed, res);
+            return None;
+        }
+        let res = create_event(&mut restart_done_event);
+        if res != 0 {
+            nsDbgPrint!(createRestartEventFailed, res);
+            return None;
+        }
+
         let GF256Ctx_mem = request_mem_from_pool::<{ mem::size_of::<gf256_ctx>() }>()?;
         GF256Ctx = GF256Ctx_mem.to_ptr() as *mut gf256_ctx;
         if fecal_init_(FECAL_VERSION as i32) != 0 {
@@ -509,6 +520,24 @@ mod loop_main {
     #[named]
     pub unsafe fn entry(_t: ThreadVars, s: &mut ThreadsStacks) -> Option<()> {
         loop {
+            if restart_pending {
+                let res = svcSignalEvent(restart_ready_event);
+                if res != 0 {
+                    nsDbgPrint!(signalRestartEventFailed, res);
+                }
+
+                if !restart_sleep {
+                    return None;
+                }
+
+                let res = svcWaitSynchronization(restart_done_event, -1);
+                if res != 0 {
+                    nsDbgPrint!(waitRestartEventFailed, res);
+                }
+
+                restart_pending = false;
+            }
+
             let init = reset_init(&s.nwm_bufs)?;
 
             let vars = &init.0;
@@ -581,5 +610,26 @@ pub extern "C" fn encode_thread_main(_: *mut c_void) {
         }
         nsDbgPrint!(mainLoopExit);
         svcExitThread()
+    }
+}
+
+#[no_mangle]
+#[named]
+unsafe extern "C" fn nwmPause(sleep: bool) {
+    restart_sleep = sleep;
+    restart_pending = true;
+    crate::entries::work_thread::set_reset_threads_ar();
+    let res = svcWaitSynchronization(restart_ready_event, -1);
+    if res != 0 {
+        nsDbgPrint!(waitRestartEventFailed, res);
+    }
+}
+
+#[no_mangle]
+#[named]
+unsafe extern "C" fn nwmUnpause() {
+    let res = svcSignalEvent(restart_done_event);
+    if res != 0 {
+        nsDbgPrint!(signalRestartEventFailed, res);
     }
 }
