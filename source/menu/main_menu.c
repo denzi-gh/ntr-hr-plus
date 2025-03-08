@@ -1,5 +1,8 @@
 #include "global.h"
 
+#include "3ds/ipc.h"
+#include "3ds/result.h"
+#include "3ds/services/ptmsysm.h"
 #include "3ds/services/fs.h"
 #include "3ds/services/soc.h"
 #include "3ds/services/hid.h"
@@ -627,6 +630,154 @@ void nsDbgPrintVerboseVA(const char *file_name, int line_number, const char *fun
 	nsDbgPrintVerboseVABuf(file_name, line_number, func_name, fmt, arp);
 }
 
+static RT_HOOK menuRecvNotificationHook;
+
+static Handle menuPtmSysmHandle;
+#define PTM_SYSM_NAME "ptm:sysm"
+
+static Result menuSrvReceiveNotification(u32 *notificationIdOut) {
+	Result rc = 0;
+	u32 *cmdbuf = getThreadCommandBuffer();
+
+	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
+
+	Handle *srvHandle = (Handle *)0x0033c14c;
+	rc = svcSendSyncRequest(*srvHandle);
+	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
+	if (notificationIdOut)
+		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
+
+	return rc;
+}
+
+static Result menuPTMSYSM_ReplyToSleepQuery(bool deny)
+{
+	Result ret;
+	u32 *cmdbuf = getThreadCommandBuffer();
+	cmdbuf[0] = IPC_MakeHeader(0x0402,1,2); // 0x04020042
+	cmdbuf[1] = (u32)deny;
+	cmdbuf[2] = IPC_Desc_CurProcessId();
+	if(R_FAILED(ret = svcSendSyncRequest(menuPtmSysmHandle)))return ret;
+
+	return (Result)cmdbuf[1];
+}
+
+static Result menuRecvNotificationCallback(u32* notificationIdOut) {
+	Result res = menuSrvReceiveNotification(notificationIdOut);
+	if (res != 0)
+		return res;
+
+	// showDbg("notification %"PRIx32" received", *notificationIdOut);
+	switch (*notificationIdOut) {
+		case PTMNOTIFID_SLEEP_REQUESTED:
+			menuPTMSYSM_ReplyToSleepQuery(false);
+			// fallthru
+		case PTMNOTIFID_SHUTDOWN:
+			waitKeysOverride = KEY_B;
+			break;
+		case PTMNOTIFID_SLEEP_DENIED:
+		case PTMNOTIFID_FULLY_AWAKE:
+			waitKeysOverride = 0;
+			break;
+		default:
+			break;
+	}
+	return res;
+}
+
+typedef Result (*srvSubscribeTypedef)(u32 notificationId);
+typedef Result (*srvGetServiceHandleTypedef)(Handle *out, const char *name, s32 name_len, u32 blocking_policy);
+
+static void menuNotificationHook(void) {
+#define RP_MENU_HDR_SIZE (8)
+	srvSubscribeTypedef menuSrvSubscribe;
+	{
+		u8 desiredHeader[RP_MENU_HDR_SIZE] = {
+			0x10, 0x40, 0x2d, 0xe9, 0x70, 0x4f, 0x1d, 0xee,
+		};
+		u32 remotePC = 0x00215c98;
+		u8 buf[RP_MENU_HDR_SIZE] = { 0 };
+
+		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
+		if (ret != 0) {
+			nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
+			goto final;
+		}
+
+		if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+			nsDbgPrint("Unexpected menu memory content\n");
+			goto final;
+		}
+
+		menuSrvSubscribe = (srvSubscribeTypedef)remotePC;
+	}
+
+	srvGetServiceHandleTypedef menuSrvGetServiceHandle;
+	{
+		u8 desiredHeader[RP_MENU_HDR_SIZE] = {
+			0x20, 0xc0, 0x9f, 0xe5, 0x04, 0xc0, 0x9c, 0xe5,
+		};
+		u32 remotePC = 0x00235aa4;
+		u8 buf[RP_MENU_HDR_SIZE] = { 0 };
+
+		s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
+		if (ret != 0) {
+			nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
+			goto final;
+		}
+
+		if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+			nsDbgPrint("Unexpected menu memory content\n");
+			goto final;
+		}
+
+		menuSrvGetServiceHandle = (srvGetServiceHandleTypedef)remotePC;
+	}
+
+	u8 desiredHeader[RP_MENU_HDR_SIZE] = {
+		0x70, 0x40, 0x2d, 0xe9, 0x00, 0x50, 0xa0, 0xe1,
+	};
+	u32 remotePC = 0x0010f63c;
+	u8 buf[RP_MENU_HDR_SIZE] = { 0 };
+
+	s32 ret = copyRemoteMemory(CUR_PROCESS_HANDLE, buf, CUR_PROCESS_HANDLE, (void *)remotePC, RP_MENU_HDR_SIZE);
+	if (ret != 0) {
+		nsDbgPrint("Read menu memory at %08"PRIx32" failed: %08"PRIx32"\n", remotePC, ret);
+		goto final;
+	}
+
+	if (memcmp(buf, desiredHeader, RP_MENU_HDR_SIZE) != 0) {
+		nsDbgPrint("Unexpected menu memory content\n");
+		goto final;
+	}
+
+	u32 notifications[] = {
+		PTMNOTIFID_SLEEP_REQUESTED,
+		PTMNOTIFID_SHUTDOWN,
+		PTMNOTIFID_SLEEP_DENIED,
+		PTMNOTIFID_FULLY_AWAKE,
+	};
+	for (unsigned i = 0; i < sizeof(notifications) / sizeof(*notifications); ++i) {
+		ret = menuSrvSubscribe(notifications[i]);
+		if (ret != 0) {
+			nsDbgPrint("menu %"PRIx32" notification subscribe failed: %08"PRIx32"\n", notifications[i], ret);
+			goto final;
+		}
+	}
+
+	ret = menuSrvGetServiceHandle(&menuPtmSysmHandle, PTM_SYSM_NAME, strlen(PTM_SYSM_NAME), 1);
+	if (ret != 0) {
+		nsDbgPrint("menu get ptm sysm handle failed: %08"PRIx32"\n", ret);
+		goto final;
+	}
+
+	rtInitHook(&menuRecvNotificationHook, remotePC, (u32)menuRecvNotificationCallback);
+	rtEnableHook(&menuRecvNotificationHook);
+
+final:
+	return;
+}
+
 Result __sync_init(void);
 void mainThread(void *) {
 	Result ret;
@@ -698,6 +849,8 @@ void mainThread(void *) {
 
 	plgInitScreenOverlayDirectly(*oldPC);
 
+	menuNotificationHook();
+
 	int waitCnt = 0;
 	while (1) {
 		if (getKeys() == NTRMenuHotkey) {
@@ -706,7 +859,7 @@ void mainThread(void *) {
 		}
 		svcSleepThread(100000000);
 		waitCnt += 1;
-		if (waitCnt % 10 == 0) {
+		if (waitCnt % 8 == 0) {
 			lockCpuClock();
 			waitCnt = 0;
 		}

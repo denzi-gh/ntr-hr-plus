@@ -191,12 +191,16 @@ static u32 uiKeysDownRepeat(void)
 	return ret;
 }
 
+u32 waitKeysOverride;
 void waitKeysDelay3(void);
 void waitKeysDelay(void);
 u32 waitKeys(void) {
 	u32 keys;
 	do {
 		if (1) {
+			if (waitKeysOverride) {
+				return waitKeysOverride;
+			}
 			svcSleepThread(UI_THREAD_DELAY);
 		} else if (ntrConfig->isNew3DS && (REG(PDN_LGR_SOCMODE) & 5) == 5) {
 			waitKeysDelay3();

@@ -43,6 +43,7 @@ s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], con
 void blank(void);
 int print(const char *s, int x, int y, u8 r, u8 g, u8 b);
 
+extern u32 waitKeysOverride;
 u32 waitKeys(void);
 void debounceKeys(void);
 
