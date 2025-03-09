@@ -739,14 +739,14 @@ static void menuNotificationHook(void) {
 	srvSubscribeTypedef menuSrvSubscribe;
 	{
 		u8 desiredPat[] = {
-			0x40, 0x00, 0x09, 0x00,
+			0x10, 0x80, 0xbd, 0xe8, 0x40, 0x00, 0x09, 0x00,
 		};
 
 		u32 remotePC = searchBytes(codeStartAddress, codeStartAddress + codeTotalSize, desiredPat, sizeof(desiredPat), 4);
 		if (remotePC != 0) {
-			menuSrvHandle = (Handle *)*(u32 *)(remotePC + 4);
+			menuSrvHandle = (Handle *)*(u32 *)(remotePC + sizeof(desiredPat));
 		}
-		remotePC = findNearestSTMFD(codeStartAddress, remotePC);
+		remotePC = findNearestSTMFD(remotePC - 0x2c, remotePC);
 
 		if (remotePC == 0) {
 			nsDbgPrint("Unexpected menu memory content\n");
@@ -771,17 +771,39 @@ static void menuNotificationHook(void) {
 		menuSrvGetServiceHandle = (srvGetServiceHandleTypedef)remotePC;
 	}
 
-	u8 desiredPat[] = {
-		0x0b, 0x08, 0xa0, 0xe3,
-	};
-	u32 remotePC = searchBytes(codeStartAddress, codeStartAddress + codeTotalSize, desiredPat, sizeof(desiredPat), 4);
-	if (remotePC != 0) {
-		if (searchBytes(remotePC, remotePC + 0x40, (u8 *)&menuSrvHandle, sizeof(Handle *), 4) == 0) {
-			nsDbgPrint("Unexpected menu memory content\n");
-			goto final;
+	u32 remotePC = 0;
+	u32 searchStart = codeStartAddress;
+	u32 searchEnd = codeStartAddress + codeTotalSize;
+	while (1) {
+		u8 desiredPat[] = {
+			0x0b, 0x08, 0xa0, 0xe3,
+		};
+		remotePC = searchBytes(searchStart, searchEnd, desiredPat, sizeof(desiredPat), 4);
+		if (remotePC != 0) {
+			u8 desiredPat[] = {
+				0x08, 0x00, 0x94, 0xe5,
+			};
+			if (
+				memcmp((void *)(remotePC + 0x1c), desiredPat, sizeof(desiredPat)) != 0 ||
+				memcmp((void *)(remotePC + 0x2c), &menuSrvHandle, sizeof(menuSrvHandle)) != 0
+			) {
+				nsDbgPrint("Unexpected menu memory content\n");
+				goto final_hook;
+			}
+		} else {
+			break;
+		}
+		remotePC = findNearestSTMFD(remotePC - 0xc, remotePC);
+		if (remotePC != 0) {
+			break;
+		}
+final_hook:
+		if (remotePC != 0) {
+			searchStart = remotePC + 4;
+		} else {
+			break;
 		}
 	}
-	remotePC = findNearestSTMFD(codeStartAddress, remotePC);
 
 	if (remotePC == 0) {
 		nsDbgPrint("Unexpected menu memory content\n");
