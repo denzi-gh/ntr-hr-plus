@@ -627,7 +627,7 @@ impl ThreadBeginVars {
             self.v().clear_screen_synced();
 
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
-            const fr: f32 = 0.8f32;
+            const fr: f32 = (frame_time_factor - 1) as f32 / frame_time_factor as f32;
             ft.store(
                 (ft.load(Ordering::Relaxed) as f32 * fr
                     + (if skip_frame {

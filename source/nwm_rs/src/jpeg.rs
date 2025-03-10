@@ -1830,9 +1830,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let s1 = if s == 0 { 1 } else { 0 };
             let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
                 / entries::frame_time_factor;
-            let frame_rate = u32::min(
-                self.worker.shared.targetFrameRate as u32,
-                SYSCLOCK_ARM11 / frame_time,
+            let frame_rate = f32::min(
+                self.worker.shared.targetFrameRate as f32,
+                SYSCLOCK_ARM11 as f32 / frame_time as f32,
             );
             let (qs0, qs1) = {
                 (
@@ -1845,29 +1845,31 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             if comp_size != 0 {
                 let qf = calc_qf(prevDeltaQ, &mut qc.qnv);
                 let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
-                    let r = (rb - 1f32) / rb;
-                    let qq = qc.q * r + qf + qc.n;
+                    let ri = 1f32 / rb;
+                    let r = (rb - 1f32) * ri;
+                    let qq = qc.q * r + (qf + qc.n) * ri;
                     if qq > 0f32 {
-                        qc.p = qc.p * r + comp_size as f32;
+                        qc.p = qc.p * r + comp_size as f32 * ri;
                         qc.q = qq;
                         qc.m = qc.p / qc.q;
                     } else {
-                        qc.n += -qq / rb;
+                        qc.n += -qq;
                     }
                 };
                 const r0: f32 = 3f32;
-                const r1: f32 = 15f32;
+                let r1 = f32::max(frame_rate / 3f32, 10f32);
+                // const r1: f32 = 15f32;
                 // const r2: f32 = 240f32;
                 // const r3: f32 = 1200f32;
                 update_coefs(&mut qc.f0, r0);
                 update_coefs(&mut qc.f1, r1);
                 // update_coefs(&mut qc.f2, r2);
                 // update_coefs(&mut qc.f3, r3);
-                qc.s = (qc.f0.p / r0 + comp_size as f32) / qc.f0.q * frame_rate as f32;
+                qc.s = (qc.f0.p + comp_size as f32) / qc.f0.q * frame_rate;
             }
 
             let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 500f32;
-            let qos = entries::rp_delta_q_qos() as f32 / frame_rate as f32
+            let qos = entries::rp_delta_q_qos() as f32 / frame_rate
                 * qos_adj
                 * mcusf
                 * f32::min(qs0, qc.s)
