@@ -21,6 +21,8 @@ struct DeltaQCoefs {
     q: f32,
 }
 
+const DELTA_Q_COEF_N_MIN: f32 = 1f32;
+
 #[derive(ConstDefault, Clone, Copy)]
 struct DeltaQManager {
     f0: DeltaQCoefs,
@@ -183,7 +185,7 @@ impl<'a> JpegShared<'a> {
         self.initDeltaQTbls();
     }
 
-    fn setCompInfos<'b: 'a>(&'b mut self, hq: u32) {
+    fn setCompInfos<'b: 'a>(&'b mut self, hq: u32) -> &'b Self {
         if hq as u8_ == RP_CHROMASS_444 {
             self.compInfos = &self.jpegTbls.compInfos444;
         } else if hq as u8_ == RP_CHROMASS_422 {
@@ -218,6 +220,7 @@ impl<'a> JpegShared<'a> {
             self.mcusPerRow * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize);
         self.mcusTopF = mcusTop as f32 / (mcusTop + mcusBot) as f32;
         self.mcusBotF = mcusBot as f32 / (mcusTop + mcusBot) as f32;
+        self
     }
 }
 
@@ -432,10 +435,22 @@ impl<'b> Jpeg<'b> {
         self.shared.coreCount = coreCount;
         self.shared.targetFrameRate = 60;
         self.shared.chromaSS = hq as u8;
-        self.shared.setCompInfos(hq);
+        let self_imm = self.shared.setCompInfos(hq);
         let dQCalcCoefs = DeltaQCoefs {
             m: 40f32,
-            n: 1000f32,
+            n: {
+                let mut n = 0;
+                for i in 0..MAX_COMPONENTS {
+                    let info = &self_imm.compInfos.infos[i];
+                    n += unsafe {
+                        core::intrinsics::unchecked_shl(
+                            *self_imm.deltaQNs[0].get_unchecked(info.quant_tbl_no as usize) as i32,
+                            info.h_samp_exp + info.v_samp_exp,
+                        )
+                    };
+                }
+                n as f32 + DELTA_Q_COEF_N_MIN
+            },
             p: 0f32,
             q: 0f32,
         };
@@ -1847,14 +1862,15 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
                     let ri = 1f32 / rb;
                     let r = (rb - 1f32) * ri;
-                    let qq = qc.q * r + (qf + qc.n) * ri;
-                    if qq > 0f32 {
-                        qc.p = qc.p * r + comp_size as f32 * ri;
-                        qc.q = qq;
-                        qc.m = qc.p / qc.q;
-                    } else {
-                        qc.n += -qq;
+                    let mut qq = qc.q * r + (qf + qc.n) * ri;
+                    const qq_min: f32 = DELTA_Q_COEF_N_MIN;
+                    if qq < qq_min {
+                        qc.n += -qq + qq_min;
+                        qq = qq_min;
                     }
+                    qc.p = qc.p * r + comp_size as f32 * ri;
+                    qc.q = qq;
+                    qc.m = qc.p / qc.q;
                 };
                 const r0: f32 = 3f32;
                 let r1 = f32::max(frame_rate / 3f32, 10f32);
