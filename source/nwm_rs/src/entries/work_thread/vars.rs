@@ -349,7 +349,7 @@ static mut current_frame_ids: RangedArray<u8_, SCREEN_COUNT> = const_default();
 static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut frame_times: [u32; SCREEN_COUNT as usize] = const_default();
 
-pub const frame_time_factor: u32 = 5;
+pub const frame_time_factor: u32 = 2;
 pub fn get_frame_time(s: ScreenIndex) -> u32 {
     unsafe { *frame_times.get_unchecked(s.get() as usize) }
 }
@@ -631,7 +631,7 @@ impl ThreadBeginVars {
             ft.store(
                 (ft.load(Ordering::Relaxed) as f32 * fr
                     + (if skip_frame {
-                        frame_time
+                        u32::min(frame_time, SYSCLOCK_ARM11 / 2)
                     } else {
                         u32::min(frame_time, SYSCLOCK_ARM11 / 30)
                     }) as f32) as u32,
