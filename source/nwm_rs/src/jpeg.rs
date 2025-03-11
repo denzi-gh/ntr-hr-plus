@@ -1885,7 +1885,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             }
 
             let current_qos = entries::rp_delta_q_qos();
-            let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 500f32;
+            let qos_adj = 0.6f32 + self.worker.shared.quality as f32 / 500f32;
             let qos =
                 current_qos as f32 / frame_rate * qos_adj * mcusf * f32::min(qs0, qc.s) * 2f32
                     / (qs0 + qs1);
