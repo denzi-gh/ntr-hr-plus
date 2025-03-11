@@ -1843,8 +1843,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 qf
             };
             let s1 = if s == 0 { 1 } else { 0 };
-            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
-                / entries::frame_time_factor;
+            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32));
             let frame_rate = f32::min(
                 self.worker.shared.targetFrameRate as f32,
                 SYSCLOCK_ARM11 as f32 / frame_time as f32,
@@ -1858,6 +1857,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let qc = self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s);
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
             if comp_size != 0 {
+                let comp_size = comp_size as f32;
                 let qf = calc_qf(prevDeltaQ, &mut qc.qnv);
                 let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
                     let ri = 1f32 / rb;
@@ -1868,7 +1868,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         qc.n += -qq + qq_min;
                         qq = qq_min;
                     }
-                    qc.p = qc.p * r + comp_size as f32 * ri;
+                    qc.p = qc.p * r + comp_size * ri;
                     qc.q = qq;
                     qc.m = qc.p / qc.q;
                 };
@@ -1881,16 +1881,14 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 update_coefs(&mut qc.f1, r1);
                 // update_coefs(&mut qc.f2, r2);
                 // update_coefs(&mut qc.f3, r3);
-                qc.s = (qc.f0.p + comp_size as f32) / qc.f0.q * frame_rate;
+                qc.s = (qc.f0.p + comp_size) / qc.f0.q * frame_rate;
             }
 
+            let current_qos = entries::rp_delta_q_qos();
             let qos_adj = 0.4f32 + self.worker.shared.quality as f32 / 500f32;
-            let qos = entries::rp_delta_q_qos() as f32 / frame_rate
-                * qos_adj
-                * mcusf
-                * f32::min(qs0, qc.s)
-                * 2f32
-                / (qs0 + qs1);
+            let qos =
+                current_qos as f32 / frame_rate * qos_adj * mcusf * f32::min(qs0, qc.s) * 2f32
+                    / (qs0 + qs1);
             // let qt = f32::min(
             //     ((qos / qc.f0.m - qc.f0.n) + (qos / qc.f1.m - qc.f1.n)) / 2f32,
             //     ((qos / qc.f2.m - qc.f2.n) + (qos / qc.f3.m - qc.f3.n)) / 2f32,
@@ -1934,7 +1932,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 };
             };
-            let qr = (qr as u32 * 6 / DELTA_Q_COUNT as u32) as u8;
+            let qr = (qr as u32 * current_qos / (RP_QOS_MAX * DELTA_Q_COUNT as u32 / 6)) as u8;
             let mut q_done = false;
             let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager, q_done: &mut bool| {
                 *deltaQ = (*deltaQ + q) / 2;
