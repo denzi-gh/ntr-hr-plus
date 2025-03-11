@@ -627,16 +627,22 @@ impl ThreadBeginVars {
             self.v().clear_screen_synced();
 
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
-            const fr: f32 = (frame_time_factor - 1) as f32 / frame_time_factor as f32;
-            ft.store(
-                (ft.load(Ordering::Relaxed) as f32 * fr
-                    + (if skip_frame {
-                        u32::min(frame_time, SYSCLOCK_ARM11 / 2)
-                    } else {
-                        u32::min(frame_time, SYSCLOCK_ARM11 / 30)
-                    }) as f32) as u32,
-                Ordering::Relaxed,
-            );
+            loop {
+                let cur = ft.load(Ordering::Relaxed);
+                if let Ok(_) = ft.compare_exchange(
+                    cur,
+                    cur * (frame_time_factor - 1) / frame_time_factor
+                        + (if skip_frame {
+                            u32::min(frame_time, SYSCLOCK_ARM11 / 2)
+                        } else {
+                            u32::min(frame_time, SYSCLOCK_ARM11 / 30)
+                        }),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    break;
+                }
+            }
 
             let mut count = mem::MaybeUninit::uninit();
             for j in ThreadId::up_to(&get_core_count_in_use()) {
