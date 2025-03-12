@@ -87,7 +87,7 @@ u32 mapRemoteMemoryInLoader(Handle hProcess, u32 addr, u32 size, u32 op) {
 	return 0;
 }
 
-u32 protectRemoteMemory(Handle hProcess, void* addr, u32 size, u32 perm) {
+u32 protectRemoteMemory(Handle hProcess, void *addr, u32 size, u32 perm) {
 	return svcControlProcessMemory(hProcess, (u32)addr, 0, size, MEMOP_PROT, perm);
 }
 
@@ -95,7 +95,7 @@ u32 protectMemory(void *addr, u32 size, u32 perm) {
 	return protectRemoteMemory(getCurrentProcessHandle(), addr, size, perm);
 }
 
-u32 copyRemoteMemory(Handle hDst, void* ptrDst, Handle hSrc, void* ptrSrc, u32 size) {
+u32 copyRemoteMemoryTimeout(Handle hDst, void *ptrDst, Handle hSrc, void *ptrSrc, u32 size, s64 timeout) {
 	u8 dmaConfig[sizeof(DmaConfig)] = {-1, 0, 4};
 	u32 hdma = 0;
 	u32 ret;
@@ -116,7 +116,7 @@ u32 copyRemoteMemory(Handle hDst, void* ptrDst, Handle hSrc, void* ptrSrc, u32 s
         nsDbgPrint("svcStartInterProcessDma failed: %08"PRIx32"\n", ret);
 		return ret;
 	}
-	ret = svcWaitSynchronization(hdma, COPY_REMOTE_MEMORY_TIMEOUT);
+	ret = svcWaitSynchronization(hdma, timeout);
 	if (ret != 0) {
 		showDbg("copyRemoteMemory time out (or error) %08"PRIx32, ret);
 		svcCloseHandle(hdma);
@@ -130,6 +130,10 @@ u32 copyRemoteMemory(Handle hDst, void* ptrDst, Handle hSrc, void* ptrSrc, u32 s
 		return ret;
 	}
 	return 0;
+}
+
+u32 copyRemoteMemory(Handle hDst, void *ptrDst, Handle hSrc, void *ptrSrc, u32 size) {
+	return copyRemoteMemoryTimeout(hDst, ptrDst, hSrc, ptrSrc, size, COPY_REMOTE_MEMORY_TIMEOUT);
 }
 
 void showDbgMemInfo(u32 addr) {

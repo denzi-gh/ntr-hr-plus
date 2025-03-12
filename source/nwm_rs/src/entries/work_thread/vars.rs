@@ -435,6 +435,15 @@ impl ThreadDoVars {
                     return None;
                 }
 
+                let s = if self.v().is_top() { 0 } else { 1 };
+                (*ov_stats).s[s].comp_size = AtomicU32::from_ptr(
+                    crate::entries::thread_nwm::rp_frame_compressed_size
+                        .get_unchecked_mut(w.get() as usize),
+                )
+                .load(Ordering::Relaxed);
+                (*ov_stats).s[s].frame_time =
+                    AtomicU32::from_mut(&mut frame_times[s]).load(Ordering::Relaxed);
+
                 syn.work_done_count.store(0, Ordering::Release);
                 syn.work_begin_flag.store(false, Ordering::Release);
 

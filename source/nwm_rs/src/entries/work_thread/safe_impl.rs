@@ -182,6 +182,14 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
         };
         set_term_info(&term_info, w);
 
+        if !entries::get_reliable_stream_delta_prog() {
+            AtomicU32::from_ptr(
+                crate::entries::thread_nwm::rp_frame_compressed_size
+                    .get_unchecked_mut(w.get() as usize),
+            )
+            .store(0, Ordering::Relaxed);
+        }
+
         true
     }
 }
@@ -247,6 +255,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
 
                 let dst = crate::jpeg::WorkerDst {
                     s,
+                    w,
                     dst: dst as *mut u8,
                     free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                     user,
@@ -268,6 +277,7 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
                 })() {
                     let dst = crate::jpeg::WorkerDst {
                         s,
+                        w,
                         dst: dst as *mut u8,
                         free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                         user,

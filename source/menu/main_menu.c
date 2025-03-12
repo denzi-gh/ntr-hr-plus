@@ -6,6 +6,7 @@
 #include "3ds/services/fs.h"
 #include "3ds/services/soc.h"
 #include "3ds/services/hid.h"
+#include "3ds/services/gspgpu.h"
 #include "3ds/srv.h"
 #include "3ds/ipc.h"
 
@@ -358,9 +359,32 @@ enum {
 	PLUGIN_MENU_ENABLE_PLUGINS,
 	PLUGIN_MENU_CTRPF_COMPAT,
 	PLUGIN_MENU_REMOTE_PLAY_BOOST,
+	PLUGIN_MENU_OVERLAY_STATS,
 	PLUGIN_MENU_NO_LOADER_MEM,
 	PLUGIN_MENU_COUNT,
 };
+
+static void pluginLoaderCOnfigPropogateProcess(int pid) {
+	void *addr = plgLoaderEx;
+	u32 len = sizeof(*plgLoaderEx);
+
+	Handle hProcess;
+	s32 ret = svcOpenProcess(&hProcess, pid);
+	if (ret == 0) {
+		ret = rtCheckRemoteMemory(hProcess, (u32)addr, len, 0);
+		if (ret == 0) {
+			ret = copyRemoteMemory(hProcess, addr, CUR_PROCESS_HANDLE, addr, len);
+		}
+		svcCloseHandle(hProcess);
+	}
+}
+
+static void pluginLoaderConfigPropogate(void) {
+	if (plgLoader->gamePluginPid)
+		pluginLoaderCOnfigPropogateProcess(plgLoader->gamePluginPid);
+
+	pluginLoaderCOnfigPropogateProcess(0x1a); // nwm process
+}
 
 static int pluginLoaderMenu(void) {
 	const char *enablePlugins = plgTranslate("Game Plugin Loader (Disabled)");
@@ -369,6 +393,8 @@ static int pluginLoaderMenu(void) {
 	const char *disableCTRPFCompatText = plgTranslate("CTRPF Compat Mode (Enabled)");
 	const char *enableRPCallbackText = plgTranslate("Remote Play Boost (Disabled)");
 	const char *disableRPCallbackText = plgTranslate("Remote Play Boost (Enabled)");
+	const char *enableOvStatsText = plgTranslate("Overlay Stats (Disabled)");
+	const char *disableOvStatsText = plgTranslate("Overlay Stats (Enabled)");
 	const char *enableLoaderMemText = plgTranslate("Loader Mem Compat (Disabled)");
 	const char *disableLoaderMemText = plgTranslate("Loader Mem Compat (Enabled)");
 
@@ -384,11 +410,13 @@ static int pluginLoaderMenu(void) {
 		entries[PLUGIN_MENU_ENABLE_PLUGINS] = plgLoaderEx->noPlugins ? enablePlugins : disablePlugins;
 		entries[PLUGIN_MENU_CTRPF_COMPAT] = plgLoaderEx->CTRPFCompat ? disableCTRPFCompatText : enableCTRPFCompatText;
 		entries[PLUGIN_MENU_REMOTE_PLAY_BOOST] = plgLoaderEx->remotePlayBoost ? disableRPCallbackText : enableRPCallbackText;
+		entries[PLUGIN_MENU_OVERLAY_STATS] = plgLoaderEx->overlayStats ? disableOvStatsText : enableOvStatsText;
 		entries[PLUGIN_MENU_NO_LOADER_MEM] = plgLoaderEx->noLoaderMem ? enableLoaderMemText : disableLoaderMemText;
 
 		r = showMenuEx("Plugin Loader", PLUGIN_MENU_COUNT, entries, descs, r);
 		switch (r) {
 			default:
+				pluginLoaderConfigPropogate();
 				return 0;
 
 			case PLUGIN_MENU_ENABLE_PLUGINS:
@@ -397,13 +425,21 @@ static int pluginLoaderMenu(void) {
 
 			case PLUGIN_MENU_CTRPF_COMPAT:
 				plgLoaderEx->CTRPFCompat = !plgLoaderEx->CTRPFCompat;
-				if (plgLoaderEx->CTRPFCompat)
+				if (plgLoaderEx->CTRPFCompat) {
 					plgLoaderEx->remotePlayBoost = 0;
+					plgLoaderEx->overlayStats = 0;
+				}
 				break;
 
 			case PLUGIN_MENU_REMOTE_PLAY_BOOST:
 				plgLoaderEx->remotePlayBoost = !plgLoaderEx->remotePlayBoost;
 				if (plgLoaderEx->remotePlayBoost)
+					plgLoaderEx->CTRPFCompat = 0;
+				break;
+
+			case PLUGIN_MENU_OVERLAY_STATS:
+				plgLoaderEx->overlayStats = !plgLoaderEx->overlayStats;
+				if (plgLoaderEx->overlayStats)
 					plgLoaderEx->CTRPFCompat = 0;
 				break;
 
@@ -541,7 +577,7 @@ static void showMainMenu(void) {
 		}
 
 		const char *descs[MENU_ENTRIES_COUNT_MAX] = { 0 };
-		descs[MENU_ENTRY_PLUGIN_LOADER] = "Changes in here need game restart to\ntake effect.";
+		descs[MENU_ENTRY_PLUGIN_LOADER] = "Changes in here may need game restart\nto take effect.";
 		descs[MENU_ENTRY_NFC_PATCH] = "Allow remote play to continue in games\nsuch as USUM.";
 		descs[MENU_ENTRY_QTM_PATCH] = qtmDisabled ?
 			"Restore head tracking." :
@@ -929,7 +965,15 @@ final:
 	svcExitThread();
 }
 
-void plgSetBufferSwapHandle(u32, u32, u32, u32, u32) {}
+void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32, u32 flushAlways) {
+	u32 height = isDisplay1 ? GSP_SCREEN_HEIGHT_BOTTOM : GSP_SCREEN_HEIGHT_TOP;
+	if (flushAlways) {
+		svcFlushProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);
+		if ((isDisplay1 == 0) && (addrB) && (addrB != addr)) {
+			svcFlushProcessDataCache(CUR_PROCESS_HANDLE, (u32)addrB, stride * height);
+		}
+	}
+}
 
 void nsHandlePacket(void) {
 	nsHandleMenuPacket();

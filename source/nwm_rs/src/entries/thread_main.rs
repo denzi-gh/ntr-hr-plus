@@ -514,6 +514,18 @@ mod loop_main {
             }
         }
 
+        slice::from_raw_parts_mut(ov_stats as *mut u8, mem::size_of_val(&*ov_stats)).fill(0);
+        (*ov_stats).kcp_mode = match entries::get_reliable_stream_method() {
+            entries::ReliableStreamMethod::None => 0,
+            entries::ReliableStreamMethod::KCP => {
+                if entries::get_reliable_stream_delta_prog() {
+                    2
+                } else {
+                    1
+                }
+            }
+        };
+
         InitCleanup::init(vars)
     }
 

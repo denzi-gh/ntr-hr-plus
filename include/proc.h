@@ -11,6 +11,7 @@ u32 mapRemoteMemory(Handle hProcess, u32 addr, u32 size, u32 op);
 u32 mapRemoteMemoryInLoader(Handle hProcess, u32 addr, u32 size, u32 op);
 u32 protectRemoteMemory(Handle hProcess, void* addr, u32 size, u32 perm);
 u32 protectMemory(void *addr, u32 size, u32 perm);
+u32 copyRemoteMemoryTimeout(Handle hDst, void *ptrDst, Handle hSrc, void *ptrSrc, u32 size, s64 timeout);
 u32 copyRemoteMemory(Handle hDst, void* ptrDst, Handle hSrc, void* ptrSrc, u32 size);
 
 void showDbgMemInfo(u32 addr);

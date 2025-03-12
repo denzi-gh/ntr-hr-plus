@@ -1,5 +1,8 @@
 use crate::*;
 
+pub const ov_stats: *mut OVERLAY_STATS_INFO =
+    (NS_CONFIG_ADDR as usize + mem::offset_of!(NS_CONFIG, ovStats)) as *mut OVERLAY_STATS_INFO;
+
 pub const rp_config: *mut RP_CONFIG =
     (NS_CONFIG_ADDR as usize + mem::offset_of!(NS_CONFIG, rpConfig)) as *mut RP_CONFIG;
 
@@ -20,7 +23,7 @@ pub type CoreCount = IRanged<RP_CORE_COUNT_MIN, RP_CORE_COUNT_MAX>;
 
 pub static mut thread_main_handle: Handle = 0;
 
-pub const SCREEN_COUNT: u32_ = 2;
+pub const SCREEN_COUNT: u32_ = RP_SCREEN_COUNT as u32_;
 pub const WORK_COUNT: u32_ = NWM_WORK_COUNT;
 
 pub type WorkIndex = Ranged<WORK_COUNT>;

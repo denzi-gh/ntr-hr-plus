@@ -242,7 +242,7 @@ static void paint_letter(char letter, int x, int y, u8 r, u8 g, u8 b, int addr) 
 	int c;
 	unsigned char mask;
 	unsigned char l;
-	if ((letter < 32) || (letter > 127)) {
+	if ((letter < 32) || (letter >= 127)) {
 		letter = '?';
 	}
 	c = (letter - 32) * CHAR_HEIGHT;

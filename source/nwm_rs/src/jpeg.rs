@@ -25,10 +25,7 @@ const DELTA_Q_COEF_N_MIN: f32 = 1f32;
 
 #[derive(ConstDefault, Clone, Copy)]
 struct DeltaQManager {
-    f0: DeltaQCoefs,
-    f1: DeltaQCoefs,
-    // f2: DeltaQCoefs,
-    // f3: DeltaQCoefs,
+    f: [DeltaQCoefs; RP_DELTA_Q_COEFS_COUNT as usize],
     s: f32,
     // c: i8,
     cc: i8,
@@ -275,6 +272,7 @@ pub union WorkderDstUser {
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
     pub s: ScreenIndex,
+    pub w: ScreenIndex,
     pub dst: *mut u8,
     pub free_in_bytes: u16,
     pub user: WorkderDstUser,
@@ -328,25 +326,25 @@ impl WorkerDst {
     }
 
     fn flush<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self) -> bool {
-        if DELTA_Q {
-            unsafe {
-                entries::rp_dq_update_size(self.s, entries::packet_data_size_kcp as u32);
-            }
+        unsafe {
+            entries::rp_dq_update_size::<DELTA_Q>(
+                self.s,
+                self.w,
+                entries::packet_data_size_kcp as u32,
+            );
+            crate::entries::rp_send_buffer::<REL_STREAM>(self, false)
         }
-        unsafe { crate::entries::rp_send_buffer::<REL_STREAM>(self, false) }
     }
 
     fn term<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self) -> bool {
-        if DELTA_Q {
-            unsafe {
-                entries::rp_dq_update_size(
-                    self.s,
-                    entries::packet_data_size_kcp as u32 - self.free_in_bytes as u32,
-                );
-            }
+        unsafe {
+            entries::rp_dq_update_size::<DELTA_Q>(
+                self.s,
+                self.w,
+                entries::packet_data_size_kcp as u32 - self.free_in_bytes as u32,
+            );
+            crate::entries::rp_send_buffer::<REL_STREAM>(self, true)
         }
-
-        unsafe { crate::entries::rp_send_buffer::<REL_STREAM>(self, true) }
     }
 
     pub unsafe fn advance_to(&mut self, dst: *mut u8) {
@@ -455,8 +453,7 @@ impl<'b> Jpeg<'b> {
             q: 0f32,
         };
         let dQCalcInit = DeltaQManager {
-            f0: dQCalcCoefs,
-            f1: dQCalcCoefs,
+            f: [dQCalcCoefs, dQCalcCoefs],
             // f2: dQCalcCoefs,
             // f3: dQCalcCoefs,
             s: 0f32,
@@ -1877,11 +1874,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 // const r1: f32 = 15f32;
                 // const r2: f32 = 240f32;
                 // const r3: f32 = 1200f32;
-                update_coefs(&mut qc.f0, r0);
-                update_coefs(&mut qc.f1, r1);
+                update_coefs(&mut qc.f[0], r0);
+                update_coefs(&mut qc.f[1], r1);
                 // update_coefs(&mut qc.f2, r2);
                 // update_coefs(&mut qc.f3, r3);
-                qc.s = (qc.f0.p + comp_size) / qc.f0.q * frame_rate;
+                qc.s = (qc.f[0].p + comp_size) / qc.f[0].q * frame_rate;
             }
 
             let current_qos = entries::rp_delta_q_qos();
@@ -1889,12 +1886,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let qos =
                 current_qos as f32 / frame_rate * qos_adj * mcusf * f32::min(qs0, qc.s) * 2f32
                     / (qs0 + qs1);
-            // let qt = f32::min(
-            //     ((qos / qc.f0.m - qc.f0.n) + (qos / qc.f1.m - qc.f1.n)) / 2f32,
-            //     ((qos / qc.f2.m - qc.f2.n) + (qos / qc.f3.m - qc.f3.n)) / 2f32,
-            // );
-            // let qt = ((qos / qc.f0.m - qc.f0.n) + (qos / qc.f1.m - qc.f1.n)) / 2f32;
-            let qt = f32::min(qos / qc.f0.m - qc.f0.n, qos / qc.f1.m - qc.f1.n);
+            let qt = f32::min(qos / qc.f[0].m - qc.f[0].n, qos / qc.f[1].m - qc.f[1].n);
             // nsDbgPrint!(int, c_str!("qt"), qt as i32);
 
             let qr = if self.worker.shared.quality == 100 {
@@ -2011,6 +2003,16 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             // }
             // *deltaQ = (*deltaQ + 1) % DELTA_Q_COUNT;
             // nsDbgPrint!(int, c_str!("deltaQ"), *deltaQ as i32);
+            let ov_screen = &mut (*ov_stats).s.get_unchecked_mut(s).delta_q;
+            ov_screen.s = qc.s as u32;
+            ov_screen.q = prevDeltaQ as u32;
+            for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                let f = &mut ov_screen.f[i];
+                f.p = qc.f[i].p as u32;
+                f.q = qc.f[i].q as u32;
+                f.m = qc.f[i].m as u32;
+                f.n = qc.f[i].n as u32;
+            }
 
             let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;
             *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(s) = dQRescalePrev;

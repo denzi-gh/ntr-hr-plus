@@ -2,11 +2,13 @@
 #define NTR_CONFIG_H
 
 #include "3ds/types.h"
+#include "constants.h"
 
 typedef struct {
 	u32 noPlugins;
 	u32 CTRPFCompat;
 	u32 remotePlayBoost;
+	u32 overlayStats;
 	u32 noLoaderMem;
 	u32 memSizeTotal;
 } PLGLOADER_EX_INFO;
@@ -29,7 +31,7 @@ typedef struct {
 	u32 HomeMenuPid;
 
 	u32 HomeMenuVersion;
-	u32 HomeMenuInjectAddr; // FlushDataCache Function
+	u32 HomeMenuInjectAddr; // FlushDataCache function
 	u32 HomeFSReadAddr;
 	u32 HomeFSUHandleAddr;
 	u32 HomeCardUpdateInitAddr;

@@ -140,6 +140,7 @@ static mut min_send_interval_ns: AtomicU32 = const_default();
 static mut current_qos: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {
+    (*ov_stats).kcp_qos = qos;
     current_qos.store(qos, Ordering::Relaxed);
     let delta_prog = get_reliable_stream_delta_prog();
     let tick = core::intrinsics::unchecked_div(
@@ -295,14 +296,21 @@ pub unsafe fn release_nwm_ready(w: &WorkIndex) {
     }
 }
 
-pub unsafe fn rp_dq_update_size(s: ScreenIndex, size: u32) {
-    AtomicU32::from_ptr(
-        entries::work_thread::get_jpeg()
-            .shared_mut
-            .compressedSize
-            .get_unchecked_mut(s.get() as usize),
-    )
-    .fetch_add(size, Ordering::Relaxed);
+pub static mut rp_frame_compressed_size: [u32; WORK_COUNT as usize] = const_default();
+
+pub unsafe fn rp_dq_update_size<const DLETA_Q: bool>(s: ScreenIndex, w: WorkIndex, size: u32) {
+    if DLETA_Q {
+        AtomicU32::from_ptr(
+            entries::work_thread::get_jpeg()
+                .shared_mut
+                .compressedSize
+                .get_unchecked_mut(s.get() as usize),
+        )
+        .fetch_add(size, Ordering::Relaxed);
+    } else {
+        AtomicU32::from_ptr(rp_frame_compressed_size.get_unchecked_mut(w.get() as usize))
+            .fetch_add(size, Ordering::Relaxed);
+    }
 }
 
 #[named]

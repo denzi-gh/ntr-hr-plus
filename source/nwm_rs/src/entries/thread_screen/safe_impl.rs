@@ -265,6 +265,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
             return false;
         }
     }
+    send_overlay_stats();
 
     true
 }
@@ -380,4 +381,42 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
             }
         }
     }
+}
+
+static mut overlay_game_pid: u32_ = 0;
+static mut overlay_game_handle: Handle = 0;
+
+unsafe fn send_overlay_stats() {
+    if (*ntr_config).ex.plg.overlayStats == 0 {
+        return;
+    }
+
+    let game_pid = AtomicU32::from_mut(&mut (*rp_config).gamePid).load(Ordering::Relaxed);
+    if overlay_game_pid != game_pid {
+        if overlay_game_handle != 0 {
+            let _ = svcCloseHandle(overlay_game_handle);
+            overlay_game_handle = 0;
+        }
+        overlay_game_pid = 0;
+
+        let res = svcOpenProcess(&mut overlay_game_handle, game_pid);
+        if res != 0 {
+            overlay_game_handle = 0;
+            overlay_game_pid = 0;
+            return;
+        }
+
+        overlay_game_pid = game_pid;
+    }
+
+    let process = if overlay_game_pid == 0 {
+        home_process_handle
+    } else {
+        overlay_game_handle
+    };
+
+    let addr = ov_stats as *mut _;
+    let len = mem::size_of_val(&*ov_stats) as u32;
+
+    let _ = copyRemoteMemory(process, addr, CUR_PROCESS_HANDLE, addr, len);
 }

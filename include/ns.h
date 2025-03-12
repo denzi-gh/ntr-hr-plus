@@ -22,6 +22,25 @@ typedef enum {
 } NS_INITMODE;
 
 typedef struct {
+	u32 kcp_mode;
+	u32 kcp_qos;
+	struct overlay_stats_screen_t {
+		u32 comp_size;
+		u32 frame_time;
+		struct {
+			struct {
+				u32 p;
+				u32 q;
+				u32 m;
+				u32 n;
+			} f[RP_DELTA_Q_COEFS_COUNT];
+			u32 s;
+			u32 q;
+		} delta_q;
+	} s[RP_SCREEN_COUNT];
+} OVERLAY_STATS_INFO;
+
+typedef struct {
 	NS_INITMODE initMode;
 	u32 startupCommand_unused;
 	u32 hSOCU_unused;
@@ -41,6 +60,7 @@ typedef struct {
 
 	/* Plugin's NS_CONFIG ends here */
 	NTR_CONFIG ntrConfig;
+	OVERLAY_STATS_INFO ovStats;
 	RP_CONFIG rpConfig;
 } NS_CONFIG;
 

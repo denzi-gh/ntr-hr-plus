@@ -7,6 +7,7 @@
 #include "arpa/inet.h"
 
 #include <memory.h>
+#include <errno.h>
 
 static u32 rpStarted;
 
@@ -119,7 +120,7 @@ static void ipAddrMenu(u32 *addr) {
 static void tryInitRemotePlay(u32 dstAddr) {
 	int fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (fd < 0) {
-		showMsg("Cannot open socket.");
+		showMsg("Cannot open socket: %d", errno);
 		return;
 	}
 

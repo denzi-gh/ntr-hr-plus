@@ -26,7 +26,7 @@ static translateTypeDef plgTranslateCallback;
 static drawStringTypeDef plgDrawStringCallback;
 
 typedef u32 (*OverlayFnTypedef)(u32 isDisplay1, u32 addr, u32 addrB, u32 width, u32 format);
-void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format) {
+void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format, u32 flushAlways) {
 	s32 ret;
 
 	if (!plgHasOverlay)
@@ -39,11 +39,13 @@ void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32
 	}
 
 	u32 height = isDisplay1 ? GSP_SCREEN_HEIGHT_BOTTOM : GSP_SCREEN_HEIGHT_TOP;
-	int isDirty = 0;
+	int isDirty = flushAlways;
 
-	svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);
-	if ((isDisplay1 == 0) && (addrB) && (addrB != addr)) {
-		svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addrB, stride * height);
+	if (!isDirty) {
+		svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);
+		if ((isDisplay1 == 0) && (addrB) && (addrB != addr)) {
+			svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addrB, stride * height);
+		}
 	}
 
 	for (u32 i = 0; i < plgEntriesCount; ++i) {
@@ -64,10 +66,10 @@ void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32
 }
 
 void mainPost(void) {
-	if (plgLoaderEx->remotePlayBoost)
+	if (plgLoaderEx->remotePlayBoost || plgLoaderEx->overlayStats)
 		plgInitScreenOverlay(NULL);
 
-	if (plgLoaderEx->memSizeTotal != 0) {
+	if (!plgLoaderEx->noPlugins && plgLoaderEx->memSizeTotal != 0) {
 		disp(100, DBG_CL_USE_INJECT);
 
 		initSharedFunc();
