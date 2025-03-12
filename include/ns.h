@@ -29,10 +29,10 @@ typedef struct {
 		u32 frame_time;
 		struct {
 			struct {
-				u32 p;
-				u32 q;
-				u32 m;
-				u32 n;
+				s32 p;
+				s32 q;
+				s32 m;
+				s32 n;
 			} f[RP_DELTA_Q_COEFS_COUNT];
 			u32 s;
 			u32 q;

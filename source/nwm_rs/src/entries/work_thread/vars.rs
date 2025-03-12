@@ -436,11 +436,13 @@ impl ThreadDoVars {
                 }
 
                 let s = if self.v().is_top() { 0 } else { 1 };
-                (*ov_stats).s[s].comp_size = AtomicU32::from_ptr(
-                    crate::entries::thread_nwm::rp_frame_compressed_size
-                        .get_unchecked_mut(w.get() as usize),
-                )
-                .load(Ordering::Relaxed);
+                if !entries::get_reliable_stream_delta_prog() {
+                    (*ov_stats).s[s].comp_size = AtomicU32::from_ptr(
+                        crate::entries::thread_nwm::rp_frame_compressed_size
+                            .get_unchecked_mut(w.get() as usize),
+                    )
+                    .load(Ordering::Relaxed);
+                }
                 (*ov_stats).s[s].frame_time =
                     AtomicU32::from_mut(&mut frame_times[s]).load(Ordering::Relaxed);
 
