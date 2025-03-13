@@ -34,7 +34,7 @@ typedef struct {
 				s32 m;
 				s32 n;
 			} f[RP_DELTA_Q_COEFS_COUNT];
-			u32 s;
+			s32 s;
 			u32 q;
 		} delta_q;
 	} s[RP_SCREEN_COUNT];

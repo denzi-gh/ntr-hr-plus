@@ -7,7 +7,7 @@ use vars::*;
 const DELTA_Q_COUNT: u8 = 32;
 const DELTA_Q_MAX: f32 = 7.0f32;
 #[allow(unused)]
-const MAX_COEF_BITS: u8 = 8 + 2;
+const MAX_COEF_BITS: u8 = u8::BITS as u8 + 2;
 
 pub struct JpegRet {
     pub deltaQ: u8,
@@ -21,12 +21,13 @@ struct DeltaQCoefs {
     q: f32,
     pq: f32,
     qq: f32,
+    s: f32,
 }
 
 #[derive(ConstDefault)]
 struct DeltaQManager {
     f: [DeltaQCoefs; RP_DELTA_Q_COEFS_COUNT as usize],
-    qf: f32,
+    qs: f32,
     c: i8,
     cc: i8,
     cn: i8,
@@ -47,6 +48,8 @@ struct QuantizeRet {
     ac: QuantizeCounts,
 }
 
+const DELTA_Q_N_COUNT: usize = 16;
+
 pub struct JpegShared<'a> {
     quality: u32,
     chromaSS: u8,
@@ -62,12 +65,13 @@ pub struct JpegShared<'a> {
     pub mcuRowSize: usize,
     pub mcuColSize: usize,
     pub mcusPerRow: usize,
-    pub mcusTopF: f32,
-    pub mcusBotF: f32,
+    pub mcusF: f32,
+    pub mcusTop: u16,
+    pub mcusBot: u16,
     jpegTbls: JpegTbls,
     deltaQTbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     deltaQ0Tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
-    deltaQNs: [[[u8; u8::BITS as usize]; DCTSIZE2]; NUM_QUANT_TBLS],
+    deltaQNs: [[[u8; DELTA_Q_N_COUNT]; DCTSIZE2]; NUM_QUANT_TBLS],
     pub workSem: [Handle; WORK_COUNT as usize],
     pub screenSem: [Handle; SCREEN_COUNT as usize],
     targetFrameRate: u8,
@@ -166,7 +170,7 @@ impl<'a> JpegShared<'a> {
 
             for j in 0..NUM_QUANT_TBLS {
                 for i in 0..DCTSIZE2 {
-                    for k in 0..u8::BITS as usize {
+                    for k in 0..DELTA_Q_N_COUNT as usize {
                         self.deltaQNs[j][i][k] = (|| {
                             for d in (0..DELTA_Q_COUNT as usize).rev() {
                                 if self.deltaQ0Tbls[d][j][i] >= k as u8 {
@@ -215,12 +219,13 @@ impl<'a> JpegShared<'a> {
         self.mcuRowSize = DCTSIZE * self.maxHSampFactor;
         self.mcuColSize = DCTSIZE * self.maxVSampFactor;
         self.mcusPerRow = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.mcuRowSize);
-        let mcusTop =
-            self.mcusPerRow * jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcuColSize);
-        let mcusBot =
-            self.mcusPerRow * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize);
-        self.mcusTopF = mcusTop as f32 / (mcusTop + mcusBot) as f32;
-        self.mcusBotF = mcusBot as f32 / (mcusTop + mcusBot) as f32;
+        self.mcusTop = (self.mcusPerRow
+            * jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcuColSize))
+            as u16;
+        self.mcusBot = (self.mcusPerRow
+            * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize))
+            as u16;
+        self.mcusF = 1f32 / (self.mcusTop + self.mcusBot) as f32;
     }
 }
 
@@ -1217,7 +1222,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         prev: *mut JBlock,
         rPShifts: &[u8; DCTSIZE2],
         next: *mut JBlock,
-        deltaQNs: *const [[u8; u8::BITS as usize]; DCTSIZE2],
+        deltaQNs: *const [[u8; DELTA_Q_N_COUNT]; DCTSIZE2],
         deltaQ0: *const [u8; DCTSIZE2],
     ) -> QuantizeRet {
         let mut ret = {
@@ -1272,14 +1277,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             if qn == DELTA_Q_COUNT {
                                 c.all += DELTA_Q_COUNT as u16 - 1;
                                 c.max = DELTA_Q_COUNT - 1;
-                                c.nbits += nbits as u16;
                                 c.nleft += (nbits - (*deltaQ0)[i]) as u16;
                             } else {
                                 c.all += qn as u16;
                                 c.max = c.max.max(qn);
-                                c.min = c.min.max(qn);
-                                c.nbits += nbits as u16;
+                                c.min = c.min.min(qn);
                             }
+                            c.nbits += nbits as u16 + 1;
                         };
                         if i == 0 {
                             update_counts(&mut ret.dc)
@@ -1309,7 +1313,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         prev: *mut JBlock,
         rPShifts: &[u8; DCTSIZE2],
         next: *mut JBlock,
-        deltaQNs: *const [[u8; u8::BITS as usize]; DCTSIZE2],
+        deltaQNs: *const [[u8; DELTA_Q_N_COUNT]; DCTSIZE2],
         deltaQ0: *const [u8; DCTSIZE2],
     ) -> QuantizeRet {
         Self::convsamp(input, ypos, xpos, output);
@@ -1826,6 +1830,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         qnv.max = qnv.max.max(qn.max);
                         qnv.min = qnv.min.min(qn.min);
                         qnv.nbits += qn.nbits;
+                        qnv.nleft += qn.nleft;
                     };
                     update_qnv(&mut qnv.dc, &qn.dc);
                     update_qnv(&mut qnv.ac, &qn.ac);
@@ -1836,15 +1841,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 blkn_start += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he);
             }
 
-            let mcusf = if self.worker.info.isTop {
-                self.worker.shared.mcusTopF
-            } else {
-                self.worker.shared.mcusBotF
-            };
-
             let s1 = if s == 0 { 1 } else { 0 };
-            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32));
-            let frame_time_1 = entries::get_frame_time(ScreenIndex::init_unchecked(s1 as u32));
+            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
+                .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
+            let frame_time_1 = entries::get_frame_time(ScreenIndex::init_unchecked(s1 as u32))
+                .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
             let frame_rate = f32::min(
                 self.worker.shared.targetFrameRate as f32,
                 SYSCLOCK_ARM11 as f32 / frame_time as f32,
@@ -1853,10 +1854,6 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 self.worker.shared.targetFrameRate as f32,
                 SYSCLOCK_ARM11 as f32 / frame_time_1 as f32,
             );
-
-            let current_qos = entries::rp_delta_q_qos();
-            let qos_adj = 1.2f32 + self.worker.shared.quality as f32 / 250f32; // out of 2f32
-            let qos = current_qos as f32 * qos_adj * mcusf / (frame_rate + frame_rate_1);
 
             let qr = if self.worker.shared.quality == 100 {
                 DELTA_Q_COUNT
@@ -1868,46 +1865,141 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         / 12000) as u8
             };
             // nsDbgPrint!(int, c_str!("qr"), qr as i32);
-            let qc = self.worker.shared_mut.deltaQCalc.get_unchecked_mut(s);
-            let qf = qc.qf;
+            let [qc, qc1] = self
+                .worker
+                .shared_mut
+                .deltaQCalc
+                .get_many_unchecked_mut([s, s1]);
+            let qs = qc.qs;
+
+            let ss = qc.f[1].s;
+            let ss1 = qc1.f[1].s;
+
+            let current_qos = entries::rp_delta_q_qos();
+            let qos_adj = 9.6f32 + self.worker.shared.quality as f32 / 31.25f32; // out of 2f32 * u8::BITS as f32
+            let qos = current_qos as f32 * qos_adj * self.worker.shared.mcusF
+                / (frame_rate + frame_rate_1);
+            let qos = if ss > 0f32 && ss1 > 0f32 {
+                qos * ss * 2f32 / (ss + ss1)
+            } else {
+                qos
+            };
 
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
-            let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
-                let ri = 1f32 / rb;
-                let r = (rb - 1f32) * ri;
 
-                qc.p = qc.p * r + comp_size as f32 * ri;
-                qc.q = qc.q * r + qf * ri;
-                qc.pq = qc.pq * r + comp_size as f32 * qf * ri;
-                qc.qq = qc.qq * r + qf * qf * ri;
+            let qos = if comp_size > 0 {
+                let comp_size = (comp_size * u8::BITS) as f32
+                    / (if s == 0 {
+                        self.worker.shared.mcusTop
+                    } else {
+                        self.worker.shared.mcusBot
+                    }) as f32;
 
-                qc.m = (qc.pq - qc.p * qc.q) / (qc.qq - qc.q * qc.q);
-                qc.n = qc.p - qc.m * qc.q;
+                let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
+                    let ri = 1f32 / rb;
+                    let r = (rb - 1f32) * ri;
+
+                    qc.p = qc.p * r + comp_size * ri;
+                    qc.q = qc.q * r + qs * ri;
+                    qc.pq = qc.pq * r + comp_size * qs * ri;
+                    qc.qq = qc.qq * r + qs * qs * ri;
+
+                    qc.m = (qc.pq - qc.p * qc.q) / (qc.qq - qc.q * qc.q);
+                    qc.n = qc.p - qc.m * qc.q;
+
+                    qc.s = (qc.p + comp_size - 2f32 * qc.n) / qc.q * frame_rate;
+                };
+
+                let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] =
+                    [frame_rate * (1f32 / 6f32), frame_rate * (1f32 / 2f32)];
+                for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                    update_coefs(&mut qc.f[i], rr[i]);
+                }
+                f32::min((qos - qc.f[0].n) / qc.f[0].m, (qos - qc.f[1].n) / qc.f[1].m)
+            } else {
+                qos
             };
 
-            const rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [3f32, 2400f32];
-            for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
-                update_coefs(&mut qc.f[i], rr[i]);
+            let qnc = {
+                let mut rq: [f32; NUM_QUANT_TBLS] = const_default();
+                for i in 0..NUM_QUANT_TBLS {
+                    rq[i] = 1f32 / qnc[i] as f32;
+                }
+                rq
+            };
+
+            const DELTA_Q_STEP: f32 = DELTA_Q_MAX / DELTA_Q_COUNT as f32;
+
+            let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
+            for ci in 0..MAX_COMPONENTS {
+                let comp = &self.worker.shared.compInfos.infos[ci];
+                let MCU_we = comp.h_samp_exp;
+                let MCU_he = comp.v_samp_exp;
+
+                *qf.get_unchecked_mut(comp.quant_tbl_no as usize) +=
+                    core::intrinsics::unchecked_shl(1, MCU_we + MCU_he);
             }
 
-            let qf = {
-                let mut qf = 0f32;
-                for ci in 0..MAX_COMPONENTS {
-                    let comp = &self.worker.shared.compInfos.infos[ci];
-                    let MCU_we = comp.h_samp_exp;
-                    let MCU_he = comp.v_samp_exp;
+            let calc_size = |q: u8| {
+                let mut size = 0f32;
+                for i in 0..NUM_QUANT_TBLS {
+                    let calc_size = |ns: &QuantizeCounts, n_coefs: f32, q: u8| {
+                        let h = DELTA_Q_STEP * n_coefs;
+                        let nbits = ns.nbits as f32 * qnc[i] as f32;
+                        let nleft = ns.nleft as f32 * qnc[i] as f32;
+                        let size = if q <= ns.min {
+                            (nbits - h * q as f32).max(0f32)
+                        } else if q >= ns.max {
+                            nleft
+                        } else {
+                            let v = ns.all as f32 * qnc[i] as f32 / n_coefs - ns.min as f32;
+                            let w = (ns.max - ns.min) as f32;
+                            let q = (ns.max - q) as f32;
+                            let a = (nbits - ns.min as f32 * h - nleft).max(0f32);
+                            powf(q / w, w / v) * a + nleft
+                        };
+                        size
+                    };
 
-                    qf += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he) as f32 * qf;
+                    size += (calc_size(&qnv[i].dc, 1f32, q)
+                        + calc_size(&qnv[i].ac, (DCTSIZE2 - 1) as f32, q))
+                        * qf[i] as f32;
                 }
-                DELTA_Q_COUNT as f32
-                    - qf / self.worker.shared.maxBlocksInMcu as f32 / DCTSIZE2 as f32
+                // nsDbgPrint!(int, c_str!("size"), size as i32);
+                size
             };
 
-            let q = ((qf * qf / DELTA_Q_COUNT as f32) as u8).min(DELTA_Q_COUNT - 1);
+            // nsDbgPrint!(int, c_str!("qos"), qos as i32);
+            let (q, qs) = {
+                let mut q_min = 0;
+                let mut q_max = qr; // exclusive range
+                let mut q_prev = 0;
+                loop {
+                    let q = (q_max - q_min) / 2 + q_min;
+                    let qs = calc_size(q);
+                    if q == q_prev {
+                        break (q, qs);
+                    }
+                    q_prev = q;
+                    if qs > qos {
+                        if q_max == q {
+                            break (q, qs);
+                        }
+                        q_max = q;
+                    } else {
+                        if q_min == q {
+                            break (q, qs);
+                        }
+                        q_min = q;
+                    }
+                }
+            };
+            // nsDbgPrint!(int, c_str!("qs"), qs as i32);
+
             let qr = (qr as u32 * current_qos / (RP_QOS_MAX * DELTA_Q_COUNT as u32 / 6)) as u8;
             let mut q_done = false;
             let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager, q_done: &mut bool| {
-                *deltaQ = (*deltaQ + q) / 2;
+                *deltaQ = q;
                 if qc.cc > 0 {
                     qc.cc = qr as i8;
                     qc.cn = qr as i8;
@@ -1917,7 +2009,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 }
                 qc.c = 0;
                 *q_done = true;
-                qc.qf = qf;
+                qc.qs = qs;
             };
             if q != *deltaQ {
                 if q > *deltaQ {
@@ -1926,7 +2018,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     } else {
                         qc.c = 0;
                     }
-                    qc.cc = qc.cc / 2 + (q as i8 - *deltaQ as i8);
+                    qc.cc = (qc.cc + (q as i8 - *deltaQ as i8)) / 2;
                     if qc.cc >= qr as i8 && qc.cn >= 0 {
                         set_q(deltaQ, qc, &mut q_done);
                     }
@@ -1936,7 +2028,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     } else {
                         qc.c = 0;
                     }
-                    qc.cc = qc.cc / 2 - (*deltaQ as i8 - q as i8);
+                    qc.cc = (qc.cc - (*deltaQ as i8 - q as i8)) / 2;
                     if qc.cc <= -(qr as i8) && qc.cn <= 0 {
                         set_q(deltaQ, qc, &mut q_done);
                     }
@@ -1974,14 +2066,14 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let ov_screen = (*ov_stats).s.get_unchecked_mut(s);
             ov_screen.comp_size = comp_size;
             let ov_screen = &mut ov_screen.delta_q;
-            ov_screen.s = qos as u32;
-            ov_screen.q = prevDeltaQ as u32;
+            ov_screen.s = (qs * 1000f32) as i32;
+            ov_screen.q = *deltaQ as u32;
             for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                 let f = &mut ov_screen.f[i];
-                f.p = qc.f[i].p as s32;
-                f.q = qc.f[i].q as s32;
-                f.m = qc.f[i].m as s32;
-                f.n = qc.f[i].n as s32;
+                f.p = (qc.f[i].p * 1000f32) as s32;
+                f.q = (qc.f[i].q * 1000f32) as s32;
+                f.m = (qc.f[i].m * 1000f32) as s32;
+                f.n = (qc.f[i].n * 1000f32) as s32;
             }
 
             let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;

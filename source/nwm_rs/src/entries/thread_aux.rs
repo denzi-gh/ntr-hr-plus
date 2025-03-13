@@ -2,6 +2,7 @@ use crate::*;
 
 pub extern "C" fn thread_aux(p: *mut c_void) {
     unsafe {
+        __system_initSyscalls();
         let t = crate::ThreadId::init_unchecked(p as u32_);
         crate::entries::work_thread::work_thread_loop(t);
         crate::entries::work_thread::set_reset_threads_ar();

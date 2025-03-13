@@ -927,6 +927,7 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
 }
 
 pub unsafe extern "C" fn kcp_thread_nwm(_: *mut c_void) {
+    __system_initSyscalls();
     while !crate::entries::work_thread::reset_threads() && kcp_thread_nwm_loop() {}
     svcExitThread()
 }
