@@ -4,6 +4,7 @@
 #include "3ds/services/gspgpu.h"
 
 #include <memory.h>
+#include <stdlib.h>
 
 static unsigned char font[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Char 032 ( )
@@ -306,7 +307,7 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 		}
 			break;
 		case 2: {
-#define PARTS(n) (n) / 1000, (n) % 1000
+#define PARTS(n) (n) / 1000, abs(n) % 1000
 #define PRINT_DELTA_Q(buf, f) \
 	xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE, \
 	"%3"PRId32".%03"PRId32" %3"PRId32".%03"PRId32" %2"PRId32".%03"PRId32" %5"PRId32".%03"PRId32, \
