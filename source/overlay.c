@@ -310,8 +310,8 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 #define PARTS(n) (n) / 1000, abs(n) % 1000
 #define PRINT_DELTA_Q(buf, f) \
 	xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE, \
-	"%3"PRId32".%03"PRId32" %3"PRId32".%03"PRId32" %2"PRId32".%03"PRId32" %5"PRId32".%03"PRId32, \
-	PARTS((f).p), PARTS((f).q), PARTS((f).m), PARTS((f).n))
+	"%3"PRId32".%03"PRId32" %3"PRId32".%03"PRId32" %2"PRId32".%03"PRId32, \
+	PARTS((f).p), PARTS((f).q), PARTS((f).m))
 			char buf[LOCAL_OPT_TEXT_BUF_SIZE];
 			xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE,
 				"%4"PRIu32" KB %4"PRIu32" ms %"PRIu32" %"PRIu32".%03"PRIu32" MB/s",
@@ -321,8 +321,8 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 				ov->kcp_qos / 1024 / 1024, ov->kcp_qos / 1024 % 1024 * 1000 / 1024);
 			char buf2[LOCAL_OPT_TEXT_BUF_SIZE];
 			xsnprintf(buf2, LOCAL_OPT_TEXT_BUF_SIZE,
-				"%2"PRIu32" %3"PRId32".%03"PRId32,
-				stats->delta_q.q, PARTS(stats->delta_q.s));
+				"%2"PRIu32" %3"PRId32".%03"PRId32" %5"PRId32".%03"PRId32,
+				stats->delta_q.q, PARTS(stats->delta_q.s), PARTS(stats->delta_q.n));
 			char buf3[LOCAL_OPT_TEXT_BUF_SIZE];
 			PRINT_DELTA_Q(buf3, stats->delta_q.f[0]);
 			char buf4[LOCAL_OPT_TEXT_BUF_SIZE];

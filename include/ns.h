@@ -32,10 +32,10 @@ typedef struct {
 				s32 p;
 				s32 q;
 				s32 m;
-				s32 n;
 			} f[RP_DELTA_Q_COEFS_COUNT];
 			s32 s;
 			u32 q;
+			s32 n;
 		} delta_q;
 	} s[RP_SCREEN_COUNT];
 } OVERLAY_STATS_INFO;
