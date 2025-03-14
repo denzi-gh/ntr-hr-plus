@@ -29,6 +29,7 @@ struct DeltaQManager {
     qs: f32,
     qb: f32,
     qc: f32,
+    q: f32,
     // c: i8,
     cc: f32,
     cn: f32,
@@ -1865,10 +1866,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 .get_many_unchecked_mut([s, s1]);
             let qs = qc.qs;
 
-            let current_qos = entries::rp_delta_q_qos();
+            let current_qos = entries::rp_delta_q_qos() as f32;
             const qos_adj_b: f32 = u8::BITS as f32;
             const qos_min_f: f32 = 0.5f32;
-            const qos_max_f: f32 = 0.75f32;
+            const qos_max_l_f: f32 = 0.75f32;
+            const qos_max_h_f: f32 = 0.625f32;
             let mcus = (if s == 0 {
                 self.worker.shared.mcusTop
             } else {
@@ -1883,8 +1885,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let mcusi = 1f32 / mcus;
             let qos_adj = qos_adj_b * qos_min_f
                 + self.worker.shared.quality as f32
-                    * ((qos_max_f - qos_min_f) * qos_adj_b * 0.01f32);
-            let qos_b = current_qos as f32 * frame_rate_f * mcusi * qos_adj;
+                    * ((qos_max_l_f
+                        + (qos_max_h_f - qos_max_l_f) * (1f32 / RP_QOS_MAX as f32) * current_qos
+                        - qos_min_f)
+                        * qos_adj_b
+                        * 0.01f32);
+            let qos_b = current_qos * frame_rate_f * mcusi * qos_adj;
             let qos_b = qos_b * 2f32 * mcus * mcus_f;
 
             let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
@@ -1945,7 +1951,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     (if q0 < q1 {
                         q0
                     } else {
-                        q0 * 0.75f32 + q1 * 0.25f32
+                        q0 * 0.25f32 + q1 * 0.75f32
                     })
                     .max(qs_min),
                     qos_c,
@@ -2034,93 +2040,54 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let (q, qs) = {
                 let mut q_min = 0;
                 let mut q_max = qr; // exclusive range
-                let mut q_prev = 0;
+                let mut q_prev = prevDeltaQ;
                 loop {
-                    let q = (q_max - q_min) / 2 + q_min;
-                    let qs = calc_size(q);
-                    if q == q_prev {
-                        break (q, qs);
-                    }
-                    q_prev = q;
+                    let qs = calc_size(q_prev);
+                    // if q == q_prev {
+                    //     break (q, qs);
+                    // }
+                    // q_prev = q;
                     // nsDbgPrint!(int, c_str!("q"), q as i32);
                     // nsDbgPrint!(int, c_str!("qs"), qs as i32);
                     if qs > qos {
-                        if q_max == q {
-                            break (q, qs);
-                        }
-                        q_max = q;
+                        q_max = q_prev;
                     } else {
-                        if q_min == q {
-                            break (q, qs);
-                        }
-                        q_min = q;
+                        q_min = q_prev;
+                    }
+                    q_prev = (q_max - q_min) / 2 + q_min;
+                    if q_min == q_prev {
+                        break (q_prev, qs);
                     }
                 }
             };
             // nsDbgPrint!(int, c_str!("qs"), qs as i32);
 
-            let qr = (qr as f32 * current_qos as f32
-                / (RP_QOS_MAX as f32 * DELTA_Q_COUNT as f32 / 4f32))
-                .max(2f32);
+            let qr = 4f32;
             let qri = 1f32 / qr;
-            let mut q_done = false;
-            let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager, q_done: &mut bool| {
-                *deltaQ = q;
-                // *deltaQ = (*deltaQ + q) / 2;
-                if qc.cc > 0f32 {
-                    qc.cc = qri;
-                    qc.cn = 1f32;
-                } else {
-                    qc.cc = -qri;
-                    qc.cn = 1f32;
+            {
+                let ri = qri;
+                let r = (qr - 1f32) * ri;
+
+                qc.cc = qc.cc * r + (q as f32 - qc.q) * ri;
+                qc.cn = qc.cn * r;
+
+                if qc.cc.abs() >= qc.cn * qr {
+                    let q = q as f32;
+                    if q < qc.q {
+                        qc.q = qc.q * 0.25f32 + q * 0.75f32;
+                    } else {
+                        qc.q = qc.q * (qr - 1f32) * qri + q * qri;
+                    }
+                    *deltaQ = roundf(qc.q) as u8;
+                    // *deltaQ = (*deltaQ + q) / 2;
+                    if qc.cc > 0f32 {
+                        qc.cc = 1f32;
+                        qc.cn = 1f32;
+                    } else {
+                        qc.cc = -1f32;
+                        qc.cn = 1f32;
+                    }
                 }
-                // qc.c = 0;
-                *q_done = true;
-            };
-            if q != *deltaQ {
-                let ri = qri as f32;
-                let r = (qr - 1f32) as f32 * ri;
-
-                // if q > *deltaQ {
-                //     // if qc.c >= 0 {
-                //     //     qc.c += 1;
-                //     // } else {
-                //     //     qc.c /= 2;
-                //     // }
-                //     qc.cc = qc.cc * r + (q as i8 - *deltaQ as i8) as f32 * ri;
-                //     // if qc.cc >= 1f32 && qc.cn >= 0 {
-                //     //     set_q(deltaQ, qc, &mut q_done);
-                //     // }
-                // } else {
-                //     // if qc.c <= 0 {
-                //     //     qc.c -= 1;
-                //     // } else {
-                //     //     qc.c /= 2;
-                //     // }
-                //     qc.cc = qc.cc * r - (*deltaQ as i8 - q as i8) as f32 * ri;
-                //     // if qc.cc <= -1f32 && qc.cn <= 0 {
-                //     //     set_q(deltaQ, qc, &mut q_done);
-                //     // }
-                // }
-
-                qc.cc = qc.cc * r + (q as i8 - *deltaQ as i8) as f32 * ri;
-                // if !q_done {
-                qc.cn = qc.cn / 2f32;
-
-                if qc.cc.abs() >= qc.cn / qr {
-                    set_q(deltaQ, qc, &mut q_done);
-                }
-                // }
-
-                // if !q_done && qc.c.abs() >= qr as i8 {
-                //     set_q(deltaQ, qc, &mut q_done);
-                // }
-            } else {
-                // if qc.c > 0 {
-                //     qc.c -= 1;
-                // } else if qc.c < 0 {
-                //     qc.c += 1;
-                // }
             }
             qc.qb = qos_b;
             qc.qc = qos_c;
@@ -2136,17 +2103,19 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             // };
             // *deltaQ = (*deltaQ + 1) % DELTA_Q_COUNT;
             // nsDbgPrint!(int, c_str!("deltaQ"), *deltaQ as i32);
-            let ov_screen = (*ov_stats).s.get_unchecked_mut(s);
-            ov_screen.comp_size = comp_size;
-            let ov_screen = &mut ov_screen.delta_q;
-            ov_screen.s = (qs * 1000f32) as s32;
-            ov_screen.q = *deltaQ as u32;
-            ov_screen.n = (qc.n * 1000f32) as s32;
-            for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
-                let f = &mut ov_screen.f[i];
-                f.p = (qc.f[i].p * 1000f32) as s32;
-                f.q = (qc.f[i].q * 1000f32) as s32;
-                f.m = (qc.f[i].m * 1000f32) as s32;
+            if (*ntr_config).ex.plg.overlayStats > 0 {
+                let ov_screen = (*ov_stats).s.get_unchecked_mut(s);
+                ov_screen.comp_size = comp_size;
+                let ov_screen = &mut ov_screen.delta_q;
+                ov_screen.s = (qc.qs * 1000f32) as s32;
+                ov_screen.q = (qc.q * 1000f32) as s32;
+                ov_screen.n = (qc.n * 1000f32) as s32;
+                for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                    let f = &mut ov_screen.f[i];
+                    f.p = (qc.f[i].p * 1000f32) as s32;
+                    f.q = (qc.f[i].q * 1000f32) as s32;
+                    f.m = (qc.f[i].m * 1000f32) as s32;
+                }
             }
 
             let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;
