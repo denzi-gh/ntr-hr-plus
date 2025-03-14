@@ -403,6 +403,7 @@ static int pluginLoaderMenu(void) {
 	descs[PLUGIN_MENU_ENABLE_PLUGINS] = plgTranslate("Whether game plugins will be loaded.");
 	descs[PLUGIN_MENU_CTRPF_COMPAT] = plgTranslate("Avoid crash in CTRPF based plugins by\ndisabling all overlay features.");
 	descs[PLUGIN_MENU_REMOTE_PLAY_BOOST] = plgTranslate("Improve Remote Play performance by\nusing overlay callback for screen\nupdate timing.\nIncompatible with CTRPF.");
+	descs[PLUGIN_MENU_OVERLAY_STATS] = plgTranslate("Display remote play statistics.");
 	descs[PLUGIN_MENU_NO_LOADER_MEM] = plgTranslate("Keep enabled (default) for higher\ngame plugin compatibility.\nDisabling can help prevent game\nhanging but some plugins will crash.");
 
 	s32 r = 0;

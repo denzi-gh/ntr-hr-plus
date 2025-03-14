@@ -24,6 +24,7 @@ struct DeltaQCoefs {
 #[derive(ConstDefault)]
 struct DeltaQManager {
     f: [DeltaQCoefs; RP_DELTA_Q_COEFS_COUNT as usize],
+    m: f32,
     n: f32,
     qs: f32,
     // c: i8,
@@ -63,7 +64,6 @@ pub struct JpegShared<'a> {
     pub mcuRowSize: usize,
     pub mcuColSize: usize,
     pub mcusPerRow: usize,
-    pub mcusF: f32,
     pub mcusTop: u16,
     pub mcusBot: u16,
     jpegTbls: JpegTbls,
@@ -76,7 +76,7 @@ pub struct JpegShared<'a> {
     targetFrameRate: u8,
 }
 
-const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [4, 2, 2];
+const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [15, 10, 10];
 const DELTA_Q_CACHE_MAX: u8 = {
     let mut max = 0;
     let mut i = 0;
@@ -230,7 +230,6 @@ impl<'a> JpegShared<'a> {
         self.mcusBot = (self.mcusPerRow
             * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize))
             as u16;
-        self.mcusF = 1f32 / (self.mcusTop + self.mcusBot) as f32;
     }
 }
 
@@ -1863,19 +1862,25 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 .get_many_unchecked_mut([s, s1]);
             let qs = qc.qs;
 
-            let ss = qc.f[1].s;
-            let ss1 = qc1.f[1].s;
+            let ss = qc.f[0].s + qc.f[1].s;
+            let ss1 = qc1.f[0].s + qc1.f[1].s;
 
             let current_qos = entries::rp_delta_q_qos();
-            const qos_adj_b: f32 = 2f32 * u8::BITS as f32;
+            const qos_adj_b: f32 = u8::BITS as f32;
             const qos_min_f: f32 = 0.5f32;
             const qos_max_f: f32 = 0.75f32;
+            let mcusF = 1f32
+                / (if s == 0 {
+                    self.worker.shared.mcusTop
+                } else {
+                    self.worker.shared.mcusBot
+                }) as f32;
             let qos_adj = qos_adj_b * qos_min_f
-                + self.worker.shared.quality as f32 * ((qos_max_f - qos_min_f) * qos_adj_b / 100f32); // out of 2f32 * u8::BITS as f32
-            let qos = current_qos as f32 * qos_adj * self.worker.shared.mcusF
-                / (frame_rate + frame_rate_1);
+                + self.worker.shared.quality as f32
+                    * ((qos_max_f - qos_min_f) * qos_adj_b / 100f32);
+            let qos = current_qos as f32 / (frame_rate + frame_rate_1) * mcusF * qos_adj;
             let qos = if ss > 0f32 && ss1 > 0f32 {
-                qos * ss * 2f32 / (ss + ss1)
+                qos * 2f32 * ss / (ss + ss1)
             } else {
                 qos
             };
@@ -1884,14 +1889,19 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             const qs_min: f32 = 1f32;
 
             let qos = if comp_size > 0 && qs > 0f32 {
-                let comp_size = (comp_size * u8::BITS) as f32
-                    / (if s == 0 {
-                        self.worker.shared.mcusTop
-                    } else {
-                        self.worker.shared.mcusBot
-                    }) as f32;
+                let comp_size = (comp_size * u8::BITS) as f32 * mcusF;
 
                 // nsDbgPrint!(int, c_str!("comp_size"), comp_size as i32);
+                if qc.m == 0f32 {
+                    qc.m = (9 * self.worker.shared.maxBlocksInMcu) as f32 - qs_min;
+                }
+
+                let comp_size = if qc.m > comp_size - qs_min {
+                    qc.m = comp_size - qs_min;
+                    qs_min
+                } else {
+                    comp_size - qc.m
+                };
 
                 let update_coefs = |qc: &mut DeltaQCoefs, rb: f32| {
                     let ri = 1f32 / rb;
@@ -1906,15 +1916,17 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 };
 
                 let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [
-                    (frame_rate * (1f32 / 6f32)).max(3f32),
-                    frame_rate * (1f32 / 2f32).max(9f32),
+                    (frame_rate * (1f32 / 10f32)).max(3f32),
+                    (frame_rate * (1f32 / 3f32)).max(10f32),
                 ];
                 for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     update_coefs(&mut qc.f[i], rr[i]);
                 }
+
+                let qos = qos - qc.m;
                 let q0 = qos / qc.f[0].m;
                 let q1 = qos / qc.f[1].m;
-                (if q0 < q1 { q0 } else { (q0 + q1) / 2f32 }).max(qs_min)
+                ((q0 + q1) / 2f32).max(qs_min)
             } else {
                 qos
             };
