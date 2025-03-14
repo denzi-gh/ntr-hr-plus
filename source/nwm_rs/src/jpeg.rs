@@ -31,7 +31,7 @@ struct DeltaQManager {
     qc: f32,
     // c: i8,
     cc: f32,
-    cn: i8,
+    cn: f32,
 }
 
 #[derive(ConstDefault, Clone, Copy)]
@@ -1927,9 +1927,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 };
 
                 let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [
-                    (frame_rate * (1f32 / 10f32)).max(3f32),
-                    (frame_rate * (1f32 / 5f32)).max(6f32),
-                    (frame_rate * (1f32 / 3f32)).max(10f32),
+                    (frame_rate * (1f32 / 10f32)).max(1f32),
+                    (frame_rate * (1f32 / 5f32)).max(1f32),
+                    (frame_rate * (1f32 / 2f32)).max(1f32),
                 ];
                 for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     update_coefs(&mut qc.f[i], rr[i]);
@@ -2059,58 +2059,58 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             };
             // nsDbgPrint!(int, c_str!("qs"), qs as i32);
 
-            let qr = (qr as u32 * current_qos / (RP_QOS_MAX * DELTA_Q_COUNT as u32 / 6)) as u8;
+            let qr = (qr as f32 * current_qos as f32
+                / (RP_QOS_MAX as f32 * DELTA_Q_COUNT as f32 / 4f32))
+                .max(2f32);
+            let qri = 1f32 / qr;
             let mut q_done = false;
             let set_q = |deltaQ: &mut u8, qc: &mut DeltaQManager, q_done: &mut bool| {
                 *deltaQ = q;
                 // *deltaQ = (*deltaQ + q) / 2;
                 if qc.cc > 0f32 {
-                    qc.cc = 1f32 / qr as f32;
-                    qc.cn = qr as i8;
+                    qc.cc = qri;
+                    qc.cn = 1f32;
                 } else {
-                    qc.cc = -1f32 / qr as f32;
-                    qc.cn = -(qr as i8);
+                    qc.cc = -qri;
+                    qc.cn = 1f32;
                 }
                 // qc.c = 0;
                 *q_done = true;
             };
             if q != *deltaQ {
-                let ri = 1f32 / qr as f32;
-                let r = (qr - 1) as f32 * ri;
+                let ri = qri as f32;
+                let r = (qr - 1f32) as f32 * ri;
 
-                if q > *deltaQ {
-                    // if qc.c >= 0 {
-                    //     qc.c += 1;
-                    // } else {
-                    //     qc.c /= 2;
-                    // }
-                    qc.cc = qc.cc * r + (q as i8 - *deltaQ as i8) as f32 * ri;
-                    // if qc.cc >= 1f32 && qc.cn >= 0 {
-                    //     set_q(deltaQ, qc, &mut q_done);
-                    // }
-                } else {
-                    // if qc.c <= 0 {
-                    //     qc.c -= 1;
-                    // } else {
-                    //     qc.c /= 2;
-                    // }
-                    qc.cc = qc.cc * r - (*deltaQ as i8 - q as i8) as f32 * ri;
-                    // if qc.cc <= -1f32 && qc.cn <= 0 {
-                    //     set_q(deltaQ, qc, &mut q_done);
-                    // }
+                // if q > *deltaQ {
+                //     // if qc.c >= 0 {
+                //     //     qc.c += 1;
+                //     // } else {
+                //     //     qc.c /= 2;
+                //     // }
+                //     qc.cc = qc.cc * r + (q as i8 - *deltaQ as i8) as f32 * ri;
+                //     // if qc.cc >= 1f32 && qc.cn >= 0 {
+                //     //     set_q(deltaQ, qc, &mut q_done);
+                //     // }
+                // } else {
+                //     // if qc.c <= 0 {
+                //     //     qc.c -= 1;
+                //     // } else {
+                //     //     qc.c /= 2;
+                //     // }
+                //     qc.cc = qc.cc * r - (*deltaQ as i8 - q as i8) as f32 * ri;
+                //     // if qc.cc <= -1f32 && qc.cn <= 0 {
+                //     //     set_q(deltaQ, qc, &mut q_done);
+                //     // }
+                // }
+
+                qc.cc = qc.cc * r + (q as i8 - *deltaQ as i8) as f32 * ri;
+                // if !q_done {
+                qc.cn = qc.cn / 2f32;
+
+                if qc.cc.abs() >= qc.cn / qr {
+                    set_q(deltaQ, qc, &mut q_done);
                 }
-
-                if !q_done {
-                    if qc.cn > 0 {
-                        qc.cn -= 1;
-                    } else if qc.cn < 0 {
-                        qc.cn += 1;
-                    }
-
-                    if qc.cn == 0 && qc.cc.abs() >= 1f32 {
-                        set_q(deltaQ, qc, &mut q_done);
-                    }
-                }
+                // }
 
                 // if !q_done && qc.c.abs() >= qr as i8 {
                 //     set_q(deltaQ, qc, &mut q_done);
