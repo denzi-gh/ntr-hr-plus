@@ -149,7 +149,7 @@ enum {
 	RP_SCREEN_COUNT,
 };
 
-#define RP_DELTA_Q_COEFS_COUNT (2)
+#define RP_DELTA_Q_COEFS_COUNT (3)
 
 #define NWM_HEAP_SIZE (0x4000)
 #define NWM_WORK_COUNT (2)
