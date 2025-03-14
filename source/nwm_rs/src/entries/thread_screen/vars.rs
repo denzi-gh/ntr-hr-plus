@@ -452,6 +452,7 @@ impl ScreenThreadVarsSync {
 
 pub extern "C" fn thread_screen(_: *mut c_void) {
     unsafe {
+        __system_initSyscalls();
         safe_impl::thread_screen_loop(ScreenEncodeSync(()));
         svcExitThread()
     }

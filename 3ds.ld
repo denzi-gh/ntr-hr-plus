@@ -22,6 +22,10 @@ SECTIONS
 		*(.roda)
 		*(.rodata.*)
 		*all.rodata*(*)
+		. = ALIGN(4);
+		__tdata_align = .;
+		LONG (ALIGNOF(.tdata));
+		. = ALIGN(4);
 	} : rodata
 
 	. = ALIGN(4);
@@ -42,14 +46,40 @@ SECTIONS
 	} : data
 
 	. = ALIGN(4);
+	.tdata : {
+		__tdata_lma = .;
+		*(.tdata)
+		*(.tdata.*)
+		. = ALIGN(4);
+		__tdata_lma_end = .;
+	} : data
+
+	. = ALIGN(4);
+	.tbss :  {
+		*(.tbss)
+		*(.tbss.*)
+		*(.tcommon)
+		. = ALIGN(4);
+	} : data
+
+	. = ALIGN(4);
 	.bss : {
 		*(.__bss_start)
 		*(.dynbss)
 		*(.bss)
 		*(.bss.*)
 		*(COMMON)
+
+		. = 8 + ABSOLUTE(ALIGN(ABSOLUTE(. - 8), ALIGNOF(.tdata)));
+		__tls_start = .;
+		. += SIZEOF(.tdata);
+
+		. = ALIGN(ALIGNOF(.tbss));
+		. += SIZEOF(.tbss);
+		__tls_end = .;
+
 		*(.__bss_end)
-	}
+	} : data
 
 	. = ALIGN(4);
 	__end__ = .;

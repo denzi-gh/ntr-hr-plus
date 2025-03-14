@@ -18,15 +18,12 @@ static RT_HOOK nwmValParamHook;
 
 static Handle nwmReadyEvent;
 
-void __system_initSyscalls(void);
-void nsThreadInit() {
-	__system_initSyscalls();
-}
-
 extern char *fake_heap_start;
 extern char *fake_heap_end;
+void __system_initSyscalls(void);
 Result __sync_init(void);
 void mainThread(void *) {
+	__system_initSyscalls();
 	s32 ret;
 	ret = __sync_init();
 	if (ret != 0) {

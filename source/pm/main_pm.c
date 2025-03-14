@@ -206,8 +206,10 @@ static int pmFreeLoaderMemPool(int keepHandle) {
 	return ret;
 }
 
+void __system_initSyscalls(void);
 static int plgThreadForce;
 static void plgMonitorThread(void *) {
+	__system_initSyscalls();
 	u32 KProcess = kGetKProcessByHandle(loaderMemGameHandle);
 
 	while (1) {
@@ -440,8 +442,10 @@ void mainPost(void) {
 	}
 }
 
+void __system_initSyscalls(void);
 Result __sync_init(void);
 void mainThread(void *) {
+	__system_initSyscalls();
 	s32 res;
 	res = __sync_init();
 	if (res != 0) {

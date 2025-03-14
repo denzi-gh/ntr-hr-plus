@@ -80,8 +80,10 @@ void mainPost(void) {
 	}
 }
 
+void __system_initSyscalls(void);
 Result __sync_init(void);
 void mainThread(void *) {
+	__system_initSyscalls();
 	s32 ret;
 	ret = __sync_init();
 	if (ret != 0) {

@@ -427,7 +427,10 @@ static int rpPortSend(u32 isTop) {
 	return 0;
 }
 
+void __system_initSyscalls(void);
 static void plgOverlayThread(void *fp) {
+	__system_initSyscalls();
+
 	if (!fp) {
 		while (1) {
 			rpPortSend(-1);

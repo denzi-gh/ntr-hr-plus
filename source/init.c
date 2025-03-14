@@ -343,12 +343,15 @@ Handle rpGetPortHandle(void) {
 	return hClient;
 }
 
+void __system_initSyscalls(void);
 void __attribute__((weak)) handlePortThreadPre(void) {}
 
 #define clientCountMax 8
 // Plus server port
 #define sessionCountMax (clientCountMax + 1)
 void handlePortThread(void *arg) {
+	__system_initSyscalls();
+
 	s32 ret;
 	Handle hServer = 0, hClient = 0;
 	const char *portName = (const char *)arg;

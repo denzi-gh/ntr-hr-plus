@@ -439,9 +439,10 @@ end_listen:
 	nsPoll2End();
 }
 
-void __attribute__((weak)) nsThreadInit() {}
+
+void __system_initSyscalls(void);
 static void nsThread(void *arg) {
-	nsThreadInit();
+	__system_initSyscalls();
 	nsMainLoop((u32)arg);
 	svcExitThread();
 }

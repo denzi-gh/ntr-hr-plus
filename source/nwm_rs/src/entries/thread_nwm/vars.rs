@@ -251,6 +251,7 @@ impl ThreadVars {
 
 pub extern "C" fn thread_nwm(_: *mut c_void) {
     unsafe {
+        __system_initSyscalls();
         while !crate::entries::work_thread::reset_threads() {
             if safe_impl::try_send_next_buffer(ThreadVars(()), true) {
                 svcSleepThread(min_send_interval_ns.load(Ordering::Relaxed) as s64);
