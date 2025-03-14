@@ -1867,7 +1867,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let ss1 = qc1.f[1].s;
 
             let current_qos = entries::rp_delta_q_qos();
-            let qos_adj = 9.6f32 + self.worker.shared.quality as f32 / 31.25f32; // out of 2f32 * u8::BITS as f32
+            const qos_adj_b: f32 = 2f32 * u8::BITS as f32;
+            const qos_min_f: f32 = 0.5f32;
+            const qos_max_f: f32 = 0.75f32;
+            let qos_adj = qos_adj_b * qos_min_f
+                + self.worker.shared.quality as f32 * ((qos_max_f - qos_min_f) * qos_adj_b / 100f32); // out of 2f32 * u8::BITS as f32
             let qos = current_qos as f32 * qos_adj * self.worker.shared.mcusF
                 / (frame_rate + frame_rate_1);
             let qos = if ss > 0f32 && ss1 > 0f32 {

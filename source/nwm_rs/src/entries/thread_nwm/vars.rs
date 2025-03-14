@@ -466,7 +466,11 @@ unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> 
         if AtomicBool::from_ptr(&mut (*kcp).rp_output_retry).load(Ordering::Acquire) {
             return 0;
         }
-        curr_tick = svcGetSystemTick() as s64;
+        curr_tick = if NWM_AGGRESSIVE_NEXT_TICK > 0 {
+            rp_output_next_tick
+        } else {
+            svcGetSystemTick() as s64
+        };
     }
     let next_interval = if (*kcp).session_established && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
         min_send_interval_tick.load(Ordering::Relaxed) as s64 * len as s64 / PACKET_SIZE as s64

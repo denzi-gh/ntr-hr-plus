@@ -23,5 +23,6 @@ struct rp_cb {
 };
 
 #define NWM_PROPORTIONAL_MIN_INTERVAL 1
+#define NWM_AGGRESSIVE_NEXT_TICK 1
 
 #include <math.h>

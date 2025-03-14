@@ -45,13 +45,23 @@ fn try_send_next_buffer_may_skip(v: ThreadVars, work_flush: bool, mut may_skip: 
 fn send_next_buffer_delay(v: &ThreadVars, work_flush: bool, pos: *mut u8, flag: u32) -> bool {
     unsafe {
         let curr_tick = svcGetSystemTick() as u32_;
-        let tick_diff = *v.next_send_tick() as s32 - curr_tick as s32;
+        let next_tick = *v.next_send_tick();
+        let tick_diff = next_tick as s32 - curr_tick as s32;
 
         if tick_diff > 0 {
             if work_flush {
                 let sleep_value = tick_diff as u64_ * 1000_000_000 / SYSCLOCK_ARM11 as u64_;
                 svcSleepThread(sleep_value as s64);
-                if !send_next_buffer(&v, svcGetSystemTick() as u32_, pos, flag) {
+                if !send_next_buffer(
+                    &v,
+                    if NWM_AGGRESSIVE_NEXT_TICK > 0 {
+                        next_tick
+                    } else {
+                        svcGetSystemTick() as u32_
+                    },
+                    pos,
+                    flag,
+                ) {
                     return false;
                 }
             }
