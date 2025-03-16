@@ -393,6 +393,10 @@ pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
     term_dsts = const_default();
     jpeg_quality = quality;
     jpeg_chroma_ss = chroma_ss;
+
+    for i in 0..SCREEN_COUNT as usize {
+        frame_times[i] = SYSCLOCK_ARM11;
+    }
 }
 
 pub struct ThreadDoVars(crate::entries::thread_screen::ScreenWorkVars);
