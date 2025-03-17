@@ -10,4 +10,5 @@ pub use thread_nwm::{
     get_reliable_stream_delta_prog, get_reliable_stream_method, packet_data_size_kcp,
     rp_delta_q_qos, rp_dq_update_size, rp_send_buffer, NwmInfo, ReliableStreamMethod,
 };
-pub use work_thread::{get_frame_time, reset_threads, set_reset_threads_ar};
+pub use thread_screen::{bpp_for_format, get_frame_time};
+pub use work_thread::{reset_threads, set_reset_threads_ar};

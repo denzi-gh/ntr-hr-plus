@@ -47,30 +47,12 @@ impl BlitCtx {
     }
 
     pub fn bpp(&self) -> u32_ {
-        let format = self.format & 0xf;
-        if format == 0 {
-            4
-        } else if format == 1 {
-            3
-        } else {
-            2
-        }
+        entries::bpp_for_format(self.format)
     }
 }
 
 pub type BlitCtxes = RangedArray<BlitCtx, WORK_COUNT>;
 static mut blit_ctxes: BlitCtxes = const_default();
-static mut blit_formats: RangedArray<u32_, SCREEN_COUNT> = const_default();
-
-pub unsafe fn get_blit_format_changed(is_top: bool, format: u32_) -> bool {
-    let blit_format = blit_formats.get_b_mut(if is_top { false } else { true });
-    if *blit_format == format {
-        false
-    } else {
-        *blit_format = format;
-        true
-    }
-}
 
 static mut term_dsts: RangedArray<RangedArray<*mut u8, RP_CORE_COUNT_MAX>, WORK_COUNT> =
     const_default();
@@ -346,13 +328,6 @@ static mut reset_threads_flag: AtomicBool = const_default();
 static mut core_count_in_use: CoreCount = CoreCount::init();
 
 static mut current_frame_ids: RangedArray<u8_, SCREEN_COUNT> = const_default();
-static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
-static mut frame_times: [u32; SCREEN_COUNT as usize] = const_default();
-
-pub const frame_time_factor: u32 = 3;
-pub fn get_frame_time(s: ScreenIndex) -> u32 {
-    unsafe { *frame_times.get_unchecked(s.get() as usize) }
-}
 
 pub fn reset_threads() -> bool {
     unsafe { reset_threads_flag.load(Ordering::Relaxed) }
@@ -393,10 +368,6 @@ pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
     term_dsts = const_default();
     jpeg_quality = quality;
     jpeg_chroma_ss = chroma_ss;
-
-    for i in 0..SCREEN_COUNT as usize {
-        frame_times[i] = SYSCLOCK_ARM11;
-    }
 }
 
 pub struct ThreadDoVars(crate::entries::thread_screen::ScreenWorkVars);
@@ -447,8 +418,6 @@ impl ThreadDoVars {
                     )
                     .load(Ordering::Relaxed);
                 }
-                (*ov_stats).s[s].frame_time =
-                    AtomicU32::from_mut(&mut frame_times[s]).load(Ordering::Relaxed);
 
                 syn.work_done_count.store(0, Ordering::Release);
                 syn.work_begin_flag.store(false, Ordering::Release);
@@ -485,10 +454,6 @@ impl ThreadVars {
 
     pub fn v(&self) -> &crate::entries::thread_screen::ScreenWorkVars {
         &self.0
-    }
-
-    pub fn v_mut(&mut self) -> &mut crate::entries::thread_screen::ScreenWorkVars {
-        &mut self.0
     }
 }
 
@@ -538,20 +503,8 @@ impl ThreadBeginVars {
         &self.0.v()
     }
 
-    pub fn v_mut(&mut self) -> &mut crate::entries::thread_screen::ScreenWorkVars {
-        self.0.v_mut()
-    }
-
     pub fn frame_id(&self) -> u8_ {
         unsafe { *current_frame_ids.get_b_mut(self.v().is_top()) }
-    }
-
-    pub fn get_last_frame_timing(&self) -> u32_ {
-        unsafe { *last_frame_timings.get_b(self.v().is_top()) }
-    }
-
-    pub fn set_last_frame_timing(&self, timing: u32_) {
-        unsafe { *last_frame_timings.get_b_mut(self.v().is_top()) = timing }
     }
 
     #[named]
@@ -571,94 +524,16 @@ impl ThreadBeginVars {
         }
     }
 
-    #[cfg(feature = "img_diff_dbg")]
-    pub fn frame_changed(&self) -> bool {
-        unsafe {
-            let ctx = self.ctx();
-            let src_len = ctx.src_len();
-
-            let curr = ctx.src;
-            let prev = self.v().img_src_prev();
-            let diff = self.v().img_src_diff();
-            for i in 0..src_len as usize {
-                *diff.add(i) = if *curr.add(i) == *prev.add(i) { 0 } else { 255 }
-            }
-            ctx.src = diff;
-
-            *slice::from_raw_parts(curr, src_len as usize)
-                != *slice::from_raw_parts(prev, src_len as usize);
-        }
-    }
-
-    #[cfg(not(feature = "img_diff_dbg"))]
-    pub fn frame_changed(&self) -> bool {
-        unsafe {
-            let ctx = self.ctx();
-            let src_len = ctx.src_len();
-
-            let curr = ctx.src;
-            let prev = self.v().img_src_prev();
-
-            // test pattern
-            if false {
-                let w = self.v().work_index().get();
-                let pitch = ctx.pitch();
-                let bpp = ctx.bpp();
-                for y in 0..ctx.height() {
-                    for x in 0..ctx.width() {
-                        let xpos = x / crate::jpeg::vars::DCTSIZE as u32;
-                        let ypos = y / crate::jpeg::vars::DCTSIZE as u32;
-                        let color = if (ypos % 2 > 0) ^ (xpos % 2 > 0) ^ (w % 2 > 0) {
-                            255
-                        } else {
-                            0
-                        };
-
-                        let c = curr.add((y * pitch as u32 + x * bpp) as usize);
-                        for b in 0..bpp {
-                            *c.add(b as usize) = color;
-                        }
-                    }
-                }
-                true
-            } else {
-                *slice::from_raw_parts(curr, src_len as usize)
-                    != *slice::from_raw_parts(prev, src_len as usize)
-            }
-        }
-    }
-
     pub fn ready_next(&self) {
         unsafe {
-            self.v().img_index_next();
             *current_frame_ids.get_b_mut(self.v().is_top()) += 1;
         }
     }
 
     #[named]
-    pub fn release_and_capture_screen(self, t: &ThreadId, frame_time: u32) -> ThreadDoVars {
+    pub fn release_and_capture_screen(self, t: &ThreadId) -> ThreadDoVars {
         unsafe {
-            let skip_frame = self.v().set_skip_frame(false);
             self.v().clear_screen_synced();
-
-            let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
-            loop {
-                let cur = ft.load(Ordering::Relaxed);
-                if let Ok(_) = ft.compare_exchange(
-                    cur,
-                    (cur * (frame_time_factor - 1)
-                        + (if skip_frame {
-                            u32::min(frame_time, SYSCLOCK_ARM11 / 2)
-                        } else {
-                            u32::min(frame_time, SYSCLOCK_ARM11 / 30)
-                        }))
-                        / frame_time_factor,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    break;
-                }
-            }
 
             let mut count = mem::MaybeUninit::uninit();
             for j in ThreadId::up_to(&get_core_count_in_use()) {
@@ -680,17 +555,6 @@ impl ThreadBeginVars {
             }
 
             ThreadDoVars(self.0 .0)
-        }
-    }
-
-    pub fn release_skip_frame(&self, t: &ThreadId) -> Option<()> {
-        unsafe {
-            self.v().set_skip_frame(true);
-            self.v().set_screen_thread_id(&t);
-            self.v().release_screen_ready();
-
-            crate::entries::thread_screen::screen_encode_acquire(&t)?;
-            Some(())
         }
     }
 

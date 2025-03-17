@@ -265,7 +265,6 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
             return false;
         }
     }
-    send_overlay_stats();
 
     true
 }
@@ -375,7 +374,19 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
             let cap_info = update_gpu_regs(is_top);
 
             let w = vars.screen_work_index();
-            if unsafe { capture_screen(is_top, &cap_info, vars.img_dst(is_top), w) } {
+            if unsafe {
+                capture_screen(
+                    is_top,
+                    &cap_info,
+                    ScreenThreadVars::img(is_top) as usize as u32_,
+                    w,
+                ) && vars.no_skip_frame(is_top, cap_info.format)
+            } {
+                unsafe {
+                    send_overlay_stats();
+                }
+
+                ScreenThreadVars::img_index_next(is_top);
                 vars.release(is_top, cap_info.format, w);
                 break;
             }

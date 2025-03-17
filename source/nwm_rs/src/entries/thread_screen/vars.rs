@@ -7,10 +7,29 @@ static mut screens_synced: RangedArray<AtomicBool, WORK_COUNT> = const_default()
 static mut frame_counts: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut frame_queues: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut screen_work_index: AtomicU32 = const_default();
-static mut screen_thread_id: ThreadId = ThreadId::init();
-static mut skip_frames: RangedArray<bool, WORK_COUNT> = const_default();
 static mut no_skip_frames: RangedArray<bool, SCREEN_COUNT> = const_default();
+static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
+static mut frame_times: [u32_; SCREEN_COUNT as usize] = const_default();
+static mut blit_formats: RangedArray<u8_, SCREEN_COUNT> = const_default();
 static mut port_game_pid: AtomicU32 = const_default();
+
+const frame_time_factor: u32 = 3;
+pub fn get_frame_time(s: ScreenIndex) -> u32 {
+    unsafe { *frame_times.get_unchecked(s.get() as usize) }
+}
+
+pub fn bpp_for_format(format: u32_) -> u32_ {
+    let format = format & 0xf;
+    if format == 0 {
+        4
+    } else if format == 1 {
+        3
+    } else if format == 2 || format == 3 {
+        2
+    } else {
+        0
+    }
+}
 
 type DmaHandles = RangedArray<Handle, WORK_COUNT>;
 
@@ -31,19 +50,14 @@ pub struct CapParams {
 
 pub static mut cap_params: CapParams = const_default();
 
-pub const IMG_AWORK_COUNT: u32_ = 2;
-#[cfg(not(feature = "img_diff_dbg"))]
-pub const IMG_WORK_COUNT: u32_ = IMG_AWORK_COUNT;
-#[cfg(feature = "img_diff_dbg")]
-pub const IMG_WORK_COUNT: u32_ = IMG_AWORK_COUNT + 1;
-pub type ImgAWorkIndex = Ranged<IMG_AWORK_COUNT>;
+pub const IMG_WORK_COUNT: u32_ = 2;
 pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
 pub type ImgBufs = RangedArray<*mut u8_, IMG_WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct ImgInfo {
     pub bufs: ImgBufs,
-    pub index: AtomicU32,
+    pub index: u8_,
 }
 
 pub type ImgInfos = RangedArray<ImgInfo, SCREEN_COUNT>;
@@ -78,14 +92,15 @@ pub unsafe fn reset_thread_vars(mode: u32_) {
     for i in ScreenIndex::all() {
         *frame_counts.get_mut(&i) = 1;
         *frame_queues.get_mut(&i) = priority_factor_scaled;
-
-        *skip_frames.get_mut(&i) = false;
     }
     screen_work_index = AtomicU32::new(WorkIndex::init().get());
-    screen_thread_id = ThreadId::init();
 
     for i in WorkIndex::all() {
         *screens_synced.get_mut(&i).as_ptr() = false;
+    }
+
+    for i in 0..SCREEN_COUNT as usize {
+        frame_times[i] = SYSCLOCK_ARM11;
     }
 }
 
@@ -125,13 +140,99 @@ impl ScreenThreadVars {
         unsafe { port_game_pid.load(Ordering::Relaxed) }
     }
 
-    pub fn img_dst(&self, is_top: bool) -> u32_ {
+    pub fn img(is_top: bool) -> *mut u8_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(is_top);
-            *iinfo.bufs.get_r(&ImgAWorkIndex::init_unchecked(
-                iinfo.index.load(Ordering::Acquire),
-            )) as u32_
+            *iinfo
+                .bufs
+                .get_r(&ImgWorkIndex::init_unchecked(iinfo.index as u32_))
         }
+    }
+
+    pub fn img_prev(is_top: bool) -> *mut u8_ {
+        unsafe {
+            let iinfo = img_infos.get_b_mut(is_top);
+            let mut index = ImgWorkIndex::init_unchecked(iinfo.index as u32_);
+            index.prev_wrapped();
+            *iinfo.bufs.get_r(&index)
+        }
+    }
+
+    pub fn img_index_next(is_top: bool) {
+        unsafe {
+            let iinfo = img_infos.get_b_mut(is_top);
+            let index = &mut ImgWorkIndex::init_unchecked(iinfo.index as u32_);
+            index.next_wrapped();
+            iinfo.index = index.get() as u8_;
+        }
+    }
+
+    pub fn get_last_frame_timing(is_top: bool) -> u32_ {
+        unsafe { *last_frame_timings.get_b(is_top) }
+    }
+
+    pub fn set_last_frame_timing(is_top: bool, timing: u32_) {
+        unsafe { *last_frame_timings.get_b_mut(is_top) = timing }
+    }
+
+    pub fn frame_changed(is_top: bool, format: u32_) -> bool {
+        unsafe {
+            let curr = Self::img(is_top) as *const u8_;
+            let prev = Self::img_prev(is_top) as *const u8_;
+            let src_len = bpp_for_format(format)
+                * GSP_SCREEN_WIDTH
+                * (if is_top {
+                    GSP_SCREEN_HEIGHT_TOP
+                } else {
+                    GSP_SCREEN_HEIGHT_BOTTOM
+                });
+
+            *slice::from_raw_parts(curr, src_len as usize)
+                != *slice::from_raw_parts(prev, src_len as usize)
+        }
+    }
+
+    pub fn get_blit_format_changed(is_top: bool, format: u32_) -> bool {
+        unsafe {
+            let blit_format = blit_formats.get_b_mut(if is_top { false } else { true });
+            let format = format as u8;
+            if *blit_format == format {
+                false
+            } else {
+                *blit_format = format;
+                true
+            }
+        }
+    }
+
+    pub fn no_skip_frame(&self, is_top: bool, format: u32_) -> bool {
+        let timing = unsafe { svcGetSystemTick() as u32_ };
+        let last_timing = Self::get_last_frame_timing(is_top);
+        let timing_allowance =
+            if unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() } {
+                SYSCLOCK_ARM11 / 2
+            } else {
+                SYSCLOCK_ARM11
+            };
+        let frame_time = timing - last_timing;
+        if frame_time >= timing_allowance {
+            unsafe { set_no_skip_frame(is_top) };
+        }
+        let skip_frame = !unsafe { reset_no_skip_frame(is_top) }
+            && !Self::get_blit_format_changed(is_top, format)
+            && !Self::frame_changed(is_top, format);
+
+        if !skip_frame {
+            Self::set_last_frame_timing(is_top, timing);
+            unsafe {
+                let s = if is_top { 0 } else { 1 };
+                let cur = &mut frame_times[s];
+                *cur = (*cur * (frame_time_factor - 1) + frame_time) / frame_time_factor;
+                (*ov_stats).s[s].frame_time = *cur;
+            }
+        }
+
+        !skip_frame
     }
 
     pub fn screen_work_index(&self) -> WorkIndex {
@@ -188,10 +289,10 @@ impl ScreenThreadVars {
                 ScreenEncodeVars::init(is_top, format, work_index);
 
             let mut count = mem::MaybeUninit::<s32>::uninit();
-            if *skip_frames.get(&work_index) {
+            for j in ThreadId::up_to(&crate::entries::work_thread::get_core_count_in_use()) {
                 let res = svcReleaseSemaphore(
                     count.as_mut_ptr(),
-                    (*syn_handles).threads.get(&screen_thread_id).work_ready,
+                    (*syn_handles).threads.get(&j).work_ready,
                     1,
                 );
                 if res != 0 {
@@ -201,22 +302,6 @@ impl ScreenThreadVars {
                         work_index.get(),
                         res
                     );
-                }
-            } else {
-                for j in ThreadId::up_to(&crate::entries::work_thread::get_core_count_in_use()) {
-                    let res = svcReleaseSemaphore(
-                        count.as_mut_ptr(),
-                        (*syn_handles).threads.get(&j).work_ready,
-                        1,
-                    );
-                    if res != 0 {
-                        nsDbgPrint!(
-                            releaseSemaphoreFailed,
-                            c_str!("work_ready"),
-                            work_index.get(),
-                            res
-                        );
-                    }
                 }
             }
         }
@@ -266,16 +351,6 @@ impl ScreenWorkVars {
         self.is_top
     }
 
-    pub fn read_is_top(&mut self) -> bool {
-        unsafe {
-            self.is_top = screen_encode_vars
-                .get(&self.work_index)
-                .is_top
-                .load(Ordering::Acquire);
-            self.is_top
-        }
-    }
-
     pub fn format(&self) -> u32_ {
         unsafe { screen_encode_vars.get(&self.work_index).format }
     }
@@ -288,48 +363,8 @@ impl ScreenWorkVars {
         unsafe { screen_encode_vars.get(&self.work_index).dma }
     }
 
-    pub fn img_src(&self) -> *mut u8_ {
-        ScreenThreadVars(()).img_dst(self.is_top()) as *mut u8_
-    }
-
-    pub fn img_src_prev(&self) -> *const u8_ {
-        unsafe {
-            let iinfo = img_infos.get_b_mut(self.is_top());
-            let mut index = ImgAWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
-            index.prev_wrapped();
-            *iinfo.bufs.get_r(&index)
-        }
-    }
-
-    #[cfg(feature = "img_diff_dbg")]
-    pub fn img_src_diff(&self) -> *mut u8_ {
-        unsafe {
-            let iinfo = img_infos.get_b_mut(self.is_top());
-            let index = ImgWorkIndex::init_unchecked(IMG_AWORK_COUNT);
-            *iinfo.bufs.get(&index)
-        }
-    }
-
-    pub unsafe fn img_index_next(&self) {
-        let iinfo = img_infos.get_b_mut(self.is_top());
-        let index = &mut ImgAWorkIndex::init_unchecked(iinfo.index.load(Ordering::Acquire));
-        index.next_wrapped();
-        iinfo.index.store(index.get(), Ordering::Release);
-    }
-
-    pub unsafe fn set_skip_frame(&self, skip_frame: bool) -> bool {
-        let s = skip_frames.get_mut(&self.work_index);
-        let ret = *s;
-        *s = skip_frame;
-        ret
-    }
-
     pub unsafe fn clear_screen_synced(&self) {
         (*screens_synced.get_mut(&self.work_index)).store(false, Ordering::Release);
-    }
-
-    pub unsafe fn set_screen_thread_id(&self, t: &ThreadId) {
-        screen_thread_id = *t;
     }
 
     pub unsafe fn set_next_screen_work_index(&self) {

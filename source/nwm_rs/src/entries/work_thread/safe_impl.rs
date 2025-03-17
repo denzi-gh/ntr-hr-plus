@@ -4,51 +4,23 @@ use super::*;
 
 pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
     let v = match vars.work_begin_acquire() {
-        Ok(mut v) => loop {
-            let format_changed = bctx_init(&v);
+        Ok(v) => loop {
+            bctx_init(&v);
 
             v.dma_sync();
-            let is_top = v.v().is_top();
-
-            let timing = unsafe { svcGetSystemTick() as u32_ };
-            let last_timing = v.get_last_frame_timing();
-            let timing_allowance =
-                if unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() } {
-                    SYSCLOCK_ARM11 / 2
-                } else {
-                    SYSCLOCK_ARM11
-                };
-            let frame_time = timing - last_timing;
-            if frame_time >= timing_allowance {
-                unsafe { crate::entries::thread_screen::set_no_skip_frame(is_top) };
-            }
-            let skip_frame = !unsafe { crate::entries::thread_screen::reset_no_skip_frame(is_top) }
-                && !format_changed
-                && !v.frame_changed();
-
-            if !skip_frame {
-                if unsafe { entries::thread_nwm::get_reliable_stream_method() }
-                    == entries::thread_nwm::ReliableStreamMethod::None
-                    && !ready_nwm(&v)
-                {
-                    return None;
-                }
-
-                v.ready_next();
-                if !ready_work(&v, &t) {
-                    return None;
-                }
-
-                v.set_last_frame_timing(timing);
-
-                break v.release_and_capture_screen(&t, frame_time);
-            }
-
-            if let Some(_) = v.release_skip_frame(&t) {
-                v.v_mut().read_is_top();
-            } else {
+            if unsafe { entries::thread_nwm::get_reliable_stream_method() }
+                == entries::thread_nwm::ReliableStreamMethod::None
+                && !ready_nwm(&v)
+            {
                 return None;
             }
+
+            v.ready_next();
+            if !ready_work(&v, &t) {
+                return None;
+            }
+
+            break v.release_and_capture_screen(&t);
         },
         Err(v) => v.acquire(&t)?,
     };
@@ -194,7 +166,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
     }
 }
 
-fn bctx_init(v: &ThreadBeginVars) -> bool {
+fn bctx_init(v: &ThreadBeginVars) {
     unsafe {
         let ctx = v.ctx();
         let mut format = v.v().format();
@@ -202,12 +174,10 @@ fn bctx_init(v: &ThreadBeginVars) -> bool {
         ctx.is_top = v.v().is_top();
         format &= 0xf;
         ctx.format = format;
-        ctx.src = v.v().img_src();
+        ctx.src = entries::thread_screen::ScreenThreadVars::img_prev(ctx.is_top);
         ctx.frame_id = v.frame_id();
 
         *ctx.should_capture.as_ptr() = false;
-
-        get_blit_format_changed(ctx.is_top, ctx.format)
     }
 }
 
