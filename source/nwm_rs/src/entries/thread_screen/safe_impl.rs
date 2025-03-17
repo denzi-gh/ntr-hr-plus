@@ -143,7 +143,8 @@ unsafe fn get_game_handle() -> Handle {
     cap_params.game
 }
 
-unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkIndex) -> bool {
+#[named]
+unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, screen: ImgWorkIndex) -> bool {
     let phys = cap_info.src as u32_;
 
     let mut process = home_process_handle;
@@ -221,7 +222,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
         return false;
     }
 
-    let dma = cap_params.dmas.get_mut(&w);
+    let dma = cap_params.dmas.get_mut(&screen);
     if *dma != 0 {
         let _ = svcCloseHandle(*dma);
         *dma = 0;
@@ -239,6 +240,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
             &dma_conf,
         );
         if res != 0 {
+            nsDbgPrint!(int, c_str!("svcStartInterProcessDma"), res as i32);
             *dma = 0;
             svcSleepThread(THREAD_WAIT_NS);
             return false;
@@ -259,6 +261,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
             &dma_conf,
         );
         if res != 0 {
+            nsDbgPrint!(int, c_str!("svcStartInterProcessDma"), res as i32);
             *dma = 0;
             close_game_handle();
             svcSleepThread(THREAD_WAIT_NS);
@@ -270,10 +273,17 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
 }
 
 pub fn thread_screen_loop() -> Option<()> {
+    let mut last_frame_timings: [u32_; SCREEN_COUNT as usize] = const_default();
+    for i in 0..SCREEN_COUNT as usize {
+        last_frame_timings[i] = unsafe { svcGetSystemTick() as u32_ };
+    }
+
     loop {
         let vars = ScreenThreadVars(());
         let mut is_top = vars.priority_is_top();
         let mut busy_wait = false;
+        let mut no_skip_frame = false;
+        let timing = unsafe { svcGetSystemTick() as u32_ };
         while !crate::entries::work_thread::reset_threads() {
             if vars.port_game_pid() == 0 {
                 if vars.priority_factor() != 0 {
@@ -287,6 +297,15 @@ pub fn thread_screen_loop() -> Option<()> {
                     }
                 }
                 busy_wait = true;
+                break;
+            }
+
+            if timing - last_frame_timings[is_top as usize] >= timing_allowance {
+                no_skip_frame = true;
+                break;
+            } else if timing - last_frame_timings[!is_top as usize] >= timing_allowance {
+                no_skip_frame = true;
+                is_top = !is_top;
                 break;
             }
 
@@ -370,20 +389,21 @@ pub fn thread_screen_loop() -> Option<()> {
         }
         let cap_info = update_gpu_regs(is_top);
 
-        let w = vars.screen_work_index();
+        let screen = ScreenThreadVars::screen_index(is_top);
         if unsafe {
             capture_screen(
                 is_top,
                 &cap_info,
                 ScreenThreadVars::screen_img(is_top) as usize as u32_,
-                w,
-            ) && vars.no_skip_frame(is_top, cap_info.format, w)
+                screen,
+            ) && vars.no_skip_frame(is_top, cap_info.format, screen, no_skip_frame)
         } {
             unsafe {
                 send_overlay_stats();
             }
+            last_frame_timings[is_top as usize] = timing;
 
-            vars.release(is_top, cap_info.format, w);
+            ScreenThreadVars::release(is_top, cap_info.format);
         }
     }
 }

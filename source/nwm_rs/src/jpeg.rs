@@ -1908,9 +1908,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             }
 
             let s1 = if s == 0 { 1 } else { 0 };
-            let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
+            let frame_time = entries::get_frame_time(s as u32)
                 .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
-            let frame_time_1 = entries::get_frame_time(ScreenIndex::init_unchecked(s1 as u32))
+            let frame_time_1 = entries::get_frame_time(s1 as u32)
                 .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
             let frame_rate = f32::min(
                 self.worker.shared.targetFrameRate as f32,
@@ -1936,6 +1936,15 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 .deltaQCalc
                 .get_many_unchecked_mut([s, s1]);
             let qs = qc.qs;
+
+            let work_frame_rate = f32::min(
+                self.worker.shared.targetFrameRate as f32,
+                SYSCLOCK_ARM11 as f32 / entries::get_work_frame_time(s as u32) as f32,
+            );
+            let work_frame_rate_1 = f32::min(
+                self.worker.shared.targetFrameRate as f32,
+                SYSCLOCK_ARM11 as f32 / entries::get_work_frame_time(s1 as u32) as f32,
+            );
 
             let current_qos = entries::rp_delta_q_qos() as f32;
             let mcus = (if s == 0 {
@@ -2000,7 +2009,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let qd1 = (qc1.f[0].d * qd1_f
                     + (qc1.f[1].d + qc1.f[2].d * 0.5f32) * (0.5f32 * qd1_f))
                     .max(0f32);
-                let qos_c = qos_b + qd1 * frame_rate_1 * mcus1 * mcusi / frame_rate;
+                let qos_c = qos_b + qd1 * work_frame_rate_1 * mcus1 * mcusi / work_frame_rate;
 
                 let qos = qos_c - qc.m;
                 let q0 = qos * qc.f[0].m;

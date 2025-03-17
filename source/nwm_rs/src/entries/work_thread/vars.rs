@@ -411,6 +411,8 @@ impl ThreadDoVars {
 
                 syn.work_done_count.store(0, Ordering::Release);
                 syn.work_begin_flag.store(false, Ordering::Release);
+
+                self.v().release_work_done();
             }
             Some(())
         }
@@ -419,19 +421,52 @@ impl ThreadDoVars {
 
 pub struct ThreadVars(crate::entries::thread_screen::ScreenWorkVars);
 
+pub enum ThreadVarsRet {
+    First(ThreadFirstVars),
+    Rest(ThreadRestVars),
+    Skip(ThreadSkipVars),
+    None,
+}
+
 impl ThreadVars {
-    pub fn work_begin_acquire(self) -> core::result::Result<ThreadBeginVars, ThreadBeginRestVars> {
+    #[named]
+    pub fn work_begin_acquire(self) -> ThreadVarsRet {
         unsafe {
+            let w = self.0.work_index();
+            // nsDbgPrint!(int, c_str!("w"), w.get() as i32);
             if (*syn_handles)
                 .works
-                .get_mut(&self.0.work_index())
+                .get_mut(&w)
                 .work_begin_flag
                 .swap(true, Ordering::AcqRel)
                 == false
             {
-                Ok(ThreadBeginVars(self))
+                loop {
+                    if crate::entries::work_thread::reset_threads() {
+                        return ThreadVarsRet::None;
+                    }
+                    let res = svcWaitSynchronization(
+                        (*syn_handles).works.get_mut(&w).work_done,
+                        THREAD_WAIT_NS,
+                    );
+                    if res != 0 {
+                        if res != RES_TIMEOUT as s32 {
+                            nsDbgPrint!(waitForSyncFailed, c_str!("work_done"), res);
+                            entries::work_thread::set_reset_threads_ar();
+                            return ThreadVarsRet::None;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                if let Some(var) = entries::thread_screen::ScreenThreadVars::work_next() {
+                    *entries::thread_screen::screen_encode_vars.get_mut(&w) = var;
+                    ThreadVarsRet::First(ThreadFirstVars(self))
+                } else {
+                    ThreadVarsRet::Skip(ThreadSkipVars(self))
+                }
             } else {
-                Err(ThreadBeginRestVars(self))
+                ThreadVarsRet::Rest(ThreadRestVars(self))
             }
         }
     }
@@ -445,9 +480,9 @@ impl ThreadVars {
     }
 }
 
-pub struct ThreadBeginRestVars(ThreadVars);
+pub struct ThreadRestVars(ThreadVars);
 
-impl ThreadBeginRestVars {
+impl ThreadRestVars {
     #[named]
     pub fn acquire(self, t: &ThreadId) -> Option<ThreadDoVars> {
         unsafe {
@@ -472,9 +507,21 @@ impl ThreadBeginRestVars {
     }
 }
 
-pub struct ThreadBeginVars(ThreadVars);
+pub struct ThreadSkipVars(ThreadVars);
 
-impl ThreadBeginVars {
+impl ThreadSkipVars {
+    pub fn release_skip(self, t: &ThreadId) {
+        unsafe {
+            self.0 .0.release_work_begin_ready(t, true);
+
+            self.0 .0.release_skip();
+        }
+    }
+}
+
+pub struct ThreadFirstVars(ThreadVars);
+
+impl ThreadFirstVars {
     pub fn ctx(&self) -> &mut BlitCtx {
         self.0.blit_ctx()
     }
@@ -501,28 +548,9 @@ impl ThreadBeginVars {
         }
     }
 
-    #[named]
     pub fn release_and_capture_screen(self, t: &ThreadId) -> ThreadDoVars {
         unsafe {
-            let mut count = mem::MaybeUninit::uninit();
-            for j in ThreadId::up_to(&get_core_count_in_use()) {
-                if j != *t {
-                    let res = svcReleaseSemaphore(
-                        count.as_mut_ptr(),
-                        (*syn_handles).threads.get(&j).work_begin_ready,
-                        1,
-                    );
-                    if res != 0 {
-                        nsDbgPrint!(
-                            releaseSemaphoreFailed,
-                            c_str!("work_begin_ready"),
-                            self.v().work_index().get(),
-                            res
-                        );
-                    }
-                }
-            }
-
+            self.v().release_work_begin_ready(t, false);
             ThreadDoVars(self.0 .0)
         }
     }
@@ -535,7 +563,6 @@ impl ThreadBeginVars {
 pub unsafe fn work_thread_loop(t: ThreadId) -> Option<()> {
     let mut work_index = WorkIndex::init();
     loop {
-        crate::entries::thread_screen::screen_encode_acquire(&t)?;
         safe_impl::send_frame(
             &t,
             ThreadVars(crate::entries::thread_screen::ScreenWorkVars::init(

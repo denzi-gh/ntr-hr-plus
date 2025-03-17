@@ -22,7 +22,7 @@ struct rp_syn_comp_func_t {
 	rp_sem_t sem;
 	rp_lock_t mutex;
 	u16 pos_head, pos_tail;
-	u16 count;
+	u16 count, rem;
 	void **pos;
 };
 
@@ -31,5 +31,7 @@ int rp_syn_acq(struct rp_syn_comp_func_t *syn1, s64 timeout, void **pos);
 int rp_syn_rel(struct rp_syn_comp_func_t *syn1, void *pos);
 int rp_syn_acq1(struct rp_syn_comp_func_t *syn1, s64 timeout, void **pos);
 int rp_syn_rel1(struct rp_syn_comp_func_t *syn1, void *pos);
+int rp_syn_acq0(struct rp_syn_comp_func_t *syn1, s64 timeout, void **pos);
+int rp_syn_rel0(struct rp_syn_comp_func_t *syn1, void *pos);
 
 #endif

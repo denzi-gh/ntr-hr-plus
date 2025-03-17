@@ -92,11 +92,12 @@ mod first_time_init {
             return None;
         }
 
+        crate::entries::thread_screen::init_img_info()?;
         for i in ScreenIndex::all() {
             let is_top = if i.get() == 0 { true } else { false };
             for j in crate::entries::thread_screen::ImgWorkIndex::all() {
                 if let Some(m) = request_mem_from_pool_vsize(IMG_BUFFER_SIZE(is_top)) {
-                    crate::entries::thread_screen::init_img_info(is_top, &j, m)?;
+                    crate::entries::thread_screen::init_img_info_buf(is_top, &j, m);
                 } else {
                     return None;
                 }
@@ -249,6 +250,12 @@ mod loop_main {
             for i in WorkIndex::all() {
                 let work = (*syn_handles).works.get_mut(&i);
 
+                let res = svcCreateSemaphore(&mut work.work_done, 1, 1);
+                if res != 0 {
+                    nsDbgPrint!(createSemaphoreFailed, c_str!("work_done"), res);
+                    return None;
+                }
+
                 let res = svcCreateSemaphore(&mut work.nwm_done, 1, 1);
                 if res != 0 {
                     nsDbgPrint!(createSemaphoreFailed, c_str!("nwm_done"), res);
@@ -267,12 +274,6 @@ mod loop_main {
 
             for j in ThreadId::up_to(&v.core_count) {
                 let thread = (*syn_handles).threads.get_mut(&j);
-
-                let res = svcCreateSemaphore(&mut thread.work_ready, 0, WORK_COUNT as i32);
-                if res != 0 {
-                    nsDbgPrint!(createSemaphoreFailed, c_str!("work_ready"), res);
-                    return None;
-                }
 
                 let res = svcCreateSemaphore(&mut thread.work_begin_ready, 0, WORK_COUNT as i32);
                 if res != 0 {
@@ -385,7 +386,6 @@ mod loop_main {
                     let thread = (*syn_handles).threads.get_mut(&j);
 
                     let _ = svcCloseHandle(thread.work_begin_ready);
-                    let _ = svcCloseHandle(thread.work_ready);
                 }
 
                 for i in WorkIndex::all() {
@@ -393,6 +393,7 @@ mod loop_main {
 
                     let _ = svcCloseHandle(work.nwm_ready);
                     let _ = svcCloseHandle(work.nwm_done);
+                    let _ = svcCloseHandle(work.work_done);
                 }
             }
         }

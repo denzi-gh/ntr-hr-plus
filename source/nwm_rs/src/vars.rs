@@ -50,15 +50,16 @@ pub static mut home_process_handle: Handle = 0;
 pub struct PerWorkHandles {
     pub nwm_done: Handle,
     pub nwm_ready: Handle,
+    pub work_done: Handle,
     pub work_done_count: AtomicU32,
     pub work_begin_flag: AtomicBool,
+    pub work_begin_skip: AtomicBool,
 }
 
 type WorkHandles = RangedArray<PerWorkHandles, WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct PerThreadHandles {
-    pub work_ready: Handle,
     pub work_begin_ready: Handle,
 }
 

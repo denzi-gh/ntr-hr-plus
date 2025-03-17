@@ -19,6 +19,7 @@ impl Callback {
     fn new() -> Self {
         let mut names = HashSet::<String>::new();
         names.insert("rp_cb".into());
+        names.insert("rp_syn_comp_func_t".into());
 
         let mut union_names = HashSet::<String>::new();
         union_names.insert("nwm_cb".into());

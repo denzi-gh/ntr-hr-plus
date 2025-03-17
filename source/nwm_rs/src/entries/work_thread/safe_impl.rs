@@ -4,7 +4,7 @@ use super::*;
 
 pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
     let v = match vars.work_begin_acquire() {
-        Ok(v) => loop {
+        ThreadVarsRet::First(v) => loop {
             bctx_init(&v);
 
             if unsafe { entries::thread_nwm::get_reliable_stream_method() }
@@ -21,11 +21,32 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
 
             break v.release_and_capture_screen(&t);
         },
-        Err(v) => v.acquire(&t)?,
+        ThreadVarsRet::Rest(v) => v.acquire(&t)?,
+        ThreadVarsRet::Skip(v) => {
+            return if reset_threads() {
+                None
+            } else {
+                v.release_skip(&t);
+                return Some(());
+            }
+        }
+        ThreadVarsRet::None => return None,
     };
 
     if reset_threads() {
         return None;
+    }
+
+    unsafe {
+        if (*syn_handles)
+            .works
+            .get(&v.v().work_index())
+            .work_begin_skip
+            .load(Ordering::Acquire)
+        {
+            v.v().release_skip();
+            return Some(());
+        }
     }
 
     let jpeg = do_send_frame(&t, &v)?;
@@ -34,7 +55,7 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
     Some(())
 }
 
-fn ready_nwm(v: &ThreadBeginVars) -> bool {
+fn ready_nwm(v: &ThreadFirstVars) -> bool {
     unsafe {
         let w = v.v().work_index();
 
@@ -68,7 +89,7 @@ const last_row_last_n_range: u32_ = 10;
 
 #[allow(unused_macros)]
 #[named]
-fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
+fn ready_work(v: &ThreadFirstVars, t: &ThreadId) -> bool {
     unsafe {
         let ctx = v.ctx();
         if ctx.width() != GSP_SCREEN_WIDTH {
@@ -165,15 +186,14 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
     }
 }
 
-fn bctx_init(v: &ThreadBeginVars) {
+fn bctx_init(v: &ThreadFirstVars) {
     let ctx = v.ctx();
     let mut format = v.v().format();
 
     ctx.is_top = v.v().is_top();
     format &= 0xf;
     ctx.format = format;
-    entries::thread_screen::ScreenThreadVars::work_next(ctx.is_top);
-    ctx.src = entries::thread_screen::ScreenThreadVars::work_img(ctx.is_top);
+    ctx.src = v.v().src();
     ctx.frame_id = v.frame_id();
 }
 

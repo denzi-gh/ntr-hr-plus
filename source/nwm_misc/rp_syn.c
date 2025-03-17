@@ -23,6 +23,7 @@ int rp_syn_init1(struct rp_syn_comp_func_t *syn1, int init, void *base, u32 stri
 
 	syn1->pos_head = syn1->pos_tail = 0;
 	syn1->count = count;
+	syn1->rem = init ? count : 0;
 	syn1->pos = pos;
 
 	for (int i = 0; i < count; ++i) {
@@ -100,4 +101,28 @@ int rp_syn_rel1(struct rp_syn_comp_func_t *syn1, void *pos) {
 		return res;
 	}
 	return 0;
+}
+
+int rp_syn_acq0(struct rp_syn_comp_func_t *syn1, s64 timeout, void **pos) {
+	int res = rp_syn_acq1(syn1, timeout, pos);
+	if (res == 0) {
+		--syn1->rem;
+	}
+	return res;
+}
+
+int rp_syn_rel0(struct rp_syn_comp_func_t *syn1, void *pos) {
+	if (syn1->rem == syn1->count) {
+		rp_atomic_fetch_addb_wrap(&syn1->pos_tail, 1, syn1->count);
+		u16 pos_head = syn1->pos_head;
+		syn1->pos[pos_head] = pos;
+		syn1->pos_head = (pos_head + 1) % syn1->count;
+		return 0;
+	} else {
+		int res = rp_syn_rel(syn1, pos);
+		if (res == 0) {
+			++syn1->rem;
+		}
+		return res;
+	}
 }

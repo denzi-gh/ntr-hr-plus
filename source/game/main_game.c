@@ -29,30 +29,29 @@ typedef u32 (*OverlayFnTypedef)(u32 isDisplay1, u32 addr, u32 addrB, u32 width, 
 void plgSetBufferSwapHandle(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format, u32 flushAlways) {
 	s32 ret;
 
-	if (!plgHasOverlay)
-		return;
-
-	if ((addr >= 0x1f000000) && (addr < 0x1f600000)) {
-		if (!plgHasVRAMAccess) {
-			return;
-		}
-	}
-
 	u32 height = isDisplay1 ? GSP_SCREEN_HEIGHT_BOTTOM : GSP_SCREEN_HEIGHT_TOP;
 	int isDirty = flushAlways;
 
-	if (!isDirty) {
-		svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);
-		if ((isDisplay1 == 0) && (addrB) && (addrB != addr)) {
-			svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addrB, stride * height);
+	if (plgHasOverlay) {
+		if ((addr >= 0x1f000000) && (addr < 0x1f600000)) {
+			if (!plgHasVRAMAccess) {
+				return;
+			}
 		}
-	}
 
-	for (u32 i = 0; i < plgEntriesCount; ++i) {
-		if (plgEntries[i].type == CALLBACK_TYPE_OVERLAY) {
-			ret = ((OverlayFnTypedef)plgEntries[i].callback)(isDisplay1, addr, addrB, stride, format);
-			if (ret == 0) {
-				isDirty = 1;
+		if (!isDirty) {
+			svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addr, stride * height);
+			if ((isDisplay1 == 0) && (addrB) && (addrB != addr)) {
+				svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, (u32)addrB, stride * height);
+			}
+		}
+
+		for (u32 i = 0; i < plgEntriesCount; ++i) {
+			if (plgEntries[i].type == CALLBACK_TYPE_OVERLAY) {
+				ret = ((OverlayFnTypedef)plgEntries[i].callback)(isDisplay1, addr, addrB, stride, format);
+				if (ret == 0) {
+					isDirty = 1;
+				}
 			}
 		}
 	}
