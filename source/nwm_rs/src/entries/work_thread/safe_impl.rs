@@ -7,7 +7,6 @@ pub fn send_frame(t: &ThreadId, vars: ThreadVars) -> Option<()> {
         Ok(v) => loop {
             bctx_init(&v);
 
-            v.dma_sync();
             if unsafe { entries::thread_nwm::get_reliable_stream_method() }
                 == entries::thread_nwm::ReliableStreamMethod::None
                 && !ready_nwm(&v)
@@ -167,18 +166,15 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
 }
 
 fn bctx_init(v: &ThreadBeginVars) {
-    unsafe {
-        let ctx = v.ctx();
-        let mut format = v.v().format();
+    let ctx = v.ctx();
+    let mut format = v.v().format();
 
-        ctx.is_top = v.v().is_top();
-        format &= 0xf;
-        ctx.format = format;
-        ctx.src = entries::thread_screen::ScreenThreadVars::img_prev(ctx.is_top);
-        ctx.frame_id = v.frame_id();
-
-        *ctx.should_capture.as_ptr() = false;
-    }
+    ctx.is_top = v.v().is_top();
+    format &= 0xf;
+    ctx.format = format;
+    entries::thread_screen::ScreenThreadVars::work_next(ctx.is_top);
+    ctx.src = entries::thread_screen::ScreenThreadVars::work_img(ctx.is_top);
+    ctx.frame_id = v.frame_id();
 }
 
 fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegRet> {
@@ -194,17 +190,10 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
         let mcu_size = get_jpeg().shared.mcuColSize;
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
-        let i_count_half = J_MAX_HALF_FACTOR(i_count as u32_) as usize;
 
         let src = &slice::from_raw_parts(src, ctx.src_len() as usize)[j_start..(j_start + j_count)];
 
-        let mut pre_progress_count = 0;
-        let pre_progress = || {
-            if pre_progress_count >= i_count_half {
-                capture_screen(&mut ctx.should_capture, vars);
-            }
-            pre_progress_count += 1;
-        };
+        let pre_progress = || {};
 
         let progress = || {};
 
@@ -263,11 +252,5 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
             return None;
         }
         Some(jpeg)
-    }
-}
-
-fn capture_screen(should_capture: &mut AtomicBool, vars: &ThreadDoVars) {
-    if should_capture.swap(true, Ordering::Relaxed) == false {
-        vars.capture_screen();
     }
 }

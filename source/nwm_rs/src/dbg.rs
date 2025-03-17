@@ -93,6 +93,8 @@ impl nsDbgPrint_t {
 
     nsDbgPrint_fn!(createMutexFailed, "Create %s mutex failed %08x\n", name: *const c_char, ret: s32);
 
+    nsDbgPrint_fn!(createEventFailed, "Create %s event failed %08x\n", name: *const c_char, ret: s32);
+
     nsDbgPrint_fn!(createSemaphoreFailed, "Create %s semaphore failed: %08x\n", name: *const c_char, res: s32);
 
     nsDbgPrint_fn!(releaseSemaphoreFailed, "Release %s semaphore failed (%x): %08x\n", name: *const c_char, w: u32_, res: s32);

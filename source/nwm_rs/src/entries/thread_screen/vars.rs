@@ -3,10 +3,9 @@ use super::*;
 static mut priority_is_top: bool = false;
 static mut priority_factor: u32_ = 0;
 static mut priority_factor_scaled: u32_ = 0;
-static mut screens_synced: RangedArray<AtomicBool, WORK_COUNT> = const_default();
 static mut frame_counts: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut frame_queues: RangedArray<u32_, SCREEN_COUNT> = const_default();
-static mut screen_work_index: AtomicU32 = const_default();
+static mut screen_work_index: u32_ = const_default();
 static mut no_skip_frames: RangedArray<bool, SCREEN_COUNT> = const_default();
 static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut frame_times: [u32_; SCREEN_COUNT as usize] = const_default();
@@ -50,14 +49,60 @@ pub struct CapParams {
 
 pub static mut cap_params: CapParams = const_default();
 
-pub const IMG_WORK_COUNT: u32_ = 2;
+pub const IMG_WORK_COUNT: u32_ = 3;
 pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
 pub type ImgBufs = RangedArray<*mut u8_, IMG_WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct ImgInfo {
     pub bufs: ImgBufs,
-    pub index: u8_,
+    pub screen: u8_,
+    pub screen_prev: u8_,
+    pub work: u8_,
+    pub has_new: bool,
+    pub lock: Handle,
+}
+
+pub struct ImgInfoLock<'a>(&'a mut ImgInfo);
+
+impl<'a> ImgInfoLock<'a> {
+    pub unsafe fn lock(img: &'a mut ImgInfo) -> Option<Self> {
+        let _ = img.img_info_lock()?;
+        Some(Self(img))
+    }
+}
+
+impl<'a> Drop for ImgInfoLock<'a> {
+    fn drop(&mut self) {
+        unsafe { self.0.img_info_unlock() };
+    }
+}
+
+impl ImgInfo {
+    #[named]
+    unsafe fn img_info_lock(&self) -> Option<()> {
+        while !entries::work_thread::reset_threads() {
+            let res = svcWaitSynchronization(self.lock, THREAD_WAIT_NS);
+
+            if res == 0 {
+                return Some(());
+            }
+            if res != RES_TIMEOUT as s32 {
+                nsDbgPrint!(waitForSyncFailed, c_str!("img_info.lock"), res);
+                entries::work_thread::set_reset_threads_ar();
+                return None;
+            }
+        }
+        None
+    }
+
+    #[named]
+    unsafe fn img_info_unlock(&self) {
+        let res = svcReleaseMutex(self.lock);
+        if res != 0 {
+            nsDbgPrint!(releaseMutexFailed, c_str!("img_info.lock"), res);
+        }
+    }
 }
 
 pub type ImgInfos = RangedArray<ImgInfo, SCREEN_COUNT>;
@@ -93,19 +138,24 @@ pub unsafe fn reset_thread_vars(mode: u32_) {
         *frame_counts.get_mut(&i) = 1;
         *frame_queues.get_mut(&i) = priority_factor_scaled;
     }
-    screen_work_index = AtomicU32::new(WorkIndex::init().get());
-
-    for i in WorkIndex::all() {
-        *screens_synced.get_mut(&i).as_ptr() = false;
-    }
+    screen_work_index = WorkIndex::init().get();
 
     for i in 0..SCREEN_COUNT as usize {
         frame_times[i] = SYSCLOCK_ARM11;
     }
 }
 
-pub unsafe fn init_img_info(is_top: bool, j: &ImgWorkIndex, m: &mut [u8]) {
-    *img_infos.get_b_mut(is_top).bufs.get_mut(&j) = m.as_mut_ptr();
+#[named]
+pub unsafe fn init_img_info(is_top: bool, j: &ImgWorkIndex, m: &mut [u8]) -> Option<()> {
+    let info = img_infos.get_b_mut(is_top);
+    *info = const_default();
+    *info.bufs.get_mut(&j) = m.as_mut_ptr();
+    let res = svcCreateMutex(&mut info.lock, false);
+    if res != 0 {
+        nsDbgPrint!(createMutexFailed, c_str!("img_infos.lock"), res);
+        return None;
+    }
+    Some(())
 }
 
 #[allow(dead_code)]
@@ -113,7 +163,7 @@ pub unsafe fn get_img_info(is_top: bool, j: &ImgWorkIndex) -> &mut *mut u8 {
     img_infos.get_b_mut(is_top).bufs.get_mut(&j)
 }
 
-pub struct ScreenThreadVars(());
+pub struct ScreenThreadVars(pub ());
 
 impl ScreenThreadVars {
     pub fn priority_is_top(&self) -> bool {
@@ -140,30 +190,58 @@ impl ScreenThreadVars {
         unsafe { port_game_pid.load(Ordering::Relaxed) }
     }
 
-    pub fn img(is_top: bool) -> *mut u8_ {
+    pub fn screen_img(is_top: bool) -> *mut u8_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(is_top);
             *iinfo
                 .bufs
-                .get_r(&ImgWorkIndex::init_unchecked(iinfo.index as u32_))
+                .get_r(&ImgWorkIndex::init_unchecked(iinfo.screen as u32_))
         }
     }
 
-    pub fn img_prev(is_top: bool) -> *mut u8_ {
+    pub fn screen_prev_img(is_top: bool) -> *mut u8_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(is_top);
-            let mut index = ImgWorkIndex::init_unchecked(iinfo.index as u32_);
-            index.prev_wrapped();
-            *iinfo.bufs.get_r(&index)
+            *iinfo
+                .bufs
+                .get_r(&ImgWorkIndex::init_unchecked(iinfo.screen_prev as u32_))
         }
     }
 
-    pub fn img_index_next(is_top: bool) {
+    pub fn work_img(is_top: bool) -> *mut u8_ {
         unsafe {
             let iinfo = img_infos.get_b_mut(is_top);
-            let index = &mut ImgWorkIndex::init_unchecked(iinfo.index as u32_);
-            index.next_wrapped();
-            iinfo.index = index.get() as u8_;
+            *iinfo
+                .bufs
+                .get_r(&ImgWorkIndex::init_unchecked(iinfo.work as u32_))
+        }
+    }
+
+    pub fn screen_next(is_top: bool) -> bool {
+        unsafe {
+            let iinfo = img_infos.get_b_mut(is_top);
+            let ret = iinfo.has_new;
+            if let Some(mut l) = ImgInfoLock::lock(iinfo) {
+                let iinfo = &mut l.0;
+                iinfo.screen_prev = iinfo.screen;
+                iinfo.screen = (iinfo.screen + 1) % IMG_WORK_COUNT as u8_;
+                if iinfo.screen == iinfo.work {
+                    iinfo.screen = (iinfo.screen + 1) % IMG_WORK_COUNT as u8_;
+                }
+                iinfo.has_new = true;
+            };
+            !ret
+        }
+    }
+
+    pub fn work_next(is_top: bool) {
+        unsafe {
+            let iinfo = img_infos.get_b_mut(is_top);
+            if let Some(mut l) = ImgInfoLock::lock(iinfo) {
+                let iinfo = &mut l.0;
+                iinfo.work = iinfo.screen_prev;
+                iinfo.has_new = false;
+            };
         }
     }
 
@@ -175,10 +253,25 @@ impl ScreenThreadVars {
         unsafe { *last_frame_timings.get_b_mut(is_top) = timing }
     }
 
-    pub fn frame_changed(is_top: bool, format: u32_) -> bool {
+    #[named]
+    pub fn dma_sync(w: WorkIndex) {
         unsafe {
-            let curr = Self::img(is_top) as *const u8_;
-            let prev = Self::img_prev(is_top) as *const u8_;
+            let dma = *cap_params.dmas.get(&w);
+
+            let res = svcWaitSynchronization(dma, THREAD_WAIT_NS);
+            if res != 0 {
+                if res != RES_TIMEOUT as s32 {
+                    nsDbgPrint!(waitForSyncFailed, c_str!("dmas"), res);
+                    svcSleepThread(THREAD_WAIT_NS);
+                }
+            }
+        }
+    }
+
+    pub fn frame_changed(is_top: bool, format: u32_, w: WorkIndex) -> bool {
+        unsafe {
+            let curr = Self::screen_img(is_top) as *const u8_;
+            let prev = Self::screen_prev_img(is_top) as *const u8_;
             let src_len = bpp_for_format(format)
                 * GSP_SCREEN_WIDTH
                 * (if is_top {
@@ -186,6 +279,13 @@ impl ScreenThreadVars {
                 } else {
                     GSP_SCREEN_HEIGHT_BOTTOM
                 });
+
+            Self::dma_sync(w);
+            let _ = svcInvalidateProcessDataCache(
+                CUR_PROCESS_HANDLE,
+                curr as usize as u32_,
+                src_len as u32_,
+            );
 
             *slice::from_raw_parts(curr, src_len as usize)
                 != *slice::from_raw_parts(prev, src_len as usize)
@@ -205,7 +305,7 @@ impl ScreenThreadVars {
         }
     }
 
-    pub fn no_skip_frame(&self, is_top: bool, format: u32_) -> bool {
+    pub fn no_skip_frame(&self, is_top: bool, format: u32_, w: WorkIndex) -> bool {
         let timing = unsafe { svcGetSystemTick() as u32_ };
         let last_timing = Self::get_last_frame_timing(is_top);
         let timing_allowance =
@@ -220,7 +320,7 @@ impl ScreenThreadVars {
         }
         let skip_frame = !unsafe { reset_no_skip_frame(is_top) }
             && !Self::get_blit_format_changed(is_top, format)
-            && !Self::frame_changed(is_top, format);
+            && !Self::frame_changed(is_top, format, w);
 
         if !skip_frame {
             Self::set_last_frame_timing(is_top, timing);
@@ -236,7 +336,15 @@ impl ScreenThreadVars {
     }
 
     pub fn screen_work_index(&self) -> WorkIndex {
-        unsafe { WorkIndex::init_unchecked(screen_work_index.load(Ordering::Acquire)) }
+        unsafe { WorkIndex::init_unchecked(screen_work_index) }
+    }
+
+    pub fn screen_work_index_next(&self) {
+        let mut w = ScreenThreadVars(()).screen_work_index();
+        w.next_wrapped();
+        unsafe {
+            screen_work_index = w.get();
+        }
     }
 
     #[named]
@@ -283,72 +391,57 @@ impl ScreenThreadVars {
     }
 
     #[named]
-    pub fn release(self, is_top: bool, format: u32_, work_index: WorkIndex) {
+    pub fn release(&self, is_top: bool, format: u32_, work_index: WorkIndex) {
         unsafe {
-            *screen_encode_vars.get_mut(&work_index) =
-                ScreenEncodeVars::init(is_top, format, work_index);
+            *screen_encode_vars.get_mut(&work_index) = ScreenEncodeVars::init(is_top, format);
 
-            let mut count = mem::MaybeUninit::<s32>::uninit();
-            for j in ThreadId::up_to(&crate::entries::work_thread::get_core_count_in_use()) {
-                let res = svcReleaseSemaphore(
-                    count.as_mut_ptr(),
-                    (*syn_handles).threads.get(&j).work_ready,
-                    1,
-                );
-                if res != 0 {
-                    nsDbgPrint!(
-                        releaseSemaphoreFailed,
-                        c_str!("work_ready"),
-                        work_index.get(),
-                        res
+            if ScreenThreadVars::screen_next(is_top) {
+                let mut count = mem::MaybeUninit::<s32>::uninit();
+                for j in ThreadId::up_to(&crate::entries::work_thread::get_core_count_in_use()) {
+                    let res = svcReleaseSemaphore(
+                        count.as_mut_ptr(),
+                        (*syn_handles).threads.get(&j).work_ready,
+                        1,
                     );
+                    if res != 0 {
+                        nsDbgPrint!(
+                            releaseSemaphoreFailed,
+                            c_str!("work_ready"),
+                            work_index.get(),
+                            res
+                        );
+                    }
                 }
             }
+            self.screen_work_index_next();
         }
     }
 }
 
 #[derive(ConstDefault)]
 pub struct ScreenEncodeVars {
-    is_top: AtomicBool,
+    is_top: bool,
     format: u32_,
-    dma: Handle,
 }
 
 #[derive(Copy, Clone, ConstDefault)]
 pub struct ScreenWorkVars {
-    is_top: bool,
     work_index: WorkIndex,
 }
 
 impl ScreenEncodeVars {
-    pub fn init(is_top: bool, format: u32_, work_index: WorkIndex) -> Self {
-        unsafe {
-            let dma = *cap_params.dmas.get(&work_index);
-            ScreenEncodeVars {
-                is_top: AtomicBool::new(is_top),
-                format,
-                dma,
-            }
-        }
+    pub fn init(is_top: bool, format: u32_) -> Self {
+        ScreenEncodeVars { is_top, format }
     }
 }
 
 impl ScreenWorkVars {
     pub fn init(work_index: WorkIndex) -> Self {
-        unsafe {
-            Self {
-                is_top: screen_encode_vars
-                    .get(&work_index)
-                    .is_top
-                    .load(Ordering::Acquire),
-                work_index,
-            }
-        }
+        Self { work_index }
     }
 
     pub fn is_top(&self) -> bool {
-        self.is_top
+        unsafe { screen_encode_vars.get(&self.work_index).is_top }
     }
 
     pub fn format(&self) -> u32_ {
@@ -357,52 +450,6 @@ impl ScreenWorkVars {
 
     pub fn work_index(&self) -> WorkIndex {
         self.work_index
-    }
-
-    pub fn dma(&self) -> Handle {
-        unsafe { screen_encode_vars.get(&self.work_index).dma }
-    }
-
-    pub unsafe fn clear_screen_synced(&self) {
-        (*screens_synced.get_mut(&self.work_index)).store(false, Ordering::Release);
-    }
-
-    pub unsafe fn set_next_screen_work_index(&self) {
-        let mut w = ScreenThreadVars(()).screen_work_index();
-        w.next_wrapped();
-        screen_work_index.store(w.get(), Ordering::Release);
-    }
-
-    #[named]
-    pub unsafe fn release_screen_ready(&self) {
-        let mut count = mem::MaybeUninit::uninit();
-        let res = svcReleaseSemaphore(count.as_mut_ptr(), (*syn_handles).screen_ready, 1);
-        if res != 0 {
-            nsDbgPrint!(
-                releaseSemaphoreFailed,
-                c_str!("screen_ready"),
-                self.work_index.get(),
-                res
-            );
-        }
-    }
-
-    #[named]
-    pub unsafe fn release_work_done(&self) {
-        let mut count = mem::MaybeUninit::uninit();
-        let res = svcReleaseSemaphore(
-            count.as_mut_ptr(),
-            (*syn_handles).works.get(&self.work_index).work_done,
-            1,
-        );
-        if res != 0 {
-            nsDbgPrint!(
-                releaseSemaphoreFailed,
-                c_str!("work_done"),
-                self.work_index.get(),
-                res
-            );
-        }
     }
 }
 
@@ -429,66 +476,10 @@ pub unsafe fn screen_encode_acquire(t: &ThreadId) -> Option<()> {
     }
 }
 
-pub struct ScreenEncodeSync(());
-
-impl ScreenEncodeSync {
-    #[named]
-    pub fn acquire(&self) -> Option<ScreenThreadVarsSync> {
-        unsafe {
-            loop {
-                if crate::entries::work_thread::reset_threads() {
-                    return None;
-                }
-                let res = svcWaitSynchronization((*syn_handles).screen_ready, THREAD_WAIT_NS);
-                if res != 0 {
-                    if res != RES_TIMEOUT as s32 {
-                        nsDbgPrint!(waitForSyncFailed, c_str!("screen_ready"), res);
-                        svcSleepThread(THREAD_WAIT_NS);
-                    }
-                    continue;
-                }
-                return Some(ScreenThreadVarsSync(()));
-            }
-        }
-    }
-}
-
-pub struct ScreenThreadVarsSync(());
-
-impl ScreenThreadVarsSync {
-    pub fn sync(self, wait_sync: bool) -> Option<ScreenThreadVars> {
-        unsafe {
-            loop {
-                if crate::entries::work_thread::reset_threads() {
-                    return None;
-                }
-                let thread_vars = ScreenThreadVars(());
-                let w = thread_vars.screen_work_index();
-                let synced = screens_synced.get_mut(&w);
-
-                if !synced.load(Ordering::Acquire) {
-                    let res = svcWaitSynchronization(
-                        (*syn_handles).works.get_mut(&w).work_done,
-                        if wait_sync { THREAD_WAIT_NS } else { 0 },
-                    );
-                    if res != 0 {
-                        if wait_sync && res != RES_TIMEOUT as s32 {
-                            svcSleepThread(THREAD_WAIT_NS)
-                        }
-                        continue;
-                    }
-                    synced.store(true, Ordering::Release);
-                }
-                return Some(thread_vars);
-            }
-        }
-    }
-}
-
 pub extern "C" fn thread_screen(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
-        safe_impl::thread_screen_loop(ScreenEncodeSync(()));
+        safe_impl::thread_screen_loop();
         svcExitThread()
     }
 }

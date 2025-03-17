@@ -51,7 +51,6 @@ pub struct PerWorkHandles {
     pub nwm_done: Handle,
     pub nwm_ready: Handle,
     pub work_done_count: AtomicU32,
-    pub work_done: Handle,
     pub work_begin_flag: AtomicBool,
 }
 
@@ -74,11 +73,11 @@ pub struct SynHandles {
 
     pub nwm_ready: Handle,
     pub port_screen_ready: PortScreenHandles,
-    pub screen_ready: Handle,
 }
 
 pub static mut syn_handles: *mut SynHandles = ptr::null_mut();
 
+#[allow(unused)]
 pub const fn J_MAX_HALF_FACTOR(v: u32_) -> u32_ {
     v / 2
 }

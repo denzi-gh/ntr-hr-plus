@@ -269,127 +269,121 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
     true
 }
 
-pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
+pub fn thread_screen_loop() -> Option<()> {
     loop {
-        let vars_sync = sync.acquire()?;
-        let vars = vars_sync.sync(true)?;
+        let vars = ScreenThreadVars(());
+        let mut is_top = vars.priority_is_top();
+        let mut busy_wait = false;
+        while !crate::entries::work_thread::reset_threads() {
+            if vars.port_game_pid() == 0 {
+                if vars.priority_factor() != 0 {
+                    let frame_count = vars.frame_count(is_top);
 
-        loop {
-            let mut is_top = vars.priority_is_top();
-            let mut busy_wait = false;
-            while !crate::entries::work_thread::reset_threads() {
-                if vars.port_game_pid() == 0 {
-                    if vars.priority_factor() != 0 {
-                        let frame_count = vars.frame_count(is_top);
-
-                        if *frame_count >= vars.priority_factor() {
-                            *frame_count -= vars.priority_factor();
-                            is_top = !is_top;
-                        } else {
-                            *frame_count += 1;
-                        }
-                    }
-                    busy_wait = true;
-                    break;
-                }
-
-                if vars.priority_factor() == 0 {
-                    if vars.port_screen_sync(is_top, true) {
-                        break;
-                    }
-                    continue;
-                }
-
-                let get_prio_scaled = |s| -> u32_ {
-                    if s == vars.priority_is_top() {
-                        1 << SCALE_BITS
+                    if *frame_count >= vars.priority_factor() {
+                        *frame_count -= vars.priority_factor();
+                        is_top = !is_top;
                     } else {
-                        vars.priority_factor_scaled()
+                        *frame_count += 1;
                     }
-                };
-
-                let prio = [get_prio_scaled(false), get_prio_scaled(true)];
-
-                let get_factor = |b| -> u32_ {
-                    unsafe {
-                        core::intrinsics::unchecked_div(
-                            (1 << SCALE_BITS) as u64_ * *vars.frame_queue(b) as u64_,
-                            prio[b as usize] as u64_,
-                        ) as u32_
-                    }
-                };
-                let factor = [get_factor(false), get_factor(true)];
-
-                if factor[false as usize] < (1 << SCALE_BITS)
-                    && factor[true as usize] < (1 << SCALE_BITS)
-                {
-                    *vars.frame_queue(false) += vars.priority_factor_scaled();
-                    *vars.frame_queue(true) += vars.priority_factor_scaled();
                 }
-
-                is_top = if factor[is_top as usize] >= factor[!is_top as usize] {
-                    is_top
-                } else {
-                    !is_top
-                };
-
-                let s = is_top;
-                let mut try_dequeue = |b| -> bool {
-                    if *vars.frame_queue(b) >= prio[b as usize] {
-                        if vars.port_screen_sync(b, false) {
-                            is_top = b;
-                            *vars.frame_queue(b) -= prio[b as usize];
-                            return true;
-                        }
-                    }
-                    false
-                };
-
-                if try_dequeue(s) {
-                    break;
-                }
-
-                if try_dequeue(!s) {
-                    break;
-                }
-
-                if let Some(s) = vars.port_screens_sync() {
-                    is_top = s;
-                    if *vars.frame_queue(is_top) >= prio[is_top as usize] {
-                        *vars.frame_queue(is_top) -= prio[is_top as usize];
-                    } else {
-                        *vars.frame_queue(is_top) = 0;
-                    }
-                    break;
-                }
-            }
-
-            if crate::entries::work_thread::reset_threads() {
-                return None;
-            }
-
-            if busy_wait {
-                wait_for_vblank(is_top)
-            }
-            let cap_info = update_gpu_regs(is_top);
-
-            let w = vars.screen_work_index();
-            if unsafe {
-                capture_screen(
-                    is_top,
-                    &cap_info,
-                    ScreenThreadVars::img(is_top) as usize as u32_,
-                    w,
-                ) && vars.no_skip_frame(is_top, cap_info.format)
-            } {
-                unsafe {
-                    send_overlay_stats();
-                }
-
-                ScreenThreadVars::img_index_next(is_top);
-                vars.release(is_top, cap_info.format, w);
+                busy_wait = true;
                 break;
             }
+
+            if vars.priority_factor() == 0 {
+                if vars.port_screen_sync(is_top, true) {
+                    break;
+                }
+                continue;
+            }
+
+            let get_prio_scaled = |s| -> u32_ {
+                if s == vars.priority_is_top() {
+                    1 << SCALE_BITS
+                } else {
+                    vars.priority_factor_scaled()
+                }
+            };
+
+            let prio = [get_prio_scaled(false), get_prio_scaled(true)];
+
+            let get_factor = |b| -> u32_ {
+                unsafe {
+                    core::intrinsics::unchecked_div(
+                        (1 << SCALE_BITS) as u64_ * *vars.frame_queue(b) as u64_,
+                        prio[b as usize] as u64_,
+                    ) as u32_
+                }
+            };
+            let factor = [get_factor(false), get_factor(true)];
+
+            if factor[false as usize] < (1 << SCALE_BITS)
+                && factor[true as usize] < (1 << SCALE_BITS)
+            {
+                *vars.frame_queue(false) += vars.priority_factor_scaled();
+                *vars.frame_queue(true) += vars.priority_factor_scaled();
+            }
+
+            is_top = if factor[is_top as usize] >= factor[!is_top as usize] {
+                is_top
+            } else {
+                !is_top
+            };
+
+            let s = is_top;
+            let mut try_dequeue = |b| -> bool {
+                if *vars.frame_queue(b) >= prio[b as usize] {
+                    if vars.port_screen_sync(b, false) {
+                        is_top = b;
+                        *vars.frame_queue(b) -= prio[b as usize];
+                        return true;
+                    }
+                }
+                false
+            };
+
+            if try_dequeue(s) {
+                break;
+            }
+
+            if try_dequeue(!s) {
+                break;
+            }
+
+            if let Some(s) = vars.port_screens_sync() {
+                is_top = s;
+                if *vars.frame_queue(is_top) >= prio[is_top as usize] {
+                    *vars.frame_queue(is_top) -= prio[is_top as usize];
+                } else {
+                    *vars.frame_queue(is_top) = 0;
+                }
+                break;
+            }
+        }
+
+        if crate::entries::work_thread::reset_threads() {
+            return None;
+        }
+
+        if busy_wait {
+            wait_for_vblank(is_top)
+        }
+        let cap_info = update_gpu_regs(is_top);
+
+        let w = vars.screen_work_index();
+        if unsafe {
+            capture_screen(
+                is_top,
+                &cap_info,
+                ScreenThreadVars::screen_img(is_top) as usize as u32_,
+                w,
+            ) && vars.no_skip_frame(is_top, cap_info.format, w)
+        } {
+            unsafe {
+                send_overlay_stats();
+            }
+
+            vars.release(is_top, cap_info.format, w);
         }
     }
 }

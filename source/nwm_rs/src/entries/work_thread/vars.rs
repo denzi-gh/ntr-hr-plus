@@ -10,8 +10,6 @@ pub struct BlitCtx {
 
     pub i_start: RowIndexes,
     pub i_count: RowIndexes,
-
-    pub should_capture: AtomicBool,
 }
 
 impl BlitCtx {
@@ -390,14 +388,6 @@ impl ThreadDoVars {
         unsafe { blit_ctxes.get_mut(&self.0.work_index()) }
     }
 
-    pub fn capture_screen(&self) {
-        unsafe {
-            self.v().set_next_screen_work_index();
-
-            self.v().release_screen_ready();
-        }
-    }
-
     pub fn release(self, jpeg: jpeg::JpegRet) -> Option<()> {
         unsafe {
             let w = self.v().work_index();
@@ -421,8 +411,6 @@ impl ThreadDoVars {
 
                 syn.work_done_count.store(0, Ordering::Release);
                 syn.work_begin_flag.store(false, Ordering::Release);
-
-                self.v().release_work_done();
             }
             Some(())
         }
@@ -507,23 +495,6 @@ impl ThreadBeginVars {
         unsafe { *current_frame_ids.get_b_mut(self.v().is_top()) }
     }
 
-    #[named]
-    pub fn dma_sync(&self) {
-        unsafe {
-            let res = svcWaitSynchronization(self.v().dma(), THREAD_WAIT_NS);
-            if res != 0 {
-                if res != RES_TIMEOUT as s32 {
-                    nsDbgPrint!(waitForSyncFailed, c_str!("dmas"), res);
-                    svcSleepThread(THREAD_WAIT_NS);
-                }
-            }
-
-            let ctx = self.ctx();
-            let src_len = ctx.src_len();
-            let _ = svcInvalidateProcessDataCache(CUR_PROCESS_HANDLE, ctx.src as u32_, src_len);
-        }
-    }
-
     pub fn ready_next(&self) {
         unsafe {
             *current_frame_ids.get_b_mut(self.v().is_top()) += 1;
@@ -533,8 +504,6 @@ impl ThreadBeginVars {
     #[named]
     pub fn release_and_capture_screen(self, t: &ThreadId) -> ThreadDoVars {
         unsafe {
-            self.v().clear_screen_synced();
-
             let mut count = mem::MaybeUninit::uninit();
             for j in ThreadId::up_to(&get_core_count_in_use()) {
                 if j != *t {

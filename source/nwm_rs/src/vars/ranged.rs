@@ -128,6 +128,7 @@ where
         }
     }
 
+    #[allow(unused)]
     pub fn prev_wrapped(&mut self) {
         if self.0 == BEG {
             self.0 = END

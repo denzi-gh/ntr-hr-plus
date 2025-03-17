@@ -96,7 +96,7 @@ mod first_time_init {
             let is_top = if i.get() == 0 { true } else { false };
             for j in crate::entries::thread_screen::ImgWorkIndex::all() {
                 if let Some(m) = request_mem_from_pool_vsize(IMG_BUFFER_SIZE(is_top)) {
-                    crate::entries::thread_screen::init_img_info(is_top, &j, m);
+                    crate::entries::thread_screen::init_img_info(is_top, &j, m)?;
                 } else {
                     return None;
                 }
@@ -246,20 +246,8 @@ mod loop_main {
     impl InitCleanup {
         #[named]
         unsafe fn init(v: InitVars) -> Option<Self> {
-            let res = svcCreateSemaphore(&mut (*syn_handles).screen_ready, 1, 1);
-            if res != 0 {
-                nsDbgPrint!(createSemaphoreFailed, c_str!("screen_ready"), res);
-                return None;
-            }
-
             for i in WorkIndex::all() {
                 let work = (*syn_handles).works.get_mut(&i);
-
-                let res = svcCreateSemaphore(&mut work.work_done, 1, 1);
-                if res != 0 {
-                    nsDbgPrint!(createSemaphoreFailed, c_str!("work_done"), res);
-                    return None;
-                }
 
                 let res = svcCreateSemaphore(&mut work.nwm_done, 1, 1);
                 if res != 0 {
@@ -405,10 +393,7 @@ mod loop_main {
 
                     let _ = svcCloseHandle(work.nwm_ready);
                     let _ = svcCloseHandle(work.nwm_done);
-                    let _ = svcCloseHandle(work.work_done);
                 }
-
-                let _ = svcCloseHandle((*syn_handles).screen_ready);
             }
         }
     }
