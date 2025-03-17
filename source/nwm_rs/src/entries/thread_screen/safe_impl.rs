@@ -277,6 +277,7 @@ pub fn thread_screen_loop() -> Option<()> {
     for i in 0..SCREEN_COUNT as usize {
         last_frame_timings[i] = unsafe { svcGetSystemTick() as u32_ };
     }
+    let mut cap_infos: [CapInfo; SCREEN_COUNT as usize] = const_default();
 
     loop {
         let vars = ScreenThreadVars(());
@@ -387,23 +388,43 @@ pub fn thread_screen_loop() -> Option<()> {
         if busy_wait {
             wait_for_vblank(is_top)
         }
-        let cap_info = update_gpu_regs(is_top);
+        let cap_info = &mut cap_infos[is_top as usize];
+        let need_capture = !no_skip_frame || !cap_info.next;
+        if need_capture {
+            *cap_info = update_gpu_regs(is_top);
+            cap_info.next = false;
+        }
 
         let screen = ScreenThreadVars::screen_index(is_top);
-        if unsafe {
-            capture_screen(
-                is_top,
-                &cap_info,
-                ScreenThreadVars::screen_img(is_top) as usize as u32_,
-                screen,
-            ) && vars.no_skip_frame(is_top, cap_info.format, screen, no_skip_frame)
-        } {
-            unsafe {
-                send_overlay_stats();
-            }
-            last_frame_timings[is_top as usize] = timing;
+        let dst = ScreenThreadVars::screen_img(is_top) as usize as u32_;
+        let has_capture =
+            (need_capture && unsafe { capture_screen(is_top, &cap_info, dst, screen) }) || {
+                if cap_info.src != dst as *mut u8_ {
+                    let src_size = cap_info.pitch
+                        * if is_top {
+                            GSP_SCREEN_HEIGHT_TOP
+                        } else {
+                            GSP_SCREEN_HEIGHT_BOTTOM
+                        };
+                    unsafe {
+                        ptr::copy_nonoverlapping(cap_info.src, dst as *mut u8_, src_size as usize);
+                    }
+                }
+                true
+            };
+        if has_capture {
+            cap_info.src = dst as *mut u8_;
+            cap_info.pitch = bpp_for_format(cap_info.format) * GSP_SCREEN_WIDTH;
+            cap_info.next = true;
 
-            ScreenThreadVars::release(is_top, cap_info.format);
+            if vars.no_skip_frame(is_top, cap_info.format, screen, no_skip_frame) {
+                unsafe {
+                    send_overlay_stats();
+                }
+                last_frame_timings[is_top as usize] = timing;
+
+                ScreenThreadVars::release(is_top, cap_info.format);
+            }
         }
     }
 }

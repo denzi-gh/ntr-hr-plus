@@ -51,6 +51,7 @@ pub struct CapInfo {
     pub src: *mut u8_,
     pub pitch: u32_,
     pub format: u32_,
+    pub next: bool,
 }
 
 #[derive(ConstDefault)]
@@ -298,7 +299,7 @@ impl ScreenThreadVars {
                     false
                 } else if (work_frame_time_curr as f32)
                     / (work_frame_time_1_aggr.load(Ordering::Relaxed) as f32)
-                    > frame_time_ratio
+                    >= frame_time_ratio
                 {
                     true
                 } else {
@@ -311,7 +312,7 @@ impl ScreenThreadVars {
                     true
                 } else if (work_frame_time_aggr.load(Ordering::Relaxed) as f32)
                     / (work_frame_time_1_curr as f32)
-                    < frame_time_ratio
+                    <= frame_time_ratio
                 {
                     false
                 } else {
