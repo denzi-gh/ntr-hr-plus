@@ -11,6 +11,7 @@ void mainThread(void *);
 void mainPre(void);
 void mainPost(void);
 int main(void);
+extern int nfcPatched;
 
 static NTR_CONFIG *const ntrConfig = &nsConfig->ntrConfig;
 

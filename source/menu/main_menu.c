@@ -453,7 +453,7 @@ static int pluginLoaderMenu(void) {
 	return 0;
 }
 
-static int nfcPatched = 0;
+int nfcPatched = 0;
 static void rpDoNFCPatch(void) {
 	if (nfcPatched) {
 		showMsg("Already patched NFC");
@@ -498,8 +498,10 @@ static void rpDoNFCPatch(void) {
 		goto final;
 	}
 
-	nfcPatched = 1;
+	ASL(&nfcPatched, 1);
 	showMsg("NFC patch success");
+
+	rpCheckReliableStreamForNFC();
 
 final:
 	svcCloseHandle(hProcess);
