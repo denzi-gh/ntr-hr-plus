@@ -25,17 +25,18 @@ typedef struct {
 	u32 kcp_mode;
 	u32 kcp_qos;
 	struct overlay_stats_screen_t {
-		u32 comp_size;
+		s32 comp_size;
 		u32 frame_time;
 		struct {
 			struct {
-				s32 p;
-				s32 q;
 				s32 m;
+				s32 p;
+				s32 d;
 			} f[RP_DELTA_Q_COEFS_COUNT];
-			s32 s;
-			s32 q;
-			s32 n;
+			s32 qb;
+			s32 qc;
+			s32 nbits;
+			u32 qd;
 		} delta_q;
 	} s[RP_SCREEN_COUNT];
 } OVERLAY_STATS_INFO;

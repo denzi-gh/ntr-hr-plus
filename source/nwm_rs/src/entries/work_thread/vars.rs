@@ -110,7 +110,7 @@ const _arq_rp_quality_size_assert: () = {
 
 // FIXME endianness
 #[named]
-unsafe fn send_term_dsts(w: WorkIndex, jpeg: crate::jpeg::JpegRet) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, jpeg: &crate::jpeg::JpegRet) -> bool {
     if *term_dsts.get(&w).get(&ThreadId::init_unchecked(0)) == ptr::null_mut() {
         return true;
     }
@@ -435,17 +435,20 @@ impl ThreadDoVars {
             let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
             let core_count = get_core_count_in_use();
             if f == core_count.get() - 1 {
-                if !send_term_dsts(w, jpeg) {
+                if !send_term_dsts(w, &jpeg) {
                     return None;
                 }
 
                 let s = if self.v().is_top() { 0 } else { 1 };
                 if !entries::get_reliable_stream_delta_prog() {
-                    (*ov_stats).s[s].comp_size = AtomicU32::from_ptr(
+                    let comp_size = AtomicU32::from_ptr(
                         crate::entries::thread_nwm::rp_frame_compressed_size
                             .get_unchecked_mut(w.get() as usize),
                     )
-                    .load(Ordering::Relaxed);
+                    .load(Ordering::Relaxed) as f32
+                        * u8::BITS as f32
+                        / jpeg.mcus as f32;
+                    (*ov_stats).s[s].comp_size = (comp_size * 1000f32) as s32;
                 }
                 (*ov_stats).s[s].frame_time =
                     AtomicU32::from_mut(&mut frame_times[s]).load(Ordering::Relaxed);
