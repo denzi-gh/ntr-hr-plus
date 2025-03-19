@@ -228,6 +228,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
     }
 
     let (process, addr) = if is_in_vram(phys) {
+        close_game_handle();
         (home_process_handle, 0x1f000000 + (phys - 0x18000000))
     } else if is_in_fcram(phys) {
         let process = get_game_handle();
