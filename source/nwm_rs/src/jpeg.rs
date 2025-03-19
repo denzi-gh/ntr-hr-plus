@@ -36,7 +36,7 @@ struct DeltaQManager {
     // qs: f32,
     qb: f32,
     qc: f32,
-    // q: f32,
+    q: f32,
     // c: i8,
     // cc: f32,
     // cn: f32,
@@ -64,9 +64,9 @@ struct QuantizeRet {
 struct DeltaQParams {
     qf: [f32; NUM_QUANT_TBLS],
     // q_step: (f32, f32),
-    q_steps: f32,
+    // q_steps: f32,
     // q_step_i: (f32, f32),
-    // q_steps_i: f32,
+    q_steps_i: f32,
     m: f32,
 }
 
@@ -254,6 +254,7 @@ impl<'a> JpegShared<'a> {
             * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize))
             as u16;
 
+        let mut q_steps = 0f32;
         if deltaProg {
             let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
             for ci in 0..MAX_COMPONENTS {
@@ -282,18 +283,18 @@ impl<'a> JpegShared<'a> {
                 qt
             };
             let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
-            let q_steps = q_step.0 + q_step.1;
+            q_steps = q_step.0 + q_step.1;
             // let q_step_i = (1f32 / q_step.0, 1f32 / q_step.1);
-            // let q_steps_i = 1f32 / q_steps;
+            let q_steps_i = 1f32 / q_steps;
             // self.deltaQParams.q_step = q_step;
-            self.deltaQParams.q_steps = q_steps;
+            // self.deltaQParams.q_steps = q_steps;
             // self.deltaQParams.q_step_i = q_step_i;
-            // self.deltaQParams.q_steps_i = q_steps_i;
+            self.deltaQParams.q_steps_i = q_steps_i;
 
             self.deltaQParams.m = (MIN_DCT_COMP_SIZE * self.maxBlocksInMcu) as f32;
         }
 
-        (self.maxBlocksInMcu, self.deltaQParams.q_steps)
+        (self.maxBlocksInMcu, q_steps)
     }
 }
 
@@ -2002,7 +2003,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     qe.d = qe.d * r + qos_d * ri;
                 };
 
-                let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [30f32, 90f32, 270f32];
+                let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [5f32, 10f32, 30f32];
                 for i in 0..(if need_ov_stats {
                     RP_DELTA_Q_COEFS_COUNT as usize
                 } else {
@@ -2125,27 +2126,44 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             //         .max((MIN_DCT_COMP_SIZE * MIN_DCT_COMP_SIZE) as f32),
             // ); // todo
             let q = if comp_size > 0f32 && qc.nbits > 0f32 {
-                let q_steps = self.worker.shared.deltaQParams.q_steps;
+                // let q_steps = self.worker.shared.deltaQParams.q_steps;
+                let q_steps_i = self.worker.shared.deltaQParams.q_steps_i;
                 // let qf = qc.f[0].m; // todo
                 // let qf = qf.max(MIN_DCT_COMP_SIZE as f32);
                 // let qf = (qf + pm) / 2f32;
-                let qf = q_steps * 3f32; // todo
+                // let qf = q_steps * 3f32; // todo
 
-                let comp_d = qos - comp_size; // current target - prev actual
-                let qd1 = if comp_d > 0f32 {
-                    comp_d / (qf + q_steps) * 2f32 // has extra, can increase quality, i.e. decrease qd to increase q
+                // current target - prev actual
+                let comp_d = qos - comp_size;
+                // let qd1 = if comp_d > 0f32 {
+                //     comp_d / (qf + q_steps) * 2f32 // has extra, can increase quality, i.e. decrease qd to increase q
+                // } else {
+                //     comp_d / f32::min(qf, q_steps) // has owed, should decrease quality, i.e. increase qd to decrease q
+                // };
+                let qd1 = comp_d * q_steps_i;
+
+                // prev pred - curr pred
+                let nd = qc.nbits - nbits;
+                // let qd2 = if nd > 0f32 {
+                //     nd / (qf + q_steps) * 2f32 // pred less, can increase quality, i.e. decrease qd to increase q
+                // } else {
+                //     nd / f32::min(qf, q_steps) // pred more, should decrease quality, i.e. increase qd to decrease q
+                // };
+                let qd2 = nd * q_steps_i;
+
+                let qd = qd1 + qd2;
+
+                qc.q += qd;
+
+                const QD_DEC_THRES: f32 = -5f32;
+                const QD_INC_THRES: f32 = 10f32;
+
+                if qc.q < QD_DEC_THRES || qc.q > QD_INC_THRES {
+                    qc.q = 0f32;
+                    (prevDeltaQ as i32 + floorf(qd) as i32).clamp(0, qr as i32) as u8
                 } else {
-                    comp_d / f32::min(qf, q_steps) // has owed, should decrease quality, i.e. increase qd to decrease q
-                };
-
-                let nd = qc.nbits - nbits; // prev pred - curr pred
-                let qd2 = if nd > 0f32 {
-                    nd / (qf + q_steps) * 2f32 // pred less, can increase quality, i.e. decrease qd to increase q
-                } else {
-                    nd / f32::min(qf, q_steps) // pred more, should decrease quality, i.e. increase qd to decrease q
-                };
-
-                (floorf(prevDeltaQ as f32 + qd1 + qd2) as u32).clamp(0, qr as u32) as u8
+                    prevDeltaQ
+                }
             } else {
                 prevDeltaQ
             };
