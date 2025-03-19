@@ -31,8 +31,8 @@ impl ThreadVars {
     pub fn set_port_game_pid_ar(&self, v: u32_) {
         unsafe {
             crate::entries::thread_screen::set_port_game_pid(v);
-            self.config()
-                .set_game_pid_ar(if v == (*ntr_config).HomeMenuPid { 0 } else { v });
+            // self.config()
+            //     .set_game_pid_ar(if v == (*ntr_config).HomeMenuPid { 0 } else { v });
         }
     }
 
