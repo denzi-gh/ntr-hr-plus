@@ -650,11 +650,6 @@ static void rpClampParamsInMenu(RP_CONFIG *config) {
 	}
 
 	int dstFlag = config->dstPort & 0xffff0000;
-	enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
-	if (ALC(&nfcPatched) && reliableStream != ReliableStreamNone) {
-		showMsg("NFC patch is applied, Reliable Stream\nwill be disabled for compatibility.");
-		dstFlag = getFlagFromReliableStream(ReliableStreamNone);
-	}
 	config->dstPort = CLAMP(config->dstPort & 0xffff, RP_PORT_MIN, RP_PORT_MAX) | dstFlag;
 
 	if (config->threadPriority == 0) {
@@ -758,19 +753,4 @@ final:
 		setCpuClockLock(3);
 	}
 	return ret;
-}
-
-void rpCheckReliableStreamForNFC(void) {
-	if (ALC(&rpStarted)) {
-		RP_CONFIG config = *rpConfig;
-		int dstFlag = config.dstPort & 0xffff0000;
-		enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
-
-		if (reliableStream != ReliableStreamNone) {
-			showMsg("Reliable Stream will be disabled for\ncompatibility.");
-			dstFlag = getFlagFromReliableStream(ReliableStreamNone);
-		}
-		config.dstPort = (config.dstPort & 0xffff) | dstFlag;
-		rpStartupFromMenu(&config);
-	}
 }
