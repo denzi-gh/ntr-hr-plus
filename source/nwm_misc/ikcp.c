@@ -511,7 +511,7 @@ static int ikcp_input_congc(ikcpcb *kcp)
 #define avg_nack_iratio (avg_count_total / kcp->congc.avg_nack_count)
 #define avg_qos (((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16)
 
-#define qos_tick_f ((double)KCP_CONGC_TICK_F * last_count_total / avg_count_total)
+#define qos_tick_f ((float)KCP_CONGC_TICK_F * last_count_total / avg_count_total)
 #define qos_f (kcp->congc.avg_dur < SYSCLOCK_ARM11 ? qos_tick_f / SYSCLOCK_ARM11 * kcp->congc.avg_dur : qos_tick_f)
 
 		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, kcp->congc.qos);
@@ -519,8 +519,8 @@ static int ikcp_input_congc(ikcpcb *kcp)
 
 		if (kcp->congc.last_nack_count && kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
 			// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", kcp->congc.avg_ack_count >> 16, kcp->congc.avg_nack_count >> 16);
-			double qos_dec_f = pow((double)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
-			if (qos_dec_f == 0.0) {
+			float qos_dec_f = powf((float)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
+			if (qos_dec_f == 0.0f) {
 				nsDbgPrint("math library error\n");
 			}
 			// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
@@ -708,15 +708,15 @@ static int ikcp_send_cur_get_delay(ikcpcb *kcp)
 }
 
 static const enum FEC_TYPE FEC_TYPES[] = {
-	FEC_TYPE_1_3, // rsnd_lst[RSND_COUNT - 1]
-	FEC_TYPE_1_2, // ...
-	FEC_TYPE_2_3, // rsnd_lst[0]
+	FEC_TYPE_2_3, // rsnd_lst[RSND_COUNT - 1]
+	FEC_TYPE_1_1, // ...
+	FEC_TYPE_1_1, // rsnd_lst[0]
 	FEC_TYPE_1_1, // snd_lst
 };
 
 _Static_assert(sizeof(FEC_TYPES) / sizeof(*FEC_TYPES) == ARQ_QUEUE_COUNT);
 
-static const enum FEC_TYPE FEC_FALLBACK_TYPE = FEC_TYPE_1_2; // must have (original_count == 1)
+static const enum FEC_TYPE FEC_FALLBACK_TYPE = FEC_TYPE_1_1; // must have (original_count == 1)
 
 static enum FEC_TYPE fec_type_from_queue(enum ARQ_QUEUE queue) {
 	return FEC_TYPES[queue];

@@ -138,14 +138,24 @@ unsafe fn set_packet_data_size() {
 static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
 static mut current_qos: AtomicU32 = const_default();
+const KCP_CONGC_DELTA_Q_MINF: u32 = 2;
+
+fn get_delta_q_min_qos() -> u32 {
+    unsafe { max_qos / KCP_CONGC_DELTA_Q_MINF }
+}
 
 unsafe fn init_min_send_interval(qos: u32_) {
+    let delta_prog = get_reliable_stream_delta_prog();
+    let qos = if delta_prog {
+        qos.max(get_delta_q_min_qos())
+    } else {
+        qos
+    };
     (*ov_stats).kcp_qos = qos;
     current_qos.store(qos, Ordering::Relaxed);
-    let delta_prog = get_reliable_stream_delta_prog();
     let tick = core::intrinsics::unchecked_div(
         SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_,
-        if delta_prog { max_qos } else { qos } as u64_,
+        if delta_prog { (max_qos + qos) / 2 } else { qos } as u64_,
     );
     min_send_interval_tick.store(tick as u32_, Ordering::Relaxed);
     min_send_interval_ns.store(
@@ -155,7 +165,7 @@ unsafe fn init_min_send_interval(qos: u32_) {
 }
 
 pub fn rp_delta_q_qos() -> u32 {
-    unsafe { (max_qos + current_qos.load(Ordering::Relaxed)) / 2 }
+    unsafe { current_qos.load(Ordering::Relaxed) }
 }
 
 #[no_mangle]
