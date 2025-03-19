@@ -136,12 +136,12 @@ u32 copyRemoteMemory(Handle hDst, void *ptrDst, Handle hSrc, void *ptrSrc, u32 s
 	return copyRemoteMemoryTimeout(hDst, ptrDst, hSrc, ptrSrc, size, COPY_REMOTE_MEMORY_TIMEOUT);
 }
 
-void showDbgMemInfo(u32 addr) {
+void showDbgMemInfo(Handle hProcess, u32 addr) {
 	MemInfo memInfo;
 	PageInfo pageInfo;
-	s32 res = svcQueryMemory(&memInfo, &pageInfo, addr);
+	s32 res = svcQueryProcessMemory(&memInfo, &pageInfo, hProcess, addr);
 	if (res != 0) {
-		showDbg("svcQueryMemory failed for addr %08"PRIx32": %08"PRIx32, addr, res);
+		showDbg("svcQueryProcessMemory failed for addr %08"PRIx32": %08"PRIx32, addr, res);
 	} else {
 		showDbg("addr %08"PRIx32": base %08"PRIx32", size: %08"PRIx32", perm: %"PRIu32", state: %"PRIu32", page: %08"PRIx32,
 			addr, memInfo.base_addr, memInfo.size, memInfo.perm, memInfo.state, pageInfo.flags);

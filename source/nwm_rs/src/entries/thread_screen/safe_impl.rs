@@ -33,6 +33,7 @@ fn update_gpu_regs(is_top: bool) -> CapInfo {
             if full_width {
                 cap_info.pitch *= 2;
             }
+            cap_info.fill = ptr::read_volatile(LCD_TOP_FILLCOLOR as *const u32_);
         } else {
             cap_info.format = ptr::read_volatile(GPU_FB_BOTTOM_FMT as *const u32_);
             cap_info.pitch = ptr::read_volatile(GPU_FB_BOTTOM_STRIDE as *const u32_);
@@ -43,6 +44,7 @@ fn update_gpu_regs(is_top: bool) -> CapInfo {
             } else {
                 cap_info.src = ptr::read_volatile(GPU_FB_BOTTOM_ADDR_2 as *const u32_) as *mut u8_;
             }
+            cap_info.fill = ptr::read_volatile(LCD_BOTTOM_FILLCOLOR as *const u32_);
         }
         cap_info
     }
@@ -146,8 +148,6 @@ unsafe fn get_game_handle() -> Handle {
 unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkIndex) -> bool {
     let phys = cap_info.src as u32_;
 
-    let mut process = home_process_handle;
-
     let format = cap_info.format & 0xf;
 
     // Skip if handling of format unimplemented
@@ -227,44 +227,36 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
         *dma = 0;
     }
 
-    if is_in_vram(phys) {
-        close_game_handle();
-        let res = svcStartInterProcessDma(
-            dma,
-            CUR_PROCESS_HANDLE,
-            dst,
-            process,
-            0x1f000000 + (phys - 0x18000000),
-            buf_size,
-            &dma_conf,
-        );
-        if res != 0 {
-            *dma = 0;
-            svcSleepThread(THREAD_WAIT_NS);
-            return false;
-        }
+    let (process, addr) = if is_in_vram(phys) {
+        (home_process_handle, 0x1f000000 + (phys - 0x18000000))
     } else if is_in_fcram(phys) {
-        process = get_game_handle();
+        let process = get_game_handle();
         if process == 0 {
             svcSleepThread(THREAD_WAIT_NS);
             return false;
         }
-        let res = svcStartInterProcessDma(
-            dma,
-            CUR_PROCESS_HANDLE,
-            dst,
-            process,
-            cap_params.game_fcram_base + (phys - 0x20000000),
-            buf_size,
-            &dma_conf,
-        );
-        if res != 0 {
-            *dma = 0;
-            close_game_handle();
-            svcSleepThread(THREAD_WAIT_NS);
-            return false;
-        }
+        (process, cap_params.game_fcram_base + (phys - 0x20000000))
+    } else {
+        svcSleepThread(THREAD_WAIT_NS);
+        return false;
+    };
+
+    let res = svcStartInterProcessDma(
+        dma,
+        CUR_PROCESS_HANDLE,
+        dst,
+        process,
+        addr,
+        buf_size,
+        &dma_conf,
+    );
+    if res != 0 {
+        *dma = 0;
+        close_game_handle();
+        svcSleepThread(THREAD_WAIT_NS);
+        return false;
     }
+
     send_overlay_stats();
 
     true
@@ -373,6 +365,9 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
                 wait_for_vblank(is_top)
             }
             let cap_info = update_gpu_regs(is_top);
+            if cap_info.fill & (1 << 24) > 0 {
+                continue;
+            }
 
             let w = vars.screen_work_index();
             if unsafe { capture_screen(is_top, &cap_info, vars.img_dst(is_top), w) } {

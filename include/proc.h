@@ -14,6 +14,6 @@ u32 protectMemory(void *addr, u32 size, u32 perm);
 u32 copyRemoteMemoryTimeout(Handle hDst, void *ptrDst, Handle hSrc, void *ptrSrc, u32 size, s64 timeout);
 u32 copyRemoteMemory(Handle hDst, void* ptrDst, Handle hSrc, void* ptrSrc, u32 size);
 
-void showDbgMemInfo(u32 addr);
+void showDbgMemInfo(Handle hProcess, u32 addr);
 
 #endif

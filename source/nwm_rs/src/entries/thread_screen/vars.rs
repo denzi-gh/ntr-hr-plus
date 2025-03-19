@@ -16,6 +16,7 @@ type DmaHandles = RangedArray<Handle, WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct CapInfo {
+    pub fill: u32_,
     pub src: *mut u8_,
     pub pitch: u32_,
     pub format: u32_,
