@@ -400,7 +400,7 @@ unsafe fn send_overlay_stats() {
         overlay_game_pid = 0;
 
         let res = svcOpenProcess(&mut overlay_game_handle, game_pid);
-        if res != 0 {
+        if res < 0 {
             overlay_game_handle = 0;
             overlay_game_pid = 0;
             return;
