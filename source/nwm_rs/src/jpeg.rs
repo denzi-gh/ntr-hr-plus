@@ -5,12 +5,16 @@ pub mod vars;
 use vars::*;
 
 const DELTA_Q_COUNT: u8 = 32;
-const DELTA_Q_MAX: f32 = 7.0f32;
+const DELTA_Q_MAX: f32 = 7f32;
 #[allow(unused)]
 const MAX_COEF_BITS: u8 = u8::BITS as u8 + 2;
 
 const DELTA_Q_STEP: f32 = DELTA_Q_MAX / DELTA_Q_COUNT as f32;
 const MIN_DCT_COMP_SIZE: usize = 9;
+
+const Q_STEP_I_F: f32 = 1f32;
+const Q_STEP_I2_F: f32 = 4f32;
+const Q_STEP_THRES_F: f32 = 4f32;
 
 pub struct JpegRet {
     pub deltaQ: u8,
@@ -68,7 +72,7 @@ struct DeltaQParams {
     // q_step_i: (f32, f32),
     q_steps_i: f32,
     q_steps_i2: f32,
-    q_steps_i_thres: f32,
+    q_steps_thres: f32,
     m: f32,
 }
 
@@ -291,9 +295,9 @@ impl<'a> JpegShared<'a> {
             // self.deltaQParams.q_step = q_step;
             // self.deltaQParams.q_steps = q_steps;
             // self.deltaQParams.q_step_i = q_step_i;
-            self.deltaQParams.q_steps_i = q_steps_i * 0.5f32;
-            self.deltaQParams.q_steps_i2 = q_steps_i * 0.25f32;
-            self.deltaQParams.q_steps_i_thres = q_steps_i * 4.0f32;
+            self.deltaQParams.q_steps_i = q_steps_i * Q_STEP_I_F;
+            self.deltaQParams.q_steps_i2 = q_steps_i * Q_STEP_I2_F;
+            self.deltaQParams.q_steps_thres = q_steps * Q_STEP_THRES_F;
 
             self.deltaQParams.m = (MIN_DCT_COMP_SIZE * self.maxBlocksInMcu) as f32;
         }
@@ -2132,7 +2136,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             //         .p
             //         .max((MIN_DCT_COMP_SIZE * MIN_DCT_COMP_SIZE) as f32),
             // ); // todo
-            let q = if comp_size > 0f32 {
+            if comp_size > 0f32 {
                 // let q_steps = self.worker.shared.deltaQParams.q_steps;
                 // let q_steps_i = self.worker.shared.deltaQParams.q_steps_i;
                 // let qf = qc.f[0].m; // todo
@@ -2148,33 +2152,61 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 //     comp_d / f32::min(qf, q_steps) // has owed, should decrease quality, i.e. increase qd to decrease q
                 // };
                 let qd1 = comp_d * self.worker.shared.deltaQParams.q_steps_i;
+                const Q_STEP_I_DI_F: f32 = 0.75f32;
+                let qd1 = if qd1 < 0f32 { qd1 } else { qd1 * Q_STEP_I_DI_F };
 
-                let q_steps_i_thres = self.worker.shared.deltaQParams.q_steps_i_thres;
+                let q_steps_thres = self.worker.shared.deltaQParams.q_steps_thres;
                 // prev pred - curr pred
-                let nd =
-                    (qc.nbits - q_steps_i_thres).max(0f32) - (nbits - q_steps_i_thres).max(0f32);
+                let nd = (qc.nbits - q_steps_thres).max(0f32) - (nbits - q_steps_thres).max(0f32);
                 // let qd2 = if nd > 0f32 {
                 //     nd / (qf + q_steps) * 2f32 // pred less, can increase quality, i.e. decrease qd to increase q
                 // } else {
                 //     nd / f32::min(qf, q_steps) // pred more, should decrease quality, i.e. increase qd to decrease q
                 // };
                 let qd2 = nd * self.worker.shared.deltaQParams.q_steps_i2;
+                const Q_STEP_I2_DI_F: f32 = 1f32 / Q_STEP_I2_F * Q_STEP_I_DI_F;
+                let qd2 = if qd2 < 0f32 {
+                    (qd2 + Q_STEP_THRES_F * Q_STEP_I2_F).min(0f32)
+                } else {
+                    (qd2 - Q_STEP_THRES_F * Q_STEP_I2_F).max(0f32) * Q_STEP_I2_DI_F
+                };
 
-                let qd = qd1 + qd2;
-
+                let qd: f32 = qd1 + qd2;
                 qc.q += qd;
 
+                // {
+                //     nsDbgPrint!(int, c_str!("s"), s as i32);
+                //     if qd2 != 0f32 {
+                //         nsDbgPrint!(int, c_str!("qd2"), qd2 as i32);
+                //         nsDbgPrint!(int, c_str!("qd"), qd as i32);
+                //         nsDbgPrint!(int, c_str!("qc.q"), qc.q as i32);
+                //     }
+                //     if comp_d < 0f32 {
+                //         nsDbgPrint!(int, c_str!("q"), prevDeltaQ as i32);
+                //         nsDbgPrint!(int, c_str!("comp_d"), comp_d as i32);
+                //         nsDbgPrint!(int, c_str!("qc.nbits"), qc.nbits as i32);
+                //     }
+                // }
+
                 const QD_DEC_THRES: f32 = -4f32;
-                const QD_INC_THRES: f32 = 8f32;
+                const QD_INC_THRES: f32 = 6f32;
 
                 if qc.q < QD_DEC_THRES || qc.q > QD_INC_THRES {
                     qc.q = 0f32;
-                    (prevDeltaQ as i32 + floorf(qd) as i32).clamp(0, qr as i32) as u8
+                    let q = (prevDeltaQ as i32 + floorf(qd) as i32).clamp(0, qr as i32) as u8;
+
+                    qc.nbits = nbits;
+                    *deltaQ = q;
+                    qc.qd = DELTA_Q_COUNT - 1 - q;
+                } else if qc.q > 0f32 {
+                    if prevDeltaQ == qr {
+                        qc.q = 0f32;
+                    }
                 } else {
-                    prevDeltaQ
+                    if prevDeltaQ == 0 {
+                        qc.q = 0f32;
+                    }
                 }
-            } else {
-                prevDeltaQ
             };
 
             // let mut calc_size = |q: u8| {
@@ -2366,11 +2398,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             // };
             // *deltaQ = (*deltaQ + 1) % DELTA_Q_COUNT;
             // nsDbgPrint!(int, c_str!("deltaQ"), *deltaQ as i32);
-            *deltaQ = q;
             qc.qb = qos_b;
             qc.qc = qos_c;
-            qc.nbits = nbits;
-            qc.qd = DELTA_Q_COUNT - 1 - q;
             if need_ov_stats {
                 // let ov_screen = (*ov_stats).s.get_unchecked_mut(s);
                 // ov_screen.comp_size = comp_size;
@@ -2387,9 +2416,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let ov_screen = (*ov_stats).s.get_unchecked_mut(s);
                 ov_screen.comp_size = (comp_size * 1000f32) as s32;
                 let ov_screen = &mut ov_screen.delta_q;
-                ov_screen.qb = (qc.qb * 1000f32) as s32;
-                ov_screen.qc = (qc.qc * 1000f32) as s32;
-                ov_screen.nbits = (qc.nbits * 1000f32) as s32;
+                ov_screen.qb = (qos_b * 1000f32) as s32;
+                ov_screen.qc = (qos_c * 1000f32) as s32;
+                ov_screen.nbits = (nbits * 1000f32) as s32;
                 ov_screen.qd = qc.qd as u32_;
                 for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     let f = &mut ov_screen.f[i];
