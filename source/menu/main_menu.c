@@ -370,7 +370,7 @@ static void pluginLoaderCOnfigPropogateProcess(int pid) {
 
 	Handle hProcess;
 	s32 ret = svcOpenProcess(&hProcess, pid);
-	if (ret == 0) {
+	if (ret >= 0) {
 		ret = rtCheckRemoteMemory(hProcess, (u32)addr, len, 0);
 		if (ret == 0) {
 			ret = copyRemoteMemory(hProcess, addr, CUR_PROCESS_HANDLE, addr, len);
