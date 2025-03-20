@@ -60,10 +60,11 @@ void updateScreen(void) {
 	REG(GPU_FB_BOTTOM_FMT) = 0x00080300 | BOTTOM_UI_FORMAT;
 	REG(GPU_FB_BOTTOM_SIZE) = 0x014000f0;
 	REG(GPU_FB_BOTTOM_STRIDE) = BOTTOM_UI_PITCH;
+	REG(LCD_BOT_FILLCOLOR) = 0;
 }
 
 static u32 videoRef;
-static u32 gpuRegsBackup[5];
+static u32 gpuRegsBackup[6];
 static Handle hGameProcess;
 
 static void backupGpuRegs(void) {
@@ -72,6 +73,7 @@ static void backupGpuRegs(void) {
 	gpuRegsBackup[2] = REG(GPU_FB_BOTTOM_FMT);
 	gpuRegsBackup[3] = REG(GPU_FB_BOTTOM_SIZE);
 	gpuRegsBackup[4] = REG(GPU_FB_BOTTOM_STRIDE);
+	gpuRegsBackup[5] = REG(LCD_BOT_FILLCOLOR);
 }
 
 static void restoreGpuRegs(void) {
@@ -80,6 +82,7 @@ static void restoreGpuRegs(void) {
 	REG(GPU_FB_BOTTOM_FMT) = gpuRegsBackup[2];
 	REG(GPU_FB_BOTTOM_SIZE) = gpuRegsBackup[3];
 	REG(GPU_FB_BOTTOM_STRIDE) = gpuRegsBackup[4];
+	REG(LCD_BOT_FILLCOLOR) = gpuRegsBackup[5];
 }
 
 static void lockGameProcess(void) {
@@ -127,8 +130,8 @@ void acquireVideo(void) {
 		backupGpuRegs();
 		backupVRAMBuffer();
 
-		REG(LCD_TOP_FILLCOLOR) = 0;
-		REG(LCD_BOT_FILLCOLOR) = 0;
+		REG(LCD_BOT_FILLCOLOR) = 0x1ffffff;
+
 		blank();
 		updateScreen();
 	}
@@ -137,6 +140,8 @@ void acquireVideo(void) {
 void releaseVideo(void) {
 	if (ASFR(&videoRef, 1) == 0) {
 		debounceKeys();
+
+		REG(LCD_BOT_FILLCOLOR) = 0x1ffffff;
 
 		restoreVRAMBuffer();
 		restoreGpuRegs();
