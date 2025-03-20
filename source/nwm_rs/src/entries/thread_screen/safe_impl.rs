@@ -77,10 +77,7 @@ unsafe fn close_game_handle() {
 
         crate::entries::work_thread::no_skip_next_frames();
     }
-    if overlay_game_pid != 0 {
-        let _ = svcCloseHandle(overlay_game_handle);
-        overlay_game_pid = 0;
-    }
+    close_overlay_handle();
 }
 
 unsafe fn get_game_handle() -> Handle {
@@ -386,27 +383,38 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
 static mut overlay_game_pid: u32_ = 0;
 static mut overlay_game_handle: Handle = 0;
 
+unsafe fn close_overlay_handle() {
+    if overlay_game_handle != 0 {
+        let _ = svcCloseHandle(overlay_game_handle);
+        overlay_game_handle = 0;
+    }
+    overlay_game_pid = 0;
+}
+
 unsafe fn send_overlay_stats() {
     if (*ntr_config).ex.plg.overlayStats == 0 {
+        close_overlay_handle();
         return;
     }
 
-    let game_pid = AtomicU32::from_mut(&mut (*rp_config).gamePid).load(Ordering::Relaxed);
+    let game_pid = ScreenThreadVars(()).port_game_pid();
+
+    let game_pid = if game_pid == 0 {
+        AtomicU32::from_mut(&mut (*rp_config).gamePid).load(Ordering::Relaxed)
+    } else if game_pid == (*ntr_config).HomeMenuPid {
+        0
+    } else {
+        game_pid
+    };
     if overlay_game_pid != game_pid {
-        if overlay_game_handle != 0 {
-            let _ = svcCloseHandle(overlay_game_handle);
-            overlay_game_handle = 0;
-        }
-        overlay_game_pid = 0;
+        close_overlay_handle();
 
-        let res = svcOpenProcess(&mut overlay_game_handle, game_pid);
-        if res < 0 {
-            overlay_game_handle = 0;
-            overlay_game_pid = 0;
-            return;
+        if game_pid > 0 {
+            let res = svcOpenProcess(&mut overlay_game_handle, game_pid);
+            if res >= 0 {
+                overlay_game_pid = game_pid;
+            }
         }
-
-        overlay_game_pid = game_pid;
     }
 
     let process = if overlay_game_pid == 0 {

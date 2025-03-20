@@ -99,7 +99,7 @@ pub unsafe fn get_img_info(is_top: bool, j: &ImgWorkIndex) -> &mut *mut u8 {
     img_infos.get_b_mut(is_top).bufs.get_mut(&j)
 }
 
-pub struct ScreenThreadVars(());
+pub struct ScreenThreadVars(pub ());
 
 impl ScreenThreadVars {
     pub fn priority_is_top(&self) -> bool {
