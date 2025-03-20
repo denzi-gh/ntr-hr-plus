@@ -77,6 +77,10 @@ unsafe fn close_game_handle() {
 
         crate::entries::work_thread::no_skip_next_frames();
     }
+    if overlay_game_pid != 0 {
+        let _ = svcCloseHandle(overlay_game_handle);
+        overlay_game_pid = 0;
+    }
 }
 
 unsafe fn get_game_handle() -> Handle {
