@@ -12,9 +12,10 @@ const MAX_COEF_BITS: u8 = u8::BITS as u8 + 2;
 const DELTA_Q_STEP: f32 = DELTA_Q_MAX / DELTA_Q_COUNT as f32;
 const MIN_DCT_COMP_SIZE: usize = 9;
 
-const Q_STEP_I_F: f32 = 1f32;
-const Q_STEP_I2_F: f32 = 4f32;
-const Q_STEP_THRES_F: f32 = 4f32;
+const Q_STEP_I_F: f32 = 2f32;
+// const Q_STEP_I_F: f32 = core::f32::consts::E;
+const Q_STEP_I2_F: f32 = Q_STEP_I_F;
+const Q_STEP_THRES_F: f32 = Q_STEP_I2_F * Q_STEP_I2_F;
 
 pub struct JpegRet {
     pub deltaQ: u8,
@@ -71,7 +72,7 @@ struct DeltaQParams {
     // q_steps: f32,
     // q_step_i: (f32, f32),
     q_steps_i: f32,
-    q_steps_i2: f32,
+    // q_steps_i2: f32,
     q_steps_thres: f32,
     m: f32,
 }
@@ -296,7 +297,7 @@ impl<'a> JpegShared<'a> {
             // self.deltaQParams.q_steps = q_steps;
             // self.deltaQParams.q_step_i = q_step_i;
             self.deltaQParams.q_steps_i = q_steps_i * Q_STEP_I_F;
-            self.deltaQParams.q_steps_i2 = q_steps_i * Q_STEP_I2_F;
+            // self.deltaQParams.q_steps_i2 = q_steps_i * Q_STEP_I2_F;
             self.deltaQParams.q_steps_thres = q_steps * Q_STEP_THRES_F;
 
             self.deltaQParams.m = (MIN_DCT_COMP_SIZE * self.maxBlocksInMcu) as f32;
@@ -2152,7 +2153,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 //     comp_d / f32::min(qf, q_steps) // has owed, should decrease quality, i.e. increase qd to decrease q
                 // };
                 let qd1 = comp_d * self.worker.shared.deltaQParams.q_steps_i;
-                const Q_STEP_I_DI_F: f32 = 0.75f32;
+                const Q_STEP_I_DI_F: f32 = 1f32 / Q_STEP_I_F;
                 let qd1 = if qd1 < 0f32 { qd1 } else { qd1 * Q_STEP_I_DI_F };
 
                 let q_steps_thres = self.worker.shared.deltaQParams.q_steps_thres;
@@ -2163,20 +2164,20 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 // } else {
                 //     nd / f32::min(qf, q_steps) // pred more, should decrease quality, i.e. increase qd to decrease q
                 // };
-                let qd2 = nd * self.worker.shared.deltaQParams.q_steps_i2;
+                let qd2 = nd * self.worker.shared.deltaQParams.q_steps_i;
                 const Q_STEP_I2_DI_F: f32 = 1f32 / Q_STEP_I2_F * Q_STEP_I_DI_F;
                 let qd2 = if qd2 < 0f32 {
-                    (qd2 + Q_STEP_THRES_F * Q_STEP_I2_F).min(0f32)
+                    (qd2 + Q_STEP_I2_F * Q_STEP_I2_F).min(0f32)
                 } else {
-                    (qd2 - Q_STEP_THRES_F * Q_STEP_I2_F).max(0f32) * Q_STEP_I2_DI_F
+                    (qd2 - Q_STEP_I2_F * Q_STEP_I2_F).max(0f32) * Q_STEP_I2_DI_F
                 };
 
                 let qd: f32 = qd1 + qd2;
                 qc.q += qd;
 
-                // {
-                //     nsDbgPrint!(int, c_str!("s"), s as i32);
-                //     if qd2 != 0f32 {
+                // if s == 0 {
+                //     // nsDbgPrint!(int, c_str!("s"), s as i32);
+                //     if qd2 != 0f32 || qd.abs() >= 4f32 {
                 //         nsDbgPrint!(int, c_str!("qd2"), qd2 as i32);
                 //         nsDbgPrint!(int, c_str!("qd"), qd as i32);
                 //         nsDbgPrint!(int, c_str!("qc.q"), qc.q as i32);
@@ -2188,8 +2189,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 //     }
                 // }
 
-                const QD_DEC_THRES: f32 = -4f32;
-                const QD_INC_THRES: f32 = 6f32;
+                const QD_DEC_THRES: f32 = -Q_STEP_I_F * Q_STEP_THRES_F;
+                const QD_INC_THRES: f32 = Q_STEP_I_F * Q_STEP_THRES_F;
 
                 if qc.q < QD_DEC_THRES || qc.q > QD_INC_THRES {
                     qc.q = 0f32;
