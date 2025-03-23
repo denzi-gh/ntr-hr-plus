@@ -112,7 +112,6 @@ static int ikcp_output(ikcpcb *kcp, void *data, int size, u32 *tick)
 	return rp_udp_output(data, size, tick, kcp);
 }
 
-
 //---------------------------------------------------------------------
 // create a new kcpcb
 //---------------------------------------------------------------------
@@ -454,17 +453,6 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 	return 0;
 }
 
-static void ikcp_set_qos(u32 qos)
-{
-	// nsDbgPrint("setting qos: %08"PRIx32"\n", qos);
-	rp_set_qos(qos);
-}
-
-static int ikcp_input_congc(ikcpcb *kcp)
-{
-	return 0;
-}
-
 int ikcp_input(ikcpcb *kcp, char *data, int size)
 {
 	if (size < (int)sizeof(IUINT16))
@@ -543,7 +531,7 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 	for (struct IQUEUEHEAD *p = kcp->snd_wak.next, *next = p->next; p != &kcp->snd_wak; p = next, next = p->next) {
 		struct IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
 		bool should_break = seg->fid == fid && seg->gid == gid;
-		if (((fid - seg->fid) & ((1 << FID_NBITS) - 1)) < (1 << (FID_NBITS - 1)) && seg->gid_end) {
+		if (!((fid - seg->fid) & (1 << (FID_NBITS - 1))) && seg->gid_end) {
 			int ret;
 			if ((ret = ikcp_input_handle_send_wak_nack(kcp, seg, true)) < 0) {
 				return ret * 0x10 - 3;
@@ -553,7 +541,6 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 			break;
 		}
 	}
-	ikcp_input_congc(kcp);
 
 	for (int i = 0; i < RSND_COUNT; ++i) {
 		struct IQUEUEHEAD *queue = &kcp->rsnd_lsts[i];
