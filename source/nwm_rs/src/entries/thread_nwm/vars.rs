@@ -66,6 +66,7 @@ pub unsafe fn get_reliable_stream_delta_prog() -> bool {
 }
 
 static mut kcp_conv_count: u8 = 0;
+#[export_name = "rp_max_qos"]
 static mut max_qos: u32 = 0;
 
 unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
@@ -95,8 +96,6 @@ unsafe fn init_reliable_stream(flags: u32_, qos: u32_) -> Option<()> {
             if ikcp_wndsize(kcp, sndwnd, curwnd) != 0 {
                 return None;
             }
-
-            (*kcp).qos = qos;
 
             drop(nwm_lock);
 
@@ -138,25 +137,12 @@ unsafe fn set_packet_data_size() {
 static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
 static mut current_qos: AtomicU32 = const_default();
-const KCP_CONGC_DELTA_Q_MINF: u32 = 2;
-
-fn get_delta_q_min_qos() -> u32 {
-    unsafe { max_qos / KCP_CONGC_DELTA_Q_MINF }
-}
 
 unsafe fn init_min_send_interval(qos: u32_) {
-    let delta_prog = get_reliable_stream_delta_prog();
-    let qos = if delta_prog {
-        qos.max(get_delta_q_min_qos())
-    } else {
-        qos
-    };
     (*ov_stats).kcp_qos = qos;
     current_qos.store(qos, Ordering::Relaxed);
-    let tick = core::intrinsics::unchecked_div(
-        SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_,
-        if delta_prog { (max_qos + qos) / 2 } else { qos } as u64_,
-    );
+    let tick =
+        core::intrinsics::unchecked_div(SYSCLOCK_ARM11 as u64_ * PACKET_SIZE as u64_, qos as u64_);
     min_send_interval_tick.store(tick as u32_, Ordering::Relaxed);
     min_send_interval_ns.store(
         (tick as u64_ * 1_000_000_000 / SYSCLOCK_ARM11 as u64_) as u32_,
@@ -453,7 +439,12 @@ static mut rp_output_next_tick: s64 = 0;
 
 #[no_mangle]
 #[named]
-unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> s32 {
+unsafe extern "C" fn rp_udp_output(
+    buf: *mut u8,
+    len: s32,
+    tick: *mut u32_,
+    kcp: *mut ikcpcb,
+) -> s32 {
     if len > PACKET_SIZE as s32 {
         nsDbgPrint!(nwmOutputOverflow, len);
         return -3;
@@ -487,7 +478,7 @@ unsafe extern "C" fn rp_udp_output(buf: *mut u8, len: s32, kcp: *mut ikcpcb) -> 
     } else {
         min_send_interval_tick.load(Ordering::Relaxed) as s64
     };
-    (*kcp).seg_send_time = curr_tick as u32_;
+    *tick = curr_tick as u32_;
     rp_output_next_tick = curr_tick + next_interval;
 
     nwm_output(buf.sub(NWM_HDR_SIZE as usize), len as usize);

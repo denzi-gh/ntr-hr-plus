@@ -106,10 +106,10 @@ static void ikcp_segment_free(ikcpcb *kcp, IKCPSEG *seg)
 }
 
 // output segment
-static int ikcp_output(ikcpcb *kcp, void *data, int size)
+static int ikcp_output(ikcpcb *kcp, void *data, int size, u32 *tick)
 {
 	if (size == 0) return -1;
-	return rp_udp_output(data, size, kcp);
+	return rp_udp_output(data, size, tick, kcp);
 }
 
 
@@ -300,10 +300,6 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 	struct fec_counts_t counts = FEC_COUNTS[fty];
 	IUINT16 count_total = counts.original_count + counts.recovery_count;
 	IUINT16 count = count_total - 1;
-	IUINT16 ack_count = 0, nack_count = 0;
-	if (r) {
-		kcp->seg_send_time = seg->send_time;
-	}
 	while (1) {
 		struct IQUEUEHEAD *p = seg->gid > 0 ? seg->node.prev : 0;
 
@@ -325,14 +321,12 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 			rp_arq_bitset_clear(&kcp->pid_bs, seg->pid);
 #endif
 			// memcpy(&saved_segs[seg->pid], &seg->pid, sizeof(struct SavedSeg));
-			++ack_count;
 			--kcp->n_snd;
 			ikcp_segment_free(kcp, seg);
 		} else {
 			iqueue_del(&seg->node, 2);
 			seg->gid_end = false;
 			if (r) {
-				++nack_count;
 				if (seg->wrn < RSND_COUNT)
 					++seg->wrn;
 			}
@@ -358,10 +352,6 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 
 			p = p->prev;
 		}
-	}
-	if (r) {
-		kcp->seg_ack_count += ((IUINT32)ack_count << 16) * count_total / counts.original_count;
-		kcp->seg_nack_count += ((IUINT32)nack_count << 16) * count_total / counts.original_count;
 	}
 	return 0;
 }
@@ -464,16 +454,6 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 	return 0;
 }
 
-#define KCP_CONGC_COUNT_THRES (16 << 16)
-#define KCP_CONGC_COUNT_AVG (64 << 16)
-#define KCP_CONGC_DEC_THRES (12)
-#define KCP_CONGC_DEC_RATEF (12)
-#define KCP_CONGC_DEC_MINF (8)
-#define KCP_CONGC_INC_THRES (18)
-#define KCP_CONGC_INC_MAXF (2)
-#define KCP_CONGC_INC_RATEF (12)
-#define KCP_CONGC_TICK_F (8)
-
 static void ikcp_set_qos(u32 qos)
 {
 	// nsDbgPrint("setting qos: %08"PRIx32"\n", qos);
@@ -482,77 +462,6 @@ static void ikcp_set_qos(u32 qos)
 
 static int ikcp_input_congc(ikcpcb *kcp)
 {
-	if (!kcp->seg_ack_count && !kcp->seg_nack_count) {
-		return 0;
-	}
-	kcp->congc.last_ack_count += kcp->seg_ack_count;
-	kcp->congc.last_nack_count += kcp->seg_nack_count;
-	IUINT32 last_count_total = kcp->congc.last_ack_count + kcp->congc.last_nack_count;
-	if (last_count_total >= KCP_CONGC_COUNT_THRES) {
-		IUINT32 avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
-		if (avg_count_total >= KCP_CONGC_COUNT_AVG) {
-			IUINT32 avg_count_remain = avg_count_total > last_count_total ? avg_count_total - last_count_total : 0;
-			kcp->congc.avg_ack_count = (IUINT64)kcp->congc.avg_ack_count * avg_count_remain / avg_count_total;
-			kcp->congc.avg_nack_count = (IUINT64)kcp->congc.avg_nack_count * avg_count_remain / avg_count_total;
-			kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * avg_count_remain / avg_count_total;
-		}
-
-		kcp->congc.avg_ack_count += kcp->congc.last_ack_count;
-		kcp->congc.avg_nack_count += kcp->congc.last_nack_count;
-		IUINT32 last_dur = kcp->seg_send_time - kcp->congc.last_send_time;
-		kcp->congc.avg_dur += last_dur;
-
-		// IUINT64 avg_dur_ns = ((IUINT64)kcp->congc.avg_dur * (1000 * 1000 * 1000) / SYSCLOCK_ARM11);
-		// nsDbgPrint("avg dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
-
-		kcp->congc.last_send_time = kcp->seg_send_time;
-
-		avg_count_total = kcp->congc.avg_ack_count + kcp->congc.avg_nack_count;
-#define avg_nack_iratio (avg_count_total / kcp->congc.avg_nack_count)
-#define avg_qos (((IUINT64)kcp->congc.avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / kcp->congc.avg_dur) >> 16)
-
-#define qos_tick_f ((float)KCP_CONGC_TICK_F * last_count_total / avg_count_total)
-#define qos_f (kcp->congc.avg_dur < SYSCLOCK_ARM11 ? qos_tick_f / SYSCLOCK_ARM11 * kcp->congc.avg_dur : qos_tick_f)
-
-		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, kcp->congc.qos);
-		// nsDbgPrint("qos f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_f, (IUINT32)(qos_f * 1000) % 1000);
-
-		if (kcp->congc.last_nack_count && kcp->congc.avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
-			// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", kcp->congc.avg_ack_count >> 16, kcp->congc.avg_nack_count >> 16);
-			float qos_dec_f = powf((float)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
-			if (qos_dec_f == 0.0f) {
-				nsDbgPrint("math library error\n");
-			}
-			// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
-			IUINT32 qos = kcp->congc.qos * qos_dec_f;
-			kcp->congc.avg_nack_count = kcp->congc.avg_nack_count * qos_dec_f;
-			kcp->congc.avg_dur = (IUINT64)kcp->congc.avg_dur * (kcp->congc.avg_ack_count + kcp->congc.avg_nack_count) / avg_count_total;
-
-			if (qos > kcp->qos) {
-				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
-				qos = kcp->qos;
-			}
-			IUINT32 qos_min = kcp->qos / KCP_CONGC_DEC_MINF;
-			if (qos < qos_min) {
-				qos = qos_min;
-			}
-			kcp->congc.qos = qos;
-			ikcp_set_qos(qos);
-		} else if (kcp->congc.avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos_thres = _imax_(avg_qos * KCP_CONGC_INC_MAXF, avg_qos + kcp->qos / KCP_CONGC_DEC_MINF * KCP_CONGC_INC_MAXF);
-			IUINT32 qos = kcp->congc.qos + (IUINT32)(qos_f / KCP_CONGC_INC_RATEF * kcp->qos);
-			if (qos > qos_thres) {
-				qos = qos_thres;
-			}
-			if (qos > kcp->qos) {
-				qos = kcp->qos;
-			}
-			kcp->congc.qos = qos;
-			ikcp_set_qos(qos);
-		}
-
-		kcp->congc.last_ack_count = kcp->congc.last_nack_count = 0;
-	}
 	return 0;
 }
 
@@ -631,7 +540,6 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 		--size;
 	}
 
-	kcp->seg_ack_count = kcp->seg_nack_count = 0;
 	for (struct IQUEUEHEAD *p = kcp->snd_wak.next, *next = p->next; p != &kcp->snd_wak; p = next, next = p->next) {
 		struct IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
 		bool should_break = seg->fid == fid && seg->gid == gid;
@@ -1042,14 +950,7 @@ static int ikcp_send_cur(ikcpcb *kcp)
 	ikcp_encode_fec_hdr(seg);
 
 	const int len = PACKET_SIZE;
-	int ret = ikcp_output(kcp, ikcp_get_packet_data_buf(seg->data_buf), len);
-	seg->send_time = kcp->seg_send_time;
-	if (!kcp->session_congc_inited) {
-		kcp->session_congc_inited = true;
-		kcp->congc.last_send_time = seg->send_time;
-		kcp->congc.qos = kcp->qos;
-	}
-
+	int ret = ikcp_output(kcp, ikcp_get_packet_data_buf(seg->data_buf), len, &seg->send_time);
 	if (ret == 0) {
 		return 1;
 	}
@@ -1113,7 +1014,7 @@ int ikcp_send_next(ikcpcb *kcp)
 		const int len = sizeof(IUINT16);
 		while (1) {
 			__atomic_store_n(&kcp->rp_output_retry, false, __ATOMIC_RELEASE);
-			int ret = ikcp_output(kcp, ikcp_get_packet_data_buf(seg->data_buf), len);
+			int ret = ikcp_output(kcp, ikcp_get_packet_data_buf(seg->data_buf), len, &seg->send_time);
 			if (ret == 0) {
 				continue;
 			}
