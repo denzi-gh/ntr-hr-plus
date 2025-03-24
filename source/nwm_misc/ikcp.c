@@ -299,6 +299,10 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 	struct fec_counts_t counts = FEC_COUNTS[fty];
 	IUINT16 count_total = counts.original_count + counts.recovery_count;
 	IUINT16 count = count_total - 1;
+	IUINT16 ack_count = 0, nack_count = 0;
+	if (r) {
+		kcp->congc.curr_send_time = seg->send_time;
+	}
 	while (1) {
 		struct IQUEUEHEAD *p = seg->gid > 0 ? seg->node.prev : 0;
 
@@ -320,12 +324,14 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 			rp_arq_bitset_clear(&kcp->pid_bs, seg->pid);
 #endif
 			// memcpy(&saved_segs[seg->pid], &seg->pid, sizeof(struct SavedSeg));
+			++ack_count;
 			--kcp->n_snd;
 			ikcp_segment_free(kcp, seg);
 		} else {
 			iqueue_del(&seg->node, 2);
 			seg->gid_end = false;
 			if (r) {
+				++nack_count;
 				if (seg->wrn < RSND_COUNT)
 					++seg->wrn;
 			}
@@ -351,6 +357,10 @@ static int ikcp_input_handle_send_wak_nack(ikcpcb *kcp, struct IKCPSEG *seg, int
 
 			p = p->prev;
 		}
+	}
+	if (r) {
+		kcp->congc.curr_ack_count += ((IUINT32)ack_count << 16) * count_total / counts.original_count;
+		kcp->congc.curr_nack_count += ((IUINT32)nack_count << 16) * count_total / counts.original_count;
 	}
 	return 0;
 }
@@ -453,6 +463,92 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 	return 0;
 }
 
+#define KCP_CONGC_COUNT_THRES (16 << 16)
+#define KCP_CONGC_COUNT_AVG (48 << 16)
+#define KCP_CONGC_DEC_THRES (12)
+#define KCP_CONGC_DEC_RATEF (12)
+#define KCP_CONGC_DEC_MINF (8)
+#define KCP_CONGC_INC_THRES (18)
+#define KCP_CONGC_INC_MAXF (2)
+#define KCP_CONGC_INC_RATEF (12)
+#define KCP_CONGC_TICK_F (4)
+
+static int ikcp_input_congc(ikcpcc *congc)
+{
+	if (!congc->curr_ack_count && !congc->curr_nack_count) {
+		return 0;
+	}
+	IUINT32 qos_max = rp_max_qos;
+	congc->last_ack_count += congc->curr_ack_count;
+	congc->last_nack_count += congc->curr_nack_count;
+	IUINT32 last_count_total = congc->last_ack_count + congc->last_nack_count;
+	if (last_count_total >= KCP_CONGC_COUNT_THRES) {
+		IUINT32 avg_count_total = congc->avg_ack_count + congc->avg_nack_count;
+		if (avg_count_total >= KCP_CONGC_COUNT_AVG) {
+			IUINT32 avg_count_remain = avg_count_total > last_count_total ? avg_count_total - last_count_total : 0;
+			congc->avg_ack_count = (IUINT64)congc->avg_ack_count * avg_count_remain / avg_count_total;
+			congc->avg_nack_count = (IUINT64)congc->avg_nack_count * avg_count_remain / avg_count_total;
+			congc->avg_dur = (IUINT64)congc->avg_dur * avg_count_remain / avg_count_total;
+		}
+
+		congc->avg_ack_count += congc->last_ack_count;
+		congc->avg_nack_count += congc->last_nack_count;
+		IUINT32 last_dur = congc->curr_send_time - congc->last_send_time;
+		congc->avg_dur += last_dur;
+
+		// IUINT64 avg_dur_ns = ((IUINT64)congc->avg_dur * (1000 * 1000 * 1000) / SYSCLOCK_ARM11);
+		// nsDbgPrint("avg dur %"PRIu32".%09"PRIu32" ms\n", (IUINT32)(avg_dur_ns / (1000 * 1000)), (IUINT32)(avg_dur_ns % (1000 * 1000)));
+
+		congc->last_send_time = congc->curr_send_time;
+
+		avg_count_total = congc->avg_ack_count + congc->avg_nack_count;
+#define avg_nack_iratio (avg_count_total / congc->avg_nack_count)
+#define avg_qos (((IUINT64)congc->avg_ack_count * PACKET_SIZE * SYSCLOCK_ARM11 / congc->avg_dur) >> 16)
+
+#define qos_tick_f ((float)KCP_CONGC_TICK_F * last_count_total / avg_count_total)
+#define qos_f (congc->avg_dur < SYSCLOCK_ARM11 ? qos_tick_f / SYSCLOCK_ARM11 * congc->avg_dur : qos_tick_f)
+
+		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, rp_current_qos);
+		// nsDbgPrint("qos f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_f, (IUINT32)(qos_f * 1000) % 1000);
+
+		if (congc->last_nack_count && congc->avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
+			// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", congc->avg_ack_count >> 16, congc->avg_nack_count >> 16);
+			float qos_dec_f = powf((float)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
+			if (qos_dec_f == 0.0f) {
+				nsDbgPrint("math library error\n");
+			}
+			// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
+			IUINT32 qos = rp_current_qos * qos_dec_f;
+			congc->avg_nack_count = congc->avg_nack_count * qos_dec_f;
+			congc->avg_dur = (IUINT64)congc->avg_dur * (congc->avg_ack_count + congc->avg_nack_count) / avg_count_total;
+
+			if (qos > qos_max) {
+				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
+				qos = qos_max;
+			}
+			IUINT32 qos_min = qos_max / KCP_CONGC_DEC_MINF;
+			if (qos < qos_min) {
+				qos = qos_min;
+			}
+			rp_set_qos(qos);
+		} else if (congc->avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
+			IUINT32 qos_avg = avg_qos;
+			IUINT32 qos_thres = qos_avg + MAX(qos_avg,  qos_max / (KCP_CONGC_DEC_MINF / KCP_CONGC_INC_MAXF));
+			IUINT32 qos = rp_current_qos + (IUINT32)(qos_f / KCP_CONGC_INC_RATEF * qos_max);
+			if (qos > qos_thres) {
+				qos = qos_thres;
+			}
+			if (qos > qos_max) {
+				qos = qos_max;
+			}
+			rp_set_qos(qos);
+		}
+
+		congc->last_ack_count = congc->last_nack_count = 0;
+	}
+	return 0;
+}
+
 int ikcp_input(ikcpcb *kcp, char *data, int size)
 {
 	if (size < (int)sizeof(IUINT16))
@@ -481,6 +577,7 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 			if (!kcp->session_established) {
 				kcp->session_established = true;
 				nsDbgPrint("kcp session_established");
+				kcp->congc.last_send_time = svcGetSystemTick();
 			}
 			return 0;
 		} else {
@@ -528,6 +625,7 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 		--size;
 	}
 
+	kcp->congc.curr_ack_count = kcp->congc.curr_nack_count = 0;
 	for (struct IQUEUEHEAD *p = kcp->snd_wak.next, *next = p->next; p != &kcp->snd_wak; p = next, next = p->next) {
 		struct IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
 		bool should_break = seg->fid == fid && seg->gid == gid;
@@ -541,6 +639,7 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 			break;
 		}
 	}
+	ikcp_input_congc(&kcp->congc);
 
 	for (int i = 0; i < RSND_COUNT; ++i) {
 		struct IQUEUEHEAD *queue = &kcp->rsnd_lsts[i];
@@ -550,7 +649,7 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 		}
 	}
 
-	if (1) for (struct IQUEUEHEAD *p_0 = kcp->snd_cur.next, *p = p_0, *next = p->next; p != &kcp->snd_cur; p = next, next = p->next) {
+	for (struct IQUEUEHEAD *p_0 = kcp->snd_cur.next, *p = p_0, *next = p->next; p != &kcp->snd_cur; p = next, next = p->next) {
 		struct IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
 		if (seg->wrn && seg->gid == 0 && !ikcp_input_check_nack(seg->pid, kcp)) {
 			int ret = ikcp_input_handle_send_cur_nack(kcp, seg, &next);

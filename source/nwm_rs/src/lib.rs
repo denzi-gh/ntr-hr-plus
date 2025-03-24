@@ -21,6 +21,7 @@
 #![feature(array_ptr_get)]
 #![feature(generic_arg_infer)]
 #![feature(get_many_mut)]
+#![feature(more_float_constants)]
 #![allow(static_mut_refs)]
 
 use crate::dbg::*;

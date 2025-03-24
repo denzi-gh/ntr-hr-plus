@@ -136,6 +136,7 @@ unsafe fn set_packet_data_size() {
 
 static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
+#[export_name = "rp_current_qos"]
 static mut current_qos: AtomicU32 = const_default();
 
 unsafe fn init_min_send_interval(qos: u32_) {

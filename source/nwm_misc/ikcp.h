@@ -14,7 +14,6 @@
 
 #include <stddef.h>
 
-
 //=====================================================================
 // 32BIT INTEGER DEFINITION
 //=====================================================================
@@ -337,6 +336,15 @@ const unsigned SEND_CUR_BUFS_COUNT = ARQ_CUR_COUNT_MAX_2;
 //---------------------------------------------------------------------
 // IKCPCB
 //---------------------------------------------------------------------
+struct IKCPCC {
+	IUINT32 curr_send_time;
+	IUINT32 last_send_time;
+	IUINT32 curr_ack_count, curr_nack_count; // FIX16 format
+	IUINT32 last_ack_count, last_nack_count; // FIX16 format
+	IUINT32 avg_ack_count, avg_nack_count; // FIX16 format
+	IUINT32 avg_dur; // ticks
+};
+
 struct IKCPCB
 {
 	IUINT16 cid; // conversation id
@@ -352,6 +360,8 @@ struct IKCPCB
 	struct IQUEUEHEAD snd_cur;
 	struct IQUEUEHEAD snd_wak;
 
+	struct IKCPCC congc;
+
 	char seg_mem[ARQ_SEG_MEM_COUNT][ARQ_SEG_SIZE] ALIGNED(sizeof(void *));
 	mp_pool_t seg_pool;
 
@@ -365,12 +375,12 @@ struct IKCPCB
 	u16 n_nacks;
 
 	bool session_established;
-	bool session_congc_inited;
 	bool session_new_data_received;
 	bool rp_output_retry;
 };
 
 typedef struct IKCPCB ikcpcb;
+typedef struct IKCPCC ikcpcc;
 
 #ifdef __cplusplus
 extern "C" {
@@ -385,6 +395,7 @@ extern int rp_udp_output(char *buf, int len, u32 *tick, ikcpcb *kcp);
 extern void rp_term_notify(void);
 extern void rp_set_qos(u32 qos);
 extern u32 rp_max_qos;
+extern u32 rp_current_qos;
 
 //---------------------------------------------------------------------
 // interface
