@@ -79,7 +79,8 @@ pub unsafe fn reset_thread_vars(mode: u32_) {
     for i in ScreenIndex::all() {
         *frame_counts.get_mut(&i) = 1;
         *frame_queues.get_mut(&i) = priority_factor_scaled;
-
+    }
+    for i in WorkIndex::all() {
         *skip_frames.get_mut(&i) = false;
     }
     screen_work_index = AtomicU32::new(WorkIndex::init().get());

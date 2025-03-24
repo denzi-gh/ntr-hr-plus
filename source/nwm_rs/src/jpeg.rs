@@ -346,7 +346,7 @@ pub union WorkderDstUser {
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
     pub s: ScreenIndex,
-    pub w: ScreenIndex,
+    pub w: WorkIndex,
     pub dst: *mut u8,
     pub free_in_bytes: u16,
     pub user: WorkderDstUser,
