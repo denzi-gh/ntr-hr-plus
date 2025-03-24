@@ -649,8 +649,11 @@ impl ThreadBeginVars {
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
             loop {
                 let cur = ft.load(Ordering::Relaxed);
-                let new = (cur.min(frame_time * 2) * (frame_time_factor - 1) + frame_time)
-                    / frame_time_factor;
+                let new = if cur / 2 > frame_time || frame_time / 2 > cur {
+                    frame_time
+                } else {
+                    (cur * (frame_time_factor - 1) + frame_time) / frame_time_factor
+                };
                 if let Ok(_) = ft.compare_exchange(cur, new, Ordering::Relaxed, Ordering::Relaxed) {
                     break;
                 }
