@@ -648,8 +648,9 @@ impl ThreadBeginVars {
 
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
             loop {
+                const FT_MAX_F: u32 = 4;
                 let cur = ft.load(Ordering::Relaxed);
-                let new = if cur / 2 > frame_time || frame_time / 2 > cur {
+                let new = if cur / FT_MAX_F > frame_time || frame_time / FT_MAX_F > cur {
                     frame_time
                 } else {
                     (cur * (frame_time_factor - 1) + frame_time) / frame_time_factor
