@@ -467,7 +467,7 @@ static int ikcp_input_handle_nack(ikcpcb *kcp, struct IQUEUEHEAD *queue, int g, 
 #define KCP_CONGC_COUNT_AVG (48 << 16)
 #define KCP_CONGC_DEC_THRES (12)
 #define KCP_CONGC_DEC_RATEF (12)
-#define KCP_CONGC_DEC_MINF (8)
+#define KCP_CONGC_DEC_MINF (4)
 #define KCP_CONGC_INC_THRES (18)
 #define KCP_CONGC_INC_MAXF (2)
 #define KCP_CONGC_INC_RATEF (12)
@@ -541,7 +541,9 @@ static int ikcp_input_congc(ikcpcc *congc)
 			if (qos > qos_max) {
 				qos = qos_max;
 			}
-			rp_set_qos(qos);
+			if (qos > rp_current_qos) {
+				rp_set_qos(qos);
+			}
 		}
 
 		congc->last_ack_count = congc->last_nack_count = 0;
