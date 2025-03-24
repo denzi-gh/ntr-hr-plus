@@ -435,6 +435,8 @@ impl ThreadDoVars {
             let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
             let core_count = get_core_count_in_use();
             if f == core_count.get() - 1 {
+                entries::thread_screen::reset_no_skip_frame(self.v().is_top());
+
                 if !send_term_dsts(w, &jpeg) {
                     return None;
                 }
@@ -641,24 +643,15 @@ impl ThreadBeginVars {
     #[named]
     pub fn release_and_capture_screen(self, t: &ThreadId, frame_time: u32) -> ThreadDoVars {
         unsafe {
-            let skip_frame = self.v().set_skip_frame(false);
+            self.v().set_skip_frame(false);
             self.v().clear_screen_synced();
 
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
             loop {
                 let cur = ft.load(Ordering::Relaxed);
-                if let Ok(_) = ft.compare_exchange(
-                    cur,
-                    (cur * (frame_time_factor - 1)
-                        + (if skip_frame {
-                            u32::min(frame_time, SYSCLOCK_ARM11 / 2)
-                        } else {
-                            u32::min(frame_time, SYSCLOCK_ARM11 / 30)
-                        }))
-                        / frame_time_factor,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
+                let new = (cur.min(frame_time * 2) * (frame_time_factor - 1) + frame_time)
+                    / frame_time_factor;
+                if let Ok(_) = ft.compare_exchange(cur, new, Ordering::Relaxed, Ordering::Relaxed) {
                     break;
                 }
             }

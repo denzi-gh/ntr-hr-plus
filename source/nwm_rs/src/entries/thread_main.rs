@@ -423,9 +423,6 @@ mod loop_main {
         let core_count = core_count();
         config.set_core_count_ar(core_count.get());
 
-        let mode = config.mode_ar();
-        crate::entries::thread_screen::reset_thread_vars(mode);
-
         let dst_port = config.dst_port_ar();
         let dst_flags = dst_port & 0xffff0000;
         let dst_port = dst_port & 0xffff;
@@ -434,6 +431,10 @@ mod loop_main {
         }
 
         let qos = config.qos_ar();
+        crate::entries::thread_nwm::reset_vars(dst_flags, qos)?;
+
+        let mode = config.mode_ar();
+        crate::entries::thread_screen::reset_thread_vars(mode);
 
         let thread_prio = config.thread_prio_ar();
         let res = svcSetThreadPriority(thread_main_handle, thread_prio as i32);
@@ -482,7 +483,6 @@ mod loop_main {
             return None;
         }
 
-        crate::entries::thread_nwm::reset_vars(dst_flags, qos)?;
         let jpeg = crate::entries::work_thread::get_jpeg();
         let quality = config.quality_ar();
         let chroma_ss = config.chroma_ss_ar();

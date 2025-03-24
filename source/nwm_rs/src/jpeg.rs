@@ -95,7 +95,6 @@ pub struct JpegShared<'a> {
     // deltaQMs: [[(u16, u16); NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub workSem: [Handle; WORK_COUNT as usize],
     pub screenSem: [Handle; SCREEN_COUNT as usize],
-    targetFrameRate: u8,
     deltaQParams: DeltaQParams,
 }
 
@@ -520,7 +519,6 @@ impl<'b> Jpeg<'b> {
 
         self.shared_mut.deltaQCalc = const_default();
         self.shared.coreCount = coreCount;
-        self.shared.targetFrameRate = 60;
         self.shared.chromaSS = hq as u8;
         let (_maxBlocksInMcu, q_steps) = self.shared.setCompInfos(hq, deltaProg);
         if deltaProg {
@@ -1918,17 +1916,25 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 blkn_start += core::intrinsics::unchecked_shl(1, MCU_we + MCU_he);
             }
 
+            const TARGET_FRAME_RATE: u32 = 60;
+            const TARGET_FRAME_RATE_MIN: u32 = 30;
             let s1 = if s == 0 { 1 } else { 0 };
             let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
-                .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
+                .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
             let frame_time_1 = entries::get_frame_time(ScreenIndex::init_unchecked(s1 as u32))
-                .max(SYSCLOCK_ARM11 / self.worker.shared.targetFrameRate as u32);
+                .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
             let frame_rate = f32::min(
-                self.worker.shared.targetFrameRate as f32,
+                TARGET_FRAME_RATE as f32,
                 SYSCLOCK_ARM11 as f32 / frame_time as f32,
             );
+            let frame_rate =
+                frame_rate.max(if entries::get_no_skip_frame(self.worker.info.isTop) {
+                    entries::FRAME_TIMING_FACTOR_DQ as f32
+                } else {
+                    TARGET_FRAME_RATE_MIN as f32
+                });
             let frame_rate_1 = f32::min(
-                self.worker.shared.targetFrameRate as f32,
+                TARGET_FRAME_RATE as f32,
                 SYSCLOCK_ARM11 as f32 / frame_time_1 as f32,
             );
             let frame_rate_f = 1f32 / (frame_rate + frame_rate_1);

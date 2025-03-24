@@ -272,6 +272,7 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
         loop {
             let mut is_top = vars.priority_is_top();
             let mut busy_wait = false;
+            let last_timing = unsafe { svcGetSystemTick() } as u32;
             while !crate::entries::work_thread::reset_threads() {
                 if vars.port_game_pid() == 0 {
                     if vars.priority_factor() != 0 {
@@ -286,6 +287,14 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
                     }
                     busy_wait = true;
                     break;
+                }
+
+                unsafe {
+                    if svcGetSystemTick() as u32 - last_timing >= frame_timing_allowance {
+                        busy_wait = true;
+                        set_no_skip_frame(is_top);
+                        break;
+                    }
                 }
 
                 if vars.priority_factor() == 0 {

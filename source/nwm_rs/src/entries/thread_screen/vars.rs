@@ -50,10 +50,12 @@ pub struct ImgInfo {
 pub type ImgInfos = RangedArray<ImgInfo, SCREEN_COUNT>;
 static mut img_infos: ImgInfos = const_default();
 
-pub unsafe fn reset_no_skip_frame(is_top: bool) -> bool {
-    let b = *no_skip_frames.get_b(is_top);
+pub unsafe fn reset_no_skip_frame(is_top: bool) {
     *no_skip_frames.get_b_mut(is_top) = false;
-    b
+}
+
+pub unsafe fn get_no_skip_frame(is_top: bool) -> bool {
+    *no_skip_frames.get_b(is_top)
 }
 
 pub unsafe fn set_no_skip_frame(is_top: bool) {
@@ -67,6 +69,9 @@ pub unsafe fn set_port_game_pid(v: u32_) {
 pub unsafe fn get_port_game_pid() -> u32_ {
     *port_game_pid.as_ptr()
 }
+
+pub const FRAME_TIMING_FACTOR_DQ: u32 = 2;
+pub static mut frame_timing_allowance: u32 = const_default();
 
 pub unsafe fn reset_thread_vars(mode: u32_) {
     let is_top = (mode & 0xff00) > 0;
@@ -89,6 +94,13 @@ pub unsafe fn reset_thread_vars(mode: u32_) {
     for i in WorkIndex::all() {
         *screens_synced.get_mut(&i).as_ptr() = false;
     }
+
+    frame_timing_allowance =
+        if unsafe { crate::entries::thread_nwm::get_reliable_stream_delta_prog() } {
+            SYSCLOCK_ARM11 / FRAME_TIMING_FACTOR_DQ
+        } else {
+            SYSCLOCK_ARM11
+        };
 }
 
 pub unsafe fn init_img_info(is_top: bool, j: &ImgWorkIndex, m: &mut [u8]) {
@@ -319,11 +331,8 @@ impl ScreenWorkVars {
         iinfo.index.store(index.get(), Ordering::Release);
     }
 
-    pub unsafe fn set_skip_frame(&self, skip_frame: bool) -> bool {
-        let s = skip_frames.get_mut(&self.work_index);
-        let ret = *s;
-        *s = skip_frame;
-        ret
+    pub unsafe fn set_skip_frame(&self, skip_frame: bool) {
+        *skip_frames.get_mut(&self.work_index) = skip_frame;
     }
 
     pub unsafe fn clear_screen_synced(&self) {
