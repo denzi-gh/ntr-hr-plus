@@ -98,7 +98,7 @@ pub struct JpegShared<'a> {
     deltaQParams: DeltaQParams,
 }
 
-const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [4, 2, 2];
+const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [10, 5, 5];
 const DELTA_Q_CACHE_MAX: u8 = {
     let mut max = 0;
     let mut i = 0;
@@ -2043,12 +2043,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 let qd1 = comp_d * q_steps_i;
                 let nd = qc.nbits - nbits;
                 let qd2 = nd * q_steps_i;
-                const QD2_THRES: f32 = 8f32;
-                let qd2 = if qd2 < 0f32 {
+                const QD2_THRES: f32 = 4f32;
+                const QD2_MUL: f32 = 4f32 / 3f32;
+                let qd2 = (if qd2 < 0f32 {
                     (qd2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
                 } else {
                     (qd2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
-                };
+                }) * QD2_MUL;
 
                 let scale_qd = |qd: f32, np: f32, pp: f32, ns: f32, ps: f32| {
                     if qd < 0f32 {
@@ -2059,7 +2060,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 };
 
                 let qd1: f32 = scale_qd(qd1, 1.25f32, 1.25f32, 1f32, 1f32);
-                let qd2 = scale_qd(qd2, 4f32 / 3f32, 4f32 / 3f32, 6f32, 6f32);
+                let qd2 = scale_qd(qd2, 4f32 / 3f32, 4f32 / 3f32, 4f32, 4f32);
 
                 let qd = qd1 + qd2;
                 qc.q = qc.q * 0.75f32 + qd * (1f32 / 3f32);
