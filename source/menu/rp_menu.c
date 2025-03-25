@@ -750,7 +750,8 @@ final:
 		showDbg("Starting remote play failed: %08"PRIx32". Retry maybe...", ret);
 		ACR(&rpStarted);
 	} else {
-		setCpuClockLock(3);
+		nsDbgPrint("Locking CPU clock to 804 MHz and L2 cache to enabled...\n");
+		setCpuClockLock(3, 1);
 	}
 	return ret;
 }

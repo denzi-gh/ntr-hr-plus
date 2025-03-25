@@ -20,16 +20,21 @@ enum {
 
 static u32 NTRMenuHotkey = MENU_HOTKEY_DEFAULT;
 static int cpuClockLockValue = -1;
+static int cpuClockLocked;
 
 static void lockCpuClock(void) {
 	if (cpuClockLockValue < 0) {
 		return;
 	}
 	svcKernelSetState(10, cpuClockLockValue);
+	if (!cpuClockLocked) {
+		cpuClockLockValue = -1;
+	}
 }
 
-void setCpuClockLock(int v) {
+void setCpuClockLock(int v, int lock) {
 	cpuClockLockValue = v;
+	cpuClockLocked = lock;
 }
 
 typedef u32 (*FSReadTypeDef)(u32 a1, u32 a2, u32 a3, u32 a4, u32 buffer, u32 size);
@@ -477,7 +482,7 @@ static int setHotkeyMenu() {
 		}
 	}
 
-	r = showMenuEx(NTR_CFW_VERSION, HOTKEY_ENTRIES_COUNT, entries, NULL, r);
+	r = showMenuEx("NTR Menu Hotkey", HOTKEY_ENTRIES_COUNT, entries, NULL, r);
 	if (r >= 0 && r < HOTKEY_ENTRIES_COUNT) {
 		NTRMenuHotkey = menu_hotkey_map[r];
 		return 1;
@@ -486,9 +491,76 @@ static int setHotkeyMenu() {
 }
 
 enum {
+	CPU_MODE_ENTRY_268,
+	CPU_MODE_ENTRY_804,
+	CPU_MODE_ENTRY_268_L2,
+	CPU_MODE_ENTRY_804_L2,
+	CPU_MODE_ENTRIES_OPT_COUNT,
+
+	CPU_MODE_ENTRY_APPLY = CPU_MODE_ENTRIES_OPT_COUNT,
+	CPU_MODE_ENTRY_APPLY_LOCK,
+
+	CPU_MODE_ENTRIES_COUNT,
+};
+
+#define CPU_MODE_ENTRY_268_TEXT "268 MHz"
+#define CPU_MODE_ENTRY_804_TEXT "804 MHz"
+#define CPU_MODE_ENTRY_268_L2_TEXT "268 MHz + L2 Cache"
+#define CPU_MODE_ENTRY_804_L2_TEXT "804 MHz + L2 Cache"
+#define CPU_MODE_ENTRY_SELECTED_TEXT " (Current)"
+#define CPU_MODE_ENTRY_LOCKED_TEXT " (Locked)"
+#define CPU_MODE_ENTRY_CHECK_TEXT(v, t) \
+	(entries[v] = (cpuClockLocked && cpuClockLockValue == (v) ? t CPU_MODE_ENTRY_LOCKED_TEXT : selected == (v) ? t CPU_MODE_ENTRY_SELECTED_TEXT : t))
+
+static void ntrCPUModeMenu() {
+	char const *entries[CPU_MODE_ENTRIES_COUNT];
+	int selected;
+	if (cpuClockLocked) {
+		selected = cpuClockLockValue;
+	} else {
+		s64 clk_current = 0, clk_higher = 0, l2_status = 0;
+		svcGetSystemInfo(&clk_current, 0x10001, 0);
+		svcGetSystemInfo(&clk_higher, 0x10001, 1);
+		svcGetSystemInfo(&l2_status, 0x10001, 2);
+		bool clk_status = clk_current == clk_higher;
+		selected = (clk_status ? 1 : 0) + (l2_status ? 2 : 0);
+	}
+
+	entries[CPU_MODE_ENTRY_APPLY] = "Apply";
+	entries[CPU_MODE_ENTRY_APPLY_LOCK] = "Apply & Lock";
+
+	int r = 0;
+	while (1) {
+		CPU_MODE_ENTRY_CHECK_TEXT(CPU_MODE_ENTRY_268, CPU_MODE_ENTRY_268_TEXT);
+		CPU_MODE_ENTRY_CHECK_TEXT(CPU_MODE_ENTRY_804, CPU_MODE_ENTRY_804_TEXT);
+		CPU_MODE_ENTRY_CHECK_TEXT(CPU_MODE_ENTRY_268_L2, CPU_MODE_ENTRY_268_L2_TEXT);
+		CPU_MODE_ENTRY_CHECK_TEXT(CPU_MODE_ENTRY_804_L2, CPU_MODE_ENTRY_804_L2_TEXT);
+
+		r = showMenuEx("CPU Clock & L2 Cache", CPU_MODE_ENTRIES_COUNT, entries, NULL, r);
+		if (r < 0) {
+			break;
+		}
+		if (r < CPU_MODE_ENTRIES_OPT_COUNT) {
+			cpuClockLockValue = selected = r;
+			cpuClockLocked = 0;
+			lockCpuClock();
+		} else if (r == CPU_MODE_ENTRY_APPLY) {
+			cpuClockLocked = 0;
+			break;
+		} else if (r == CPU_MODE_ENTRY_APPLY_LOCK) {
+			cpuClockLockValue = selected;
+			cpuClockLocked = 1;
+			lockCpuClock();
+			break;
+		}
+	}
+};
+
+enum {
 	MENU_ENTRY_REMOTETPLAY,
 	MENU_ENTRY_PLUGIN_LOADER,
 	MENU_ENTRY_HOTKEY,
+	MENU_ENTRY_CPU_MODE,
 	MENU_ENTRY_QTM_PATCH,
 
 	MENU_ENTRIES_COUNT,
@@ -514,6 +586,7 @@ static void showMainMenu(void) {
 		entries[MENU_ENTRY_REMOTETPLAY] = plgTranslate("Remote Play (New 3DS)");
 		entries[MENU_ENTRY_PLUGIN_LOADER] = plgTranslate("Plugin Loader");
 		entries[MENU_ENTRY_HOTKEY] = plgTranslate("Set Menu Hotkey");
+		entries[MENU_ENTRY_CPU_MODE] = plgTranslate("CPU Clock & Cache");
 		entries[MENU_ENTRY_QTM_PATCH] = qtmDisabled ? plgTranslate("QTM Enable") : plgTranslate("QTM Disable");
 		u32 count = MENU_ENTRIES_COUNT;
 
@@ -553,6 +626,10 @@ static void showMainMenu(void) {
 				if (setHotkeyMenu() != 0) {
 					goto done;
 				}
+				break;
+
+			case MENU_ENTRY_CPU_MODE:
+				ntrCPUModeMenu();
 				break;
 
 			case MENU_ENTRY_QTM_PATCH:

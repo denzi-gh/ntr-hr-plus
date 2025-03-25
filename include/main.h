@@ -28,7 +28,7 @@ u32 plgRequestMemory(u32 size);
 u32 plgRequestMemoryFromPool(u32 size, int pool);
 u32 plgGetMemoryUsage(void);
 
-void setCpuClockLock(int v);
+void setCpuClockLock(int v, int lock);
 
 #define MAX_PLUGIN_COUNT 32
 typedef struct {
