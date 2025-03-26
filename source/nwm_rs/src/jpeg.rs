@@ -1457,6 +1457,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         let deltaQ0 = unsafe { self.worker.shared.deltaQ0Tbls.get_unchecked(deltaQ) };
         let mut delta_cache_start = 0;
 
+        let mut wait_for_nwm = DELTA_Q
+            && self.worker.threadId.get() == 0
+            && unsafe { !entries::nwm_is_waiting.load(Ordering::Relaxed) };
+        let mut next_tick = entries::get_next_send_tick();
+
+        do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+
         for ci in 0..MAX_COMPONENTS {
             let comp = &self.worker.shared.compInfos.infos[ci];
 
@@ -1581,6 +1588,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
                     xpos += DCTSIZE as u16;
                     blkn += 1;
+
+                    do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
                 }
                 ypos += DCTSIZE as u16;
             }
@@ -1864,7 +1873,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
             let mut wait_for_nwm =
-                !entries::nwm_is_waiting.load(Ordering::Relaxed) && self.worker.threadId.get() == 0;
+                self.worker.threadId.get() == 0 && !entries::nwm_is_waiting.load(Ordering::Relaxed);
             let mut next_tick = entries::get_next_send_tick();
 
             for ci in 0..MAX_COMPONENTS {
@@ -2137,6 +2146,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;
             *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(s) = dQRescalePrev;
 
+            do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+
             if dQRescalePrev != 0 {
                 // nsDbgPrint!(int, c_str!("dQRescalePrev"), dQRescalePrev as i32);
                 for t in 0..NUM_QUANT_TBLS {
@@ -2169,6 +2180,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         };
                     }
                 }
+
+                do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
             }
         }
     }
