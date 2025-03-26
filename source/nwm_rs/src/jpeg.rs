@@ -503,9 +503,9 @@ impl<'b> Jpeg<'b> {
             }
 
             const qos_adj_b: f32 = u8::BITS as f32;
-            const qos_min_f: f32 = 0.75f32;
-            const qos_max_l_f: f32 = 0.9375f32;
-            const qos_max_h_f: f32 = 0.875f32;
+            const qos_min_f: f32 = 0.625f32;
+            const qos_max_l_f: f32 = 0.875f32;
+            const qos_max_h_f: f32 = 0.75f32;
             self.shared.qosAdj = qos_adj_b * qos_min_f
                 + ((qos_max_l_f
                     + (qos_max_h_f - qos_max_l_f)
