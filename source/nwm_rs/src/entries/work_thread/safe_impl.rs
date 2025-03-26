@@ -89,8 +89,6 @@ fn ready_nwm(v: &ThreadBeginVars) -> bool {
     }
 }
 
-const last_row_last_n_range_f: u32_ = 2;
-
 #[allow(unused_macros)]
 #[named]
 fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
@@ -116,12 +114,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
         let n = mcu_rows_per_thread;
         let n_last = mcu_rows - mcu_rows_per_thread * core_count_rest;
 
-        let last_row_last_n_range = n_last
-            * if entries::get_reliable_stream_delta_prog() {
-                last_row_last_n_range_f * last_row_last_n_range_f
-            } else {
-                last_row_last_n_range_f
-            };
+        let last_row_last_n_range = get_jpeg().shared.lastRestartRange;
 
         let mut curr = l.load(Ordering::Relaxed);
         let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count.get() > 1 {

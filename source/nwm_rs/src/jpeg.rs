@@ -87,6 +87,7 @@ pub struct JpegShared<'a> {
     pub mcusPerRow: usize,
     pub mcusTop: u16,
     pub mcusBot: u16,
+    pub lastRestartRange: u32,
     qosAdj: f32,
     jpegTbls: JpegTbls,
     deltaQTbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
@@ -256,12 +257,18 @@ impl<'a> JpegShared<'a> {
         self.mcuRowSize = DCTSIZE * self.maxHSampFactor;
         self.mcuColSize = DCTSIZE * self.maxVSampFactor;
         self.mcusPerRow = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.mcuRowSize);
-        self.mcusTop = (self.mcusPerRow
-            * jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcuColSize))
-            as u16;
-        self.mcusBot = (self.mcusPerRow
-            * jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize))
-            as u16;
+        let mcuRowsTop = jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcuColSize);
+        self.mcusTop = (self.mcusPerRow * mcuRowsTop) as u16;
+        let mcuRowsBot = jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize);
+        self.mcusBot = (self.mcusPerRow * mcuRowsBot) as u16;
+
+        const last_row_last_n_range_f: u32 = 2;
+        self.lastRestartRange = mcuRowsTop as u32 / self.coreCount.get()
+            * (if unsafe { entries::get_reliable_stream_delta_prog() } {
+                last_row_last_n_range_f * last_row_last_n_range_f
+            } else {
+                last_row_last_n_range_f
+            });
 
         let mut q_steps = 0f32;
         if deltaProg {
@@ -568,12 +575,12 @@ impl<'b> Jpeg<'b> {
 }
 
 #[named]
-fn do_wait_for_nwm(wait_for_nwm: &mut bool, next_tick: &mut u32) {
+fn do_wait_for_nwm(next_tick: &mut u32) {
     unsafe {
-        if *wait_for_nwm {
-            let curr_tick = svcGetSystemTick() as u32_;
-            let diff_tick = (curr_tick - *next_tick) as s32;
-            if diff_tick >= 0 {
+        let curr_tick = svcGetSystemTick() as u32_;
+        let diff_tick = (curr_tick - *next_tick) as s32;
+        if diff_tick >= 0 {
+            if !entries::nwm_is_waiting.load(Ordering::Relaxed) {
                 let res = svcClearEvent(wait_nwm_event);
                 if res != 0 {
                     nsDbgPrint!(waitNwmEventClearFailed, res);
@@ -592,9 +599,10 @@ fn do_wait_for_nwm(wait_for_nwm: &mut bool, next_tick: &mut u32) {
                 } else {
                     *next_tick = entries::get_next_send_tick();
                 }
-                *wait_for_nwm = *wait_for_nwm && !entries::nwm_is_waiting.load(Ordering::Relaxed);
-                // nsDbgPrint!(int, c_str!("next_tick"), next_tick as i32);
+            } else {
+                *next_tick += entries::get_min_send_interval_tick();
             }
+            // nsDbgPrint!(int, c_str!("next_tick"), next_tick as i32);
         }
     }
 }
@@ -1472,12 +1480,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         let deltaQ0 = unsafe { self.worker.shared.deltaQ0Tbls.get_unchecked(deltaQ) };
         let mut delta_cache_start = 0;
 
-        let mut wait_for_nwm = DELTA_Q
-            && self.worker.threadId.get() == 0
-            && unsafe { !entries::nwm_is_waiting.load(Ordering::Relaxed) };
+        let need_wait_for_nwm = DELTA_Q && self.worker.threadId.get() == 0;
         let mut next_tick = entries::get_next_send_tick();
 
-        do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+        if need_wait_for_nwm {
+            do_wait_for_nwm(&mut next_tick);
+        }
 
         for ci in 0..MAX_COMPONENTS {
             let comp = &self.worker.shared.compInfos.infos[ci];
@@ -1604,7 +1612,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     xpos += DCTSIZE as u16;
                     blkn += 1;
 
-                    do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+                    if need_wait_for_nwm {
+                        do_wait_for_nwm(&mut next_tick);
+                    }
                 }
                 ypos += DCTSIZE as u16;
             }
@@ -1890,8 +1900,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             // }
             let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
-            let mut wait_for_nwm =
-                self.worker.threadId.get() == 0 && !entries::nwm_is_waiting.load(Ordering::Relaxed);
+            let need_wait_for_nwm = self.worker.threadId.get() == 0;
             let mut next_tick = entries::get_next_send_tick();
 
             for ci in 0..MAX_COMPONENTS {
@@ -1973,7 +1982,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     update_qnv(&mut qnv.dc, &qn.dc);
                     update_qnv(&mut qnv.ac, &qn.ac);
 
-                    do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+                    if need_wait_for_nwm {
+                        do_wait_for_nwm(&mut next_tick);
+                    }
                 }
 
                 *qnc.get_unchecked_mut(qni as usize) += DELTA_Q_CACHE_COUNTS[ci];
@@ -2181,7 +2192,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             *self.worker.shared_mut.workDeltaQ.get_unchecked_mut(w) = *deltaQ;
             *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(w) = dQRescalePrev;
 
-            do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+            if need_wait_for_nwm {
+                do_wait_for_nwm(&mut next_tick);
+            }
 
             if dQRescalePrev != 0 {
                 // nsDbgPrint!(int, c_str!("dQRescalePrev"), dQRescalePrev as i32);
@@ -2216,7 +2229,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 }
 
-                do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
+                if need_wait_for_nwm {
+                    do_wait_for_nwm(&mut next_tick);
+                }
             }
         }
     }
