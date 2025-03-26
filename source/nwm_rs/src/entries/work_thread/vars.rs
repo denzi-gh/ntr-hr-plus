@@ -195,11 +195,13 @@ unsafe fn send_term_dsts(w: WorkIndex, jpeg: &crate::jpeg::JpegRet) -> bool {
         let size = *sizes.get(&i) as u16;
 
         let hdr = size
-            | if i.get() == core_count.get() - 1 {
-                (info.v_last_adjusted as u16) << RP_KCP_HDR_SIZE_NBITS
+            | ((if i.get() == core_count.get() - 1 {
+                info.v_last_adjusted
             } else {
-                (info.v_adjusted as u16) << RP_KCP_HDR_SIZE_NBITS
-            };
+                info.v_adjusted
+            } as u16
+                & ((1 << RP_KCP_HDR_RC_NBITS) - 1))
+                << RP_KCP_HDR_SIZE_NBITS);
         if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
             return false;
         }
@@ -647,16 +649,17 @@ impl ThreadBeginVars {
             self.v().clear_screen_synced();
 
             let ft = AtomicU32::from_mut(&mut frame_times[if self.v().is_top() { 0 } else { 1 }]);
+            let mut cur = ft.load(Ordering::Relaxed);
             loop {
                 const FT_MAX_F: u32 = 4;
-                let cur = ft.load(Ordering::Relaxed);
                 let new = if cur / FT_MAX_F > frame_time || frame_time / FT_MAX_F > cur {
                     frame_time
                 } else {
                     (cur * (frame_time_factor - 1) + frame_time) / frame_time_factor
                 };
-                if let Ok(_) = ft.compare_exchange(cur, new, Ordering::Relaxed, Ordering::Relaxed) {
-                    break;
+                match ft.compare_exchange_weak(cur, new, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => break,
+                    Err(tmp) => cur = tmp,
                 }
             }
 

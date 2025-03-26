@@ -95,10 +95,8 @@ pub static mut recv_seg_mem_inited: AtomicBool = const_default();
 pub const RP_KCP_TIMEOUT_SEC: s64 = 2;
 
 pub const RP_KCP_HDR_W_NBITS: u32 = 1;
-#[allow(dead_code)]
 pub const RP_KCP_HDR_T_NBITS: u32 = 2;
 pub const RP_KCP_HDR_SIZE_NBITS: u32 = 11;
-#[allow(dead_code)]
 pub const RP_KCP_HDR_RC_NBITS: u32 = 5;
 
 pub static mut delta_q_prev_coeffs: [*mut crate::jpeg::vars::JCoef; SCREEN_COUNT as usize] =

@@ -105,7 +105,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
         let core_count_rest = core_count.get() - 1;
         let thread_id_last = ThreadId::init_unchecked(core_count_rest);
 
-        let l = v.last_row_last_n();
+        let l = AtomicU32::from_mut(v.last_row_last_n());
 
         let mcu_size = get_jpeg().shared.mcuColSize as u32_;
         let mcus_per_row = get_jpeg().shared.mcusPerRow as u32_;
@@ -116,31 +116,39 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
         let n = mcu_rows_per_thread;
         let n_last = mcu_rows - mcu_rows_per_thread * core_count_rest;
 
-        let (v_adjusted, v_last_adjusted) = if *l > 0 && core_count.get() > 1 {
-            if t.get() == thread_id_last.get() {
-                if *l < last_row_last_n_range {
-                    *l = *l + 1;
+        let mut curr = l.load(Ordering::Relaxed);
+        let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count.get() > 1 {
+            let next = loop {
+                let next = if t.get() == thread_id_last.get() {
+                    if curr < last_row_last_n_range {
+                        curr + 1
+                    } else {
+                        curr
+                    }
+                } else {
+                    if curr > 1 {
+                        curr - 1
+                    } else {
+                        curr
+                    }
+                };
+                match l.compare_exchange_weak(curr, next, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => break next,
+                    Err(temp) => curr = temp,
                 }
-            } else {
-                if *l > 1 {
-                    *l = *l - 1;
-                }
-            }
+            };
 
             let rows_last = cmp::max(
-                (n_last * *l + last_row_last_n_range / 2) / last_row_last_n_range,
+                (n_last * next + last_row_last_n_range / 2) / last_row_last_n_range,
                 1,
             );
             let rows = (mcu_rows - rows_last + core_count_rest - 1) / core_count_rest;
             let rows_last = mcu_rows - rows * core_count_rest;
             (rows, rows_last)
         } else {
-            *l = last_row_last_n_range;
+            l.store(last_row_last_n_range, Ordering::Relaxed);
             (n, n_last)
         };
-
-        // nsDbgPrint!(int, c_str!("restart_in_rows"), v_adjusted as s32);
-        // nsDbgPrint!(int, c_str!("mcu_size"), mcu_size as s32);
 
         for j in ThreadId::up_to(&core_count) {
             let restart_in_rows = v_adjusted as s32;
