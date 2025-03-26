@@ -355,6 +355,7 @@ mod loop_main {
                     return None;
                 }
                 jpeg.shared_mut.workInited[w as usize] = false;
+                jpeg.shared_mut.workSemCount[w as usize] = v.core_count.get() as u8;
             }
             for s in 0..SCREEN_COUNT {
                 let res = svcCreateSemaphore(&mut jpeg.shared.screenSem[s as usize], 1, 1);
@@ -362,7 +363,9 @@ mod loop_main {
                     nsDbgPrint!(createSemaphoreFailed, c_str!("jpeg screenSem"), res);
                     return None;
                 }
-                jpeg.shared_mut.screenSemCount[s as usize] = v.core_count.get() as u8;
+
+                jpeg.shared_mut.screenBool[s as usize] = false;
+                jpeg.shared_mut.lastRestartInterval[s as usize] = 0;
             }
 
             slice::from_raw_parts_mut(

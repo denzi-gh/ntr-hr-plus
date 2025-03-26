@@ -134,14 +134,24 @@ pub struct DeltaQCache {
     hit: bool,
 }
 
+pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
+pub const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
+
+const _jpeg_comp_count_nbits_assert: () = {
+    assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
+};
+
 pub struct JpegSharedMut {
-    pub compressedSize: [u32; SCREEN_COUNT as usize],
+    pub compressedSize: [AtomicU32; SCREEN_COUNT as usize],
     pub workInited: [bool; WORK_COUNT as usize],
-    pub screenSemCount: [u8; SCREEN_COUNT as usize],
+    pub workSemCount: [u8; WORK_COUNT as usize],
+    pub screenBool: [bool; SCREEN_COUNT as usize],
+    pub lastRestartInterval: [u16; SCREEN_COUNT as usize],
     deltaQ: [u8; SCREEN_COUNT as usize],
-    dQRescalePrev: [i8; SCREEN_COUNT as usize],
-    rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; SCREEN_COUNT as usize],
-    deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; SCREEN_COUNT as usize],
+    workDeltaQ: [u8; WORK_COUNT as usize],
+    dQRescalePrev: [i8; WORK_COUNT as usize],
+    rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; WORK_COUNT as usize],
+    deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; WORK_COUNT as usize],
     deltaQCalc: [DeltaQManager; SCREEN_COUNT as usize],
     rand32: Rand32,
 }
@@ -344,6 +354,7 @@ pub union WorkderDstUser {
 
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
+    pub blkn: u16,
     pub s: ScreenIndex,
     pub w: WorkIndex,
     pub dst: *mut u8,
@@ -404,7 +415,9 @@ impl WorkerDst {
                 self.s,
                 self.w,
                 entries::packet_data_size_kcp as u32,
+                self.blkn,
             );
+            self.blkn = 0;
             crate::entries::rp_send_buffer::<REL_STREAM>(self, false)
         }
     }
@@ -415,7 +428,9 @@ impl WorkerDst {
                 self.s,
                 self.w,
                 entries::packet_data_size_kcp as u32 - self.free_in_bytes as u32,
+                self.blkn,
             );
+            self.blkn = 0;
             crate::entries::rp_send_buffer::<REL_STREAM>(self, true)
         }
     }
@@ -450,7 +465,7 @@ pub struct JpegWorker<'a, 'b, const REL_STREAM: bool> {
     shared: &'a JpegShared<'b>,
     shared_mut: &'a mut JpegSharedMut,
     bufs: &'a mut WorkerBufs,
-    info: &'a mut CInfo,
+    info: &'a CInfo,
     threadId: ThreadId,
     huffState: HuffState,
     last_dc_val: [i16; MAX_COMPONENTS],
@@ -1450,10 +1465,10 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         prev: *mut JBlock,
     ) {
         let divParts = &self.worker.shared.divisors.divisors;
-        let s = if self.worker.info.isTop { 0 } else { 1 };
+        let w = self.worker.info.workIndex.get() as usize;
         let mut blkn = 0;
-        let cache = unsafe { self.worker.shared_mut.deltaQCache.get_unchecked_mut(s) };
-        let deltaQ = unsafe { *self.worker.shared_mut.deltaQ.get_unchecked(s) as usize };
+        let cache = unsafe { self.worker.shared_mut.deltaQCache.get_unchecked_mut(w) };
+        let deltaQ = unsafe { *self.worker.shared_mut.workDeltaQ.get_unchecked(w) as usize };
         let deltaQ0 = unsafe { self.worker.shared.deltaQ0Tbls.get_unchecked(deltaQ) };
         let mut delta_cache_start = 0;
 
@@ -1488,7 +1503,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 self.worker
                     .shared_mut
                     .rPShifts
-                    .get_unchecked(s)
+                    .get_unchecked(w)
                     .get_unchecked(comp.quant_tbl_no as usize)
             };
 
@@ -1647,6 +1662,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         dc_derived_tbl: &DerivedTbl,
         ac_derived_tbl: &DerivedTbl,
     ) -> i16 {
+        dst.blkn += 1;
+
         let mut localbuf: [u8; BUFSIZE] = const_default();
         let mut buf = EncodeBuffer::<_, REL_STREAM, DELTA_Q>::init(state, dst, &mut localbuf);
 
@@ -1845,10 +1862,11 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         unsafe {
             let need_ov_stats = (*ntr_config).ex.plg.overlayStats > 0;
             let s = if self.worker.info.isTop { 0 } else { 1 };
+            let w = self.worker.info.workIndex.get() as usize;
             // nsDbgPrint!(int, c_str!("s"), s as i32);
             let deltaQ = self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             let rand32 = &mut self.worker.shared_mut.rand32;
-            let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(s);
+            let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(w);
             let prevDeltaQ = *deltaQ;
             let deltaQ0 = self
                 .worker
@@ -2007,6 +2025,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             } else {
                 self.worker.shared.mcusBot
             }) as f32;
+
             let mcus1 = (if s == 1 {
                 self.worker.shared.mcusTop
             } else {
@@ -2018,8 +2037,23 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let qos_b = current_qos * frame_rate_f * mcusi * qos_adj;
             let qos_b = qos_b * 2f32 * mcus * mcus_f;
 
-            let comp_size = *self.worker.shared_mut.compressedSize.get_unchecked(s);
-            let comp_size = (comp_size * u8::BITS) as f32 * mcusi;
+            let comp_size = self
+                .worker
+                .shared_mut
+                .compressedSize
+                .get_unchecked(s)
+                .load(Ordering::Relaxed);
+            let comp_size = {
+                let size = comp_size & ((1 << crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS) - 1);
+                let blkn = (comp_size >> crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS)
+                    & ((1 << crate::jpeg::JPEG_COMP_COUNT_BLKN_NBITS) - 1);
+                if blkn > 0 {
+                    size as f32 * mcus * self.worker.shared.maxBlocksInMcu as f32 / blkn as f32
+                } else {
+                    0f32
+                }
+            };
+            let comp_size = comp_size * u8::BITS as f32 * mcusi;
 
             let (qos, qos_c) = if comp_size > 0f32 {
                 let qos_d = if qc.qb > comp_size {
@@ -2144,7 +2178,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             }
 
             let dQRescalePrev = *deltaQ as i8 - prevDeltaQ as i8;
-            *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(s) = dQRescalePrev;
+            *self.worker.shared_mut.workDeltaQ.get_unchecked_mut(w) = *deltaQ;
+            *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(w) = dQRescalePrev;
 
             do_wait_for_nwm(&mut wait_for_nwm, &mut next_tick);
 
@@ -2155,7 +2190,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         .worker
                         .shared
                         .deltaQTbls
-                        .get_unchecked(*self.worker.shared_mut.deltaQ.get_unchecked(s) as usize)
+                        .get_unchecked(*deltaQ as usize)
                         .get_unchecked(t);
 
                     let dQShiftsPrev = &self
@@ -2169,7 +2204,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                         .worker
                         .shared_mut
                         .rPShifts
-                        .get_unchecked_mut(s)
+                        .get_unchecked_mut(w)
                         .get_unchecked_mut(t);
 
                     for i in 0..DCTSIZE2 {
@@ -2192,36 +2227,63 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         for MCU_col_num in 0..self.worker.shared.mcusPerRow {
             if DELTA_Q {
                 let s = if self.worker.info.isTop { 0 } else { 1 };
+                let w = self.worker.info.workIndex.get() as usize;
                 if row_i == 0 && MCU_col_num == 0 {
-                    let w = self.worker.info.workIndex.get() as usize;
                     unsafe {
                         if !AtomicBool::from_ptr(
                             self.worker.shared_mut.workInited.get_unchecked_mut(w),
                         )
                         .swap(true, Ordering::Relaxed)
                         {
-                            while !entries::reset_threads() {
-                                let res = svcWaitSynchronization(
-                                    *self.worker.shared.screenSem.get_unchecked(s),
-                                    THREAD_WAIT_NS,
-                                );
-                                if res != 0 {
-                                    if res != RES_TIMEOUT as s32 {
-                                        nsDbgPrint!(
-                                            waitForSyncFailed,
-                                            c_str!("jpeg screenSem"),
-                                            res
-                                        );
-                                        entries::set_reset_threads_ar();
-                                        return;
+                            let lastRestartInterval = self
+                                .worker
+                                .shared_mut
+                                .lastRestartInterval
+                                .get_unchecked_mut(s);
+                            let b = self.worker.shared_mut.screenBool.get_unchecked_mut(s);
+                            let b = AtomicBool::from_ptr(b);
+
+                            let need_sync =
+                                self.worker.info.restartInterval != *lastRestartInterval;
+
+                            let need_sync = if !need_sync {
+                                b.swap(true, Ordering::Relaxed)
+                            } else {
+                                need_sync
+                            };
+
+                            if need_sync {
+                                while !entries::reset_threads() {
+                                    let res = svcWaitSynchronization(
+                                        *self.worker.shared.screenSem.get_unchecked(s),
+                                        THREAD_WAIT_NS,
+                                    );
+                                    if res != 0 {
+                                        if res != RES_TIMEOUT as s32 {
+                                            nsDbgPrint!(
+                                                waitForSyncFailed,
+                                                c_str!("jpeg screenSem"),
+                                                res
+                                            );
+                                            entries::set_reset_threads_ar();
+                                            return;
+                                        }
+                                        continue;
                                     }
-                                    continue;
+                                    break;
                                 }
-                                break;
+
+                                b.store(false, Ordering::Relaxed);
+                                *lastRestartInterval = self.worker.info.restartInterval;
+                            } else {
                             }
 
                             self.compute_dq(prev);
-                            *self.worker.shared_mut.compressedSize.get_unchecked_mut(s) = 0;
+                            self.worker
+                                .shared_mut
+                                .compressedSize
+                                .get_unchecked_mut(s)
+                                .store(0, Ordering::Relaxed);
                             delta_cache = true;
 
                             let mut count = mem::MaybeUninit::uninit();
@@ -2258,7 +2320,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 }
                 let dQRescalePrev =
-                    unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(s) };
+                    unsafe { *self.worker.shared_mut.dQRescalePrev.get_unchecked(w) };
                 let prev = unsafe { prev.add(MCU_col_num * self.worker.shared.maxBlocksInMcu) };
 
                 if dQRescalePrev > 0 {
@@ -2413,9 +2475,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
         if DELTA_Q {
             unsafe {
-                deltaQ = *self.worker.shared_mut.deltaQ.get_unchecked(s);
+                deltaQ = *self.worker.shared_mut.workDeltaQ.get_unchecked(w);
 
-                let c = self.worker.shared_mut.screenSemCount.get_unchecked_mut(s);
+                let c = self.worker.shared_mut.workSemCount.get_unchecked_mut(w);
                 if AtomicU8::from_ptr(c).fetch_sub(1, Ordering::Relaxed) == 1 {
                     *c = self.worker.info.coreCount.get() as u8;
                     *self.worker.shared_mut.workInited.get_unchecked_mut(w) = false;
@@ -2426,19 +2488,25 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     //     *self.worker.shared_mut.compressedSize.get_unchecked(s) as i32
                     // );
 
-                    let mut count = mem::MaybeUninit::uninit();
-                    let res = svcReleaseSemaphore(
-                        count.as_mut_ptr(),
-                        *self.worker.shared.screenSem.get_unchecked(s),
-                        1,
-                    );
-                    if res != 0 {
-                        nsDbgPrint!(
-                            releaseSemaphoreFailed,
-                            c_str!("jpeg screenSem"),
-                            w as u32,
-                            res
+                    let b = self.worker.shared_mut.screenBool.get_unchecked_mut(s);
+                    let b = AtomicBool::from_ptr(b);
+                    if !b.swap(true, Ordering::Relaxed) {
+                        let mut count = mem::MaybeUninit::uninit();
+                        let res = svcReleaseSemaphore(
+                            count.as_mut_ptr(),
+                            *self.worker.shared.screenSem.get_unchecked(s),
+                            1,
                         );
+                        if res != 0 {
+                            nsDbgPrint!(
+                                releaseSemaphoreFailed,
+                                c_str!("jpeg screenSem"),
+                                w as u32,
+                                res
+                            );
+                        }
+                    } else {
+                        b.store(false, Ordering::Relaxed);
                     }
                 }
             }

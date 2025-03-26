@@ -309,15 +309,35 @@ pub unsafe fn release_nwm_ready(w: &WorkIndex) {
 
 pub static mut rp_frame_compressed_size: [u32; WORK_COUNT as usize] = const_default();
 
-pub unsafe fn rp_dq_update_size<const DLETA_Q: bool>(s: ScreenIndex, w: WorkIndex, size: u32) {
+pub unsafe fn rp_dq_update_size<const DLETA_Q: bool>(
+    s: ScreenIndex,
+    w: WorkIndex,
+    size: u32,
+    blkn: u16,
+) {
     if DLETA_Q {
-        AtomicU32::from_ptr(
-            entries::work_thread::get_jpeg()
-                .shared_mut
-                .compressedSize
-                .get_unchecked_mut(s.get() as usize),
-        )
-        .fetch_add(size, Ordering::Relaxed);
+        let comp_size = entries::work_thread::get_jpeg()
+            .shared_mut
+            .compressedSize
+            .get_unchecked_mut(s.get() as usize);
+        let mut curr = comp_size.load(Ordering::Relaxed);
+        loop {
+            let prev_size = curr & ((1 << crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS) - 1);
+            let prev_blkn = (curr >> crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS)
+                & ((1 << crate::jpeg::JPEG_COMP_COUNT_BLKN_NBITS) - 1);
+
+            let next_size = prev_size + size;
+            let next_blkn = prev_blkn + blkn as u32;
+            let next = (next_size & ((1 << crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS) - 1))
+                | ((next_blkn & ((1 << crate::jpeg::JPEG_COMP_COUNT_BLKN_NBITS) - 1))
+                    << crate::jpeg::JPEG_COMP_COUNT_SIZE_NBITS);
+
+            match comp_size.compare_exchange_weak(curr, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => break,
+                Err(temp) => curr = temp,
+            }
+        }
     } else {
         AtomicU32::from_ptr(rp_frame_compressed_size.get_unchecked_mut(w.get() as usize))
             .fetch_add(size, Ordering::Relaxed);
