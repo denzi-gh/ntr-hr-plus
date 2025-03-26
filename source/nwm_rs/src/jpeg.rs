@@ -1831,6 +1831,12 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             // }
             let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
+            let mut wait_for_nwm =
+                !entries::nwm_is_waiting.load(Ordering::Relaxed) && self.worker.threadId.get() == 0;
+            let mut next_tick = entries::get_next_send_tick();
+            let thre_tick = entries::get_min_send_interval_tick();
+            let thre_ns = entries::get_min_send_interval_ns() as s64;
+
             for ci in 0..MAX_COMPONENTS {
                 let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
@@ -1909,6 +1915,31 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     };
                     update_qnv(&mut qnv.dc, &qn.dc);
                     update_qnv(&mut qnv.ac, &qn.ac);
+
+                    if wait_for_nwm {
+                        let curr_tick = svcGetSystemTick() as u32_;
+                        let diff_tick = (curr_tick - next_tick) as s32;
+                        if diff_tick >= 0 {
+                            let res = svcClearEvent(wait_nwm_event);
+                            if res != 0 {
+                                nsDbgPrint!(waitNwmEventClearFailed, res);
+                            }
+
+                            let res = svcWaitSynchronization(wait_nwm_event, thre_ns);
+                            if res != 0 {
+                                if res != RES_TIMEOUT as s32 {
+                                    nsDbgPrint!(waitNwmEventSyncFailed, res);
+                                }
+                                // nsDbgPrint!(int, c_str!("thre_ns"), thre_ns as i32);
+                                next_tick += thre_tick;
+                            } else {
+                                next_tick = entries::get_next_send_tick();
+                            }
+                            wait_for_nwm =
+                                wait_for_nwm && !entries::nwm_is_waiting.load(Ordering::Relaxed);
+                            // nsDbgPrint!(int, c_str!("next_tick"), next_tick as i32);
+                        }
+                    }
                 }
 
                 *qnc.get_unchecked_mut(qni as usize) += DELTA_Q_CACHE_COUNTS[ci];

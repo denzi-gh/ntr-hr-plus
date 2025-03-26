@@ -92,7 +92,7 @@ pub static mut seg_mem_lock: Handle = 0;
 // pub static mut cur_seg_mem_lock: Handle = 0;
 pub static mut term_seg_mem_sem: Handle = 0;
 pub static mut recv_seg_mem_inited: AtomicBool = const_default();
-pub const RP_KCP_TIMEOUT_SEC: s64 = 2;
+pub const RP_KCP_TIMEOUT_TICK: s32 = 2 * SYSCLOCK_ARM11 as s32;
 
 pub const RP_KCP_HDR_W_NBITS: u32 = 1;
 pub const RP_KCP_HDR_T_NBITS: u32 = 2;
@@ -102,6 +102,7 @@ pub const RP_KCP_HDR_RC_NBITS: u32 = 5;
 pub static mut delta_q_prev_coeffs: [*mut crate::jpeg::vars::JCoef; SCREEN_COUNT as usize] =
     const_default();
 
+pub static mut wait_nwm_event: Handle = const_default();
 pub static mut restart_ready_event: Handle = const_default();
 pub static mut restart_done_event: Handle = const_default();
 pub static mut restart_sleep: bool = const_default();

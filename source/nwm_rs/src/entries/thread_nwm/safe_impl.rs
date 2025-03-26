@@ -45,7 +45,7 @@ fn try_send_next_buffer_may_skip(v: ThreadVars, work_flush: bool, mut may_skip: 
 fn send_next_buffer_delay(v: &ThreadVars, work_flush: bool, pos: *mut u8, flag: u32) -> bool {
     unsafe {
         let curr_tick = svcGetSystemTick() as u32_;
-        let next_tick = *v.next_send_tick();
+        let next_tick = v.next_send_tick().load(Ordering::Relaxed);
         let tick_diff = next_tick as s32 - curr_tick as s32;
 
         if tick_diff > 0 {
@@ -166,12 +166,14 @@ unsafe fn send_next_buffer(v: &ThreadVars, tick: u32_, pos: *mut u8_, flag: u32_
     if rp_output(packet_buf, packet_size as usize) == None {
         return false;
     }
-    *v.next_send_tick() = tick
-        + if NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
+    v.next_send_tick().store(
+        tick + if NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
             v.min_send_interval_tick() * packet_size / PACKET_SIZE
         } else {
             v.min_send_interval_tick()
-        };
+        },
+        Ordering::Relaxed,
+    );
 
     if !thread_end_done {
         let send_pos = &mut winfo.get_mut(&thread_end_id).info.send_pos;

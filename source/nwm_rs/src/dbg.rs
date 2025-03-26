@@ -73,6 +73,8 @@ impl nsDbgPrint_t {
 
     nsDbgPrint_fn!(initJpegFailed, "JPEG init failed\n");
 
+    nsDbgPrint_fn!(createEventFailed, "Create %s event failed %08x\n", name: *const c_char, ret: s32);
+
     nsDbgPrint_fn!(createRestartEventFailed, "Create restart event failed %08x\n", ret: s32);
 
     nsDbgPrint_fn!(signalRestartEventFailed, "Signal restart event failed %08x\n", ret: s32);
@@ -102,6 +104,12 @@ impl nsDbgPrint_t {
     nsDbgPrint_fn!(allocFailed, "Bad alloc, size: %x/%x\n", total_size: u32_, alloc_size: u32_);
 
     nsDbgPrint_fn!(sendBufferOverflow, "Send buffer overflow\n");
+
+    nsDbgPrint_fn!(waitNwmEventSyncFailed, "Sync wait nwm event failed %08x\n", ret: s32);
+
+    nsDbgPrint_fn!(waitNwmEventClearFailed, "Clear wait nwm event failed %08x\n", ret: s32);
+
+    nsDbgPrint_fn!(waitNwmEventSignalFailed, "Signal wait nwm event failed %08x\n", ret: s32);
 
     nsDbgPrint_fn!(nwmEventSignalFailed, "Signal nwm event failed %08x\n", ret: s32);
 

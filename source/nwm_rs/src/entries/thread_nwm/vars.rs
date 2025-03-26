@@ -27,7 +27,6 @@ static mut nwm_thread_id: ThreadId = ThreadId::init();
 
 static mut nwm_need_syn: RangedArray<bool, WORK_COUNT> = const_default();
 
-static mut next_send_tick: u32_ = 0;
 pub type NwmHdr = [u8_; NWM_HDR_SIZE as usize];
 static mut current_nwm_hdr: NwmHdr = const_default();
 
@@ -134,10 +133,23 @@ unsafe fn set_packet_data_size() {
     }
 }
 
+pub static mut nwm_is_waiting: AtomicBool = const_default();
 static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
 #[export_name = "rp_current_qos"]
 static mut current_qos: AtomicU32 = const_default();
+
+pub fn get_next_send_tick() -> u32_ {
+    unsafe { rp_output_next_tick.load(Ordering::Relaxed) }
+}
+
+pub fn get_min_send_interval_tick() -> u32_ {
+    unsafe { min_send_interval_tick.load(Ordering::Relaxed) }
+}
+
+pub fn get_min_send_interval_ns() -> u32_ {
+    unsafe { min_send_interval_ns.load(Ordering::Relaxed) }
+}
 
 unsafe fn init_min_send_interval(qos: u32_) {
     (*ov_stats).kcp_qos = qos;
@@ -169,9 +181,10 @@ pub unsafe fn reset_vars(dst_flags: u32, qos: u32) -> Option<()> {
     }
     nwm_work_index = WorkIndex::init();
     nwm_thread_id = ThreadId::init();
-    rp_output_next_tick =
-        svcGetSystemTick() as s64 + min_send_interval_tick.load(Ordering::Relaxed) as s64;
-    next_send_tick = rp_output_next_tick as u32_;
+    rp_output_next_tick.store(
+        svcGetSystemTick() as u32 + min_send_interval_tick.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
     cur_seg_mem_count = 0;
     Some(())
 }
@@ -217,8 +230,8 @@ impl ThreadVars {
         self.nwm_infos().get_mut(&self.thread_id())
     }
 
-    pub fn next_send_tick(&self) -> &mut u32_ {
-        unsafe { &mut next_send_tick }
+    pub fn next_send_tick(&self) -> &mut AtomicU32 {
+        unsafe { &mut rp_output_next_tick }
     }
 
     pub fn min_send_interval_tick(&self) -> u32_ {
@@ -436,7 +449,7 @@ unsafe fn ip_checksum(data: *mut u8_, mut length: usize) -> u16_ {
     utils::htons(!acc as u16_)
 }
 
-static mut rp_output_next_tick: s64 = 0;
+static mut rp_output_next_tick: AtomicU32 = const_default();
 
 #[no_mangle]
 #[named]
@@ -451,8 +464,9 @@ unsafe extern "C" fn rp_udp_output(
         return -3;
     }
 
-    let mut curr_tick = svcGetSystemTick() as s64;
-    let tick_diff = rp_output_next_tick - curr_tick;
+    let next_send_tick = rp_output_next_tick.load(Ordering::Relaxed);
+    let mut curr_tick = svcGetSystemTick() as u32;
+    let tick_diff = (next_send_tick - curr_tick) as s32;
     let duration = if tick_diff > 0 {
         tick_diff as s64 * 1_000_000_000 / SYSCLOCK_ARM11 as s64
     } else {
@@ -469,21 +483,19 @@ unsafe extern "C" fn rp_udp_output(
             return 0;
         }
         curr_tick = if NWM_AGGRESSIVE_NEXT_TICK > 0 {
-            rp_output_next_tick
+            next_send_tick
         } else {
-            svcGetSystemTick() as s64
+            svcGetSystemTick() as u32
         };
     }
     let next_interval = if (*kcp).session_established && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
-        min_send_interval_tick.load(Ordering::Relaxed) as s64 * len as s64 / PACKET_SIZE as s64
+        min_send_interval_tick.load(Ordering::Relaxed) * len as u32 / PACKET_SIZE
     } else {
-        min_send_interval_tick.load(Ordering::Relaxed) as s64
+        min_send_interval_tick.load(Ordering::Relaxed)
     };
-    *tick = curr_tick as u32_;
-    rp_output_next_tick = curr_tick + next_interval;
-
+    *tick = curr_tick;
+    rp_output_next_tick.store(curr_tick + next_interval, Ordering::Relaxed);
     nwm_output(buf.sub(NWM_HDR_SIZE as usize), len as usize);
-
     return len;
 }
 
@@ -774,9 +786,9 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
         let mut has_dst = false;
 
         while !entries::work_thread::reset_threads() {
-            if (svcGetSystemTick() as s64 - rp_output_next_tick) / SYSCLOCK_ARM11 as s64
-                >= RP_KCP_TIMEOUT_SEC
-            {
+            let next_send_tick = rp_output_next_tick.load(Ordering::Relaxed);
+
+            if (svcGetSystemTick() as u32 - next_send_tick) as s32 >= RP_KCP_TIMEOUT_TICK {
                 // Reset KCP
                 nsDbgPrint!(kcpTimeout);
                 crate::entries::work_thread::set_reset_threads_ar();
@@ -791,11 +803,12 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                 if send_delay == 0 {
                     0
                 } else {
-                    let delay = rp_output_next_tick - svcGetSystemTick() as s64
-                        + ((send_delay - 1) as u32 * min_send_interval_tick.load(Ordering::Relaxed))
-                            as s64;
+                    let delay = (next_send_tick - svcGetSystemTick() as u32
+                        + ((send_delay - 1) as u32
+                            * min_send_interval_tick.load(Ordering::Relaxed)))
+                        as s32;
                     if delay > 0 {
-                        delay * 1_000_000_000 / SYSCLOCK_ARM11 as s64
+                        delay as s64 * 1_000_000_000 / SYSCLOCK_ARM11 as s64
                     } else {
                         0
                     }
@@ -814,6 +827,13 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
             let mut retry = false;
 
             let relock_nwm = timeout != 0;
+
+            nwm_is_waiting.store(relock_nwm, Ordering::Relaxed);
+
+            let res = svcSignalEvent(wait_nwm_event);
+            if res != 0 {
+                nsDbgPrint!(waitNwmEventSignalFailed, res);
+            }
 
             if relock_nwm {
                 nwm_cb_unlock();
@@ -898,9 +918,7 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                 return false;
             }
             if ret < 0 {
-                if (svcGetSystemTick() as s64 - rp_output_next_tick) / SYSCLOCK_ARM11 as s64
-                    >= RP_KCP_TIMEOUT_SEC
-                {
+                if (svcGetSystemTick() as u32 - next_send_tick) as s32 >= RP_KCP_TIMEOUT_TICK {
                     // Reset KCP
                     nsDbgPrint!(kcpTimeout);
                     crate::entries::work_thread::set_reset_threads_ar();
@@ -920,7 +938,8 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                     return false;
                 }
                 if !(*kcp).session_established {
-                    rp_output_next_tick += SYSCLOCK_ARM11 as s64 / 16;
+                    rp_output_next_tick
+                        .store(next_send_tick + SYSCLOCK_ARM11 / 16, Ordering::Relaxed);
                 }
             }
         }

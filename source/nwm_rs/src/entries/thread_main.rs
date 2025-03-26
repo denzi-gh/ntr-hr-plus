@@ -53,6 +53,12 @@ mod first_time_init {
             return None;
         }
 
+        let res = create_event(&mut wait_nwm_event);
+        if res != 0 {
+            nsDbgPrint!(createEventFailed, c_str!("wait nwm"), res);
+            return None;
+        }
+
         let res = create_event(&mut restart_ready_event);
         if res != 0 {
             nsDbgPrint!(createRestartEventFailed, res);
@@ -592,7 +598,7 @@ mod loop_main {
                 0,
                 s.nwm,
                 RP_THREAD_PRIO_MIN as s32,
-                -2,
+                2,
             )?);
 
             let _screen = JoinThread::create(CreateThread::create(
