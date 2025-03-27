@@ -314,14 +314,19 @@ mod loop_main {
                 return None;
             }
 
-            // HACK
-            // reduce latency somewhat
+            let term_sem_count = if entries::get_reliable_stream_delta_prog() {
+                WORK_COUNT as i32
+            } else {
+                // HACK
+                // reduce latency somewhat
+                1
+            };
             let res = svcCreateSemaphore(
                 &mut term_seg_mem_sem,
                 // (RP_CORE_COUNT_MAX + 1) as s32,
                 // (RP_CORE_COUNT_MAX + 1) as s32,
-                1,
-                1,
+                term_sem_count,
+                term_sem_count,
             );
             if res != 0 {
                 nsDbgPrint!(createSemaphoreFailed, c_str!("term_seg_mem_sem"), res);

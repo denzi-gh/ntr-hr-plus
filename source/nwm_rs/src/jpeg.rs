@@ -264,7 +264,7 @@ impl<'a> JpegShared<'a> {
 
         const last_row_last_n_range_f: u32 = 2;
         self.lastRestartRange = mcuRowsTop as u32 / self.coreCount.get()
-            * (if unsafe { entries::get_reliable_stream_delta_prog() } {
+            * (if deltaProg {
                 last_row_last_n_range_f * last_row_last_n_range_f
             } else {
                 last_row_last_n_range_f
