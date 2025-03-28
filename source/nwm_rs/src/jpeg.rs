@@ -262,13 +262,7 @@ impl<'a> JpegShared<'a> {
         let mcuRowsBot = jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcuColSize);
         self.mcusBot = (self.mcusPerRow * mcuRowsBot) as u16;
 
-        const last_row_last_n_range_f: u32 = 2;
-        self.lastRestartRange = mcuRowsTop as u32 / self.coreCount.get()
-            * (if deltaProg {
-                last_row_last_n_range_f * last_row_last_n_range_f
-            } else {
-                last_row_last_n_range_f
-            });
+        self.lastRestartRange = if deltaProg { 64 } else { 32 };
 
         let mut q_steps = 0f32;
         if deltaProg {

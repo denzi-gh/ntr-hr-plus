@@ -350,6 +350,8 @@ static mut core_count_in_use: CoreCount = CoreCount::init();
 static mut current_frame_ids: RangedArray<u8_, SCREEN_COUNT> = const_default();
 static mut last_frame_timings: RangedArray<u32_, SCREEN_COUNT> = const_default();
 static mut frame_times: [u32; SCREEN_COUNT as usize] = const_default();
+static mut last_encoded_screen: ScreenIndex = const_default();
+static mut last_screen_last_row: u32_ = const_default();
 
 pub const frame_time_factor: u32 = 3;
 pub fn get_frame_time(s: ScreenIndex) -> u32 {
@@ -378,6 +380,8 @@ pub unsafe fn set_core_count_in_use(v: u32_) {
 
 pub unsafe fn reset_vars(quality: u32, chroma_ss: u32) {
     last_row_last_n = 0;
+    last_encoded_screen = ScreenIndex::init();
+    last_screen_last_row = 0;
 
     for i in WorkIndex::all() {
         for j in ThreadId::up_to(&get_core_count_in_use()) {
@@ -699,6 +703,14 @@ impl ThreadBeginVars {
 
     pub fn last_row_last_n(&self) -> &mut u32_ {
         unsafe { &mut last_row_last_n }
+    }
+
+    pub fn last_encoded_screen(&self) -> &mut ScreenIndex {
+        unsafe { &mut last_encoded_screen }
+    }
+
+    pub fn last_screen_last_row(&self) -> &mut u32_ {
+        unsafe { &mut last_screen_last_row }
     }
 }
 

@@ -98,6 +98,8 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
             return false;
         }
         let w = v.v().work_index();
+        let last_s = v.last_encoded_screen();
+        let curr_s = ctx.screen();
 
         let core_count = get_core_count_in_use();
         let core_count_rest = core_count.get() - 1;
@@ -138,12 +140,24 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                 }
             };
 
-            let rows_last = cmp::max(
-                (n_last * next + last_row_last_n_range / 2) / last_row_last_n_range,
-                1,
-            );
+            let last_rows_last = v.last_screen_last_row();
+            let update_rows_last = *last_rows_last == 0 || *last_s != curr_s;
+
+            let rows_last = if update_rows_last {
+                cmp::max(
+                    (n_last * next + last_row_last_n_range / 2) / last_row_last_n_range,
+                    1,
+                )
+            } else {
+                *last_rows_last
+            };
             let rows = (mcu_rows - rows_last + core_count_rest - 1) / core_count_rest;
             let rows_last = mcu_rows - rows * core_count_rest;
+
+            if update_rows_last {
+                *last_rows_last = rows_last;
+                *last_s = curr_s;
+            }
             (rows, rows_last)
         } else {
             l.store(last_row_last_n_range, Ordering::Relaxed);
