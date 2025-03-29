@@ -2095,7 +2095,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                             qe.m = qe.m * wr + m * wri;
                         }
                     }
-                    qe.d = qe.d * r + qos_d * ri;
+                    let qd_a = qe.d.abs();
+                    let qd_b = qos_d.abs();
+                    if qd_a * ri > qd_b || qd_b * ri > qd_a {
+                        qe.d = qos_d;
+                    } else {
+                        qe.d = qe.d * r + qos_d * ri;
+                    }
                 };
 
                 let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [4f32, 16f32, 64f32];
