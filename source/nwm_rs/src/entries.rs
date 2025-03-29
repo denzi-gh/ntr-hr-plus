@@ -12,5 +12,5 @@ pub use thread_nwm::{
     packet_data_size_kcp, rp_delta_q_qos, rp_dq_update_size, rp_send_buffer, NwmInfo,
     ReliableStreamMethod,
 };
-pub use thread_screen::{get_no_skip_frame, FRAME_TIMING_FACTOR_DQ};
+// pub use thread_screen::{get_no_skip_frame, FRAME_TIMING_FACTOR_DQ};
 pub use work_thread::{get_frame_time, reset_threads, set_reset_threads_ar};

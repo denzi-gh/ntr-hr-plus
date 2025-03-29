@@ -47,7 +47,7 @@ pub struct nsDbgPrint_t {
 impl nsDbgPrint_t {
     nsDbgPrint_fn!(trace, "Tracing...\n");
 
-    nsDbgPrint_fn!(int, "%s: %d\n", ame: *const c_char, num: s32);
+    nsDbgPrint_fn!(int, "%s: %d\n", name: *const c_char, num: s32);
 
     nsDbgPrint_fn!(convSampPos, "xpos: %d, ypos: %d\n", xpos: s32, ypos: s32);
 

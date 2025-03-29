@@ -536,13 +536,14 @@ impl<'b> Jpeg<'b> {
         self.shared_mut.deltaQCalc = const_default();
         self.shared.coreCount = coreCount;
         self.shared.chromaSS = hq as u8;
-        let (_maxBlocksInMcu, q_steps) = self.shared.setCompInfos(hq, deltaProg);
+        let (maxBlocksInMcu, q_steps) = self.shared.setCompInfos(hq, deltaProg);
         if deltaProg {
             for i in 0..SCREEN_COUNT as usize {
                 for j in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     self.shared_mut.deltaQCalc[i].f[j].m = q_steps;
                     self.shared_mut.deltaQCalc[i].f[j].p = q_steps * q_steps;
                 }
+                self.shared_mut.deltaQCalc[i].nbits = (MIN_DCT_COMP_SIZE * maxBlocksInMcu) as f32;
                 // self.shared_mut.deltaQCalc[i].m = (MIN_DCT_COMP_SIZE * maxBlocksInMcu) as f32 - QS_MIN;
                 // self.shared_mut.deltaQCalc[i].n = q_steps * DELTA_Q_COUNT as f32 + QS_MIN;
             }
@@ -1987,27 +1988,30 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             }
 
             const TARGET_FRAME_RATE: u32 = 60;
-            const TARGET_FRAME_RATE_MIN: u32 = 30;
+            // const TARGET_FRAME_RATE_MIN: u32 = 30;
             let s1 = if s == 0 { 1 } else { 0 };
             let frame_time = entries::get_frame_time(ScreenIndex::init_unchecked(s as u32))
                 .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
             let frame_time_1 = entries::get_frame_time(ScreenIndex::init_unchecked(s1 as u32))
                 .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
-            let frame_rate = f32::min(
-                TARGET_FRAME_RATE as f32,
-                SYSCLOCK_ARM11 as f32 / frame_time as f32,
-            );
-            let frame_rate =
-                frame_rate.max(if entries::get_no_skip_frame(self.worker.info.isTop) {
-                    entries::FRAME_TIMING_FACTOR_DQ as f32
-                } else {
-                    TARGET_FRAME_RATE_MIN as f32
-                });
-            let frame_rate_1 = f32::min(
-                TARGET_FRAME_RATE as f32,
-                SYSCLOCK_ARM11 as f32 / frame_time_1 as f32,
-            );
-            let frame_rate_f = 1f32 / (frame_rate + frame_rate_1);
+            let frame_rate_get_clamp_min = |frame_time: u32| {
+                f32::min(
+                    TARGET_FRAME_RATE as f32,
+                    SYSCLOCK_ARM11 as f32 / frame_time as f32,
+                )
+            };
+            let frame_rate = frame_rate_get_clamp_min(frame_time);
+            let frame_rate_clamp_max = |frame_rate: f32, _s: usize| {
+                // frame_rate.max(if entries::get_no_skip_frame(s == 0) {
+                //     entries::FRAME_TIMING_FACTOR_DQ as f32
+                // } else {
+                //     TARGET_FRAME_RATE_MIN as f32
+                // })
+                frame_rate.max(1f32)
+            };
+            let frame_rate = frame_rate_clamp_max(frame_rate, s);
+            let frame_rate_1 = frame_rate_get_clamp_min(frame_time_1);
+            let frame_rate_f = 1f32 / (frame_rate + frame_rate_clamp_max(frame_rate_1, s1));
 
             let qr = (DELTA_Q_COUNT as u32 / 6
                 + DELTA_Q_COUNT as u32 * self.worker.shared.quality * self.worker.shared.quality
@@ -2105,7 +2109,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
                 let qd = qc.f[0].d.min(0f32);
                 let qd1 = qc1.f[0].d.max(0f32); // todo
-                let qos_c = qos_b + qd + qd1 * frame_rate_1 * mcus1 * mcusi / frame_rate;
+                let qos_c =
+                    qos_b + qd + qd1 * frame_rate_1.min(frame_rate) * mcus1 * mcusi / frame_rate;
 
                 (qos_c, qos_c) // todo
             } else {
@@ -2123,9 +2128,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 ret + self.worker.shared.deltaQParams.m // todo
             };
 
-            if comp_size > 0f32 {
+            {
                 let q_steps_i = self.worker.shared.deltaQParams.q_steps_i;
-                let comp_d = qos - comp_size;
+                let comp_d = if comp_size > 0f32 {
+                    qos - comp_size
+                } else {
+                    0f32
+                };
                 let qd1 = comp_d * q_steps_i;
                 let nd = qc.nbits - nbits;
                 let qd2 = nd * q_steps_i;

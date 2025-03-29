@@ -117,6 +117,7 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
         let n_last = mcu_rows - mcu_rows_per_thread * core_count_rest;
 
         let last_row_last_n_range = get_jpeg().shared.lastRestartRange;
+        const last_row_last_n_f: u32 = 4;
 
         let mut curr = l.load(Ordering::Relaxed);
         let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count.get() > 1 {
@@ -128,8 +129,8 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                         curr
                     }
                 } else {
-                    if curr > 1 {
-                        curr - 1
+                    if curr > core_count_rest {
+                        curr - if core_count.get() == 2 { 1 } else { 2 }
                     } else {
                         curr
                     }
@@ -139,9 +140,11 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                     Err(temp) => curr = temp,
                 }
             };
-
             let last_rows_last = v.last_screen_last_row();
-            let update_rows_last = *last_rows_last == 0 || *last_s != curr_s;
+            let update_rows_last = *last_rows_last == 0
+                || (next as i32 - *last_rows_last as i32).abs() as u32
+                    >= last_row_last_n_range / last_row_last_n_f
+                || *last_s != curr_s;
 
             let rows_last = if update_rows_last {
                 cmp::max(
@@ -152,13 +155,15 @@ fn ready_work(v: &ThreadBeginVars, t: &ThreadId) -> bool {
                 *last_rows_last
             };
             let rows = (mcu_rows - rows_last + core_count_rest - 1) / core_count_rest;
-            let rows_last = mcu_rows - rows * core_count_rest;
 
             if update_rows_last {
+                let rows_last = mcu_rows - rows * core_count_rest;
                 *last_rows_last = rows_last;
                 *last_s = curr_s;
+                (rows, rows_last)
+            } else {
+                (rows, rows_last)
             }
-            (rows, rows_last)
         } else {
             l.store(last_row_last_n_range, Ordering::Relaxed);
             (n, n_last)
@@ -244,7 +249,8 @@ fn do_send_frame(t: &ThreadId, vars: &ThreadDoVars) -> Option<crate::jpeg::JpegR
         let j_count = mcu_size * pitch as usize * i_count as usize;
         let i_count_half = J_MAX_HALF_FACTOR(i_count as u32_) as usize;
 
-        let src = &slice::from_raw_parts(src, ctx.src_len() as usize)[j_start..(j_start + j_count)];
+        let src = slice::from_raw_parts(src, ctx.src_len() as usize)
+            .get_unchecked(j_start..(j_start + j_count));
 
         let mut pre_progress_count = 0;
         let pre_progress = || {

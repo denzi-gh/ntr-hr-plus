@@ -511,38 +511,40 @@ static int ikcp_input_congc(ikcpcc *congc)
 		// nsDbgPrint("avg qos: %"PRIu32", current qos: %"PRIu32"\n", (IUINT32)avg_qos, rp_current_qos);
 		// nsDbgPrint("qos f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_f, (IUINT32)(qos_f * 1000) % 1000);
 
-		if (congc->last_nack_count && congc->avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
-			// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", congc->avg_ack_count >> 16, congc->avg_nack_count >> 16);
-			float qos_dec_f = powf((float)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
-			if (qos_dec_f == 0.0f) {
-				nsDbgPrint("math library error\n");
-			}
-			// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
-			IUINT32 qos = rp_current_qos * qos_dec_f;
-			congc->avg_nack_count = congc->avg_nack_count * qos_dec_f;
-			congc->avg_dur = (IUINT64)congc->avg_dur * (congc->avg_ack_count + congc->avg_nack_count) / avg_count_total;
+		if (avg_count_total > 0 && congc->avg_dur > 0) {
+			if (congc->last_nack_count && congc->avg_nack_count && avg_nack_iratio < KCP_CONGC_DEC_THRES) {
+				// nsDbgPrint("avg ack %"PRIu32", avg nack %"PRIu32"\n", congc->avg_ack_count >> 16, congc->avg_nack_count >> 16);
+				float qos_dec_f = powf((float)(KCP_CONGC_DEC_RATEF - 1) / KCP_CONGC_DEC_RATEF, qos_f);
+				if (qos_dec_f == 0.0f) {
+					nsDbgPrint("math library error\n");
+				}
+				// nsDbgPrint("qos dec f: %"PRIu32".%03"PRIu32"\n", (IUINT32)qos_dec_f, (IUINT32)(qos_dec_f * 1000) % 1000);
+				IUINT32 qos = rp_current_qos * qos_dec_f;
+				congc->avg_nack_count = congc->avg_nack_count * qos_dec_f;
+				congc->avg_dur = (IUINT64)congc->avg_dur * (congc->avg_ack_count + congc->avg_nack_count) / avg_count_total;
 
-			if (qos > qos_max) {
-				nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
-				qos = qos_max;
-			}
-			IUINT32 qos_min = qos_max / KCP_CONGC_DEC_MINF;
-			if (qos < qos_min) {
-				qos = qos_min;
-			}
-			rp_set_qos(qos);
-		} else if (congc->avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
-			IUINT32 qos_avg = avg_qos;
-			IUINT32 qos_thres = qos_avg + MAX(qos_avg,  qos_max / (KCP_CONGC_DEC_MINF / KCP_CONGC_INC_MAXF));
-			IUINT32 qos = rp_current_qos + (IUINT32)(qos_f / KCP_CONGC_INC_RATEF * qos_max);
-			if (qos > qos_thres) {
-				qos = qos_thres;
-			}
-			if (qos > qos_max) {
-				qos = qos_max;
-			}
-			if (qos > rp_current_qos) {
+				if (qos > qos_max) {
+					nsDbgPrint("qos too large: %08"PRIx32"\n", qos);
+					qos = qos_max;
+				}
+				IUINT32 qos_min = qos_max / KCP_CONGC_DEC_MINF;
+				if (qos < qos_min) {
+					qos = qos_min;
+				}
 				rp_set_qos(qos);
+			} else if (congc->avg_nack_count == 0 || avg_nack_iratio >= KCP_CONGC_INC_THRES) {
+				IUINT32 qos_avg = avg_qos;
+				IUINT32 qos_thres = qos_avg + MAX(qos_avg,  qos_max / (KCP_CONGC_DEC_MINF / KCP_CONGC_INC_MAXF));
+				IUINT32 qos = rp_current_qos + (IUINT32)(qos_f / KCP_CONGC_INC_RATEF * qos_max);
+				if (qos > qos_thres) {
+					qos = qos_thres;
+				}
+				if (qos > qos_max) {
+					qos = qos_max;
+				}
+				if (qos > rp_current_qos) {
+					rp_set_qos(qos);
+				}
 			}
 		}
 
