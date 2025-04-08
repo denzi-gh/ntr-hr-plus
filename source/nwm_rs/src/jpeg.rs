@@ -1377,17 +1377,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let corr = divParts[i].corr as u32;
             let shift = divShifts[i];
 
-            if temp < 0 {
-                temp = -temp;
-                let mut product = (temp as u32 + corr) * recip;
-                product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
-                temp = product as i16;
-                temp = -temp;
-            } else {
-                let mut product = (temp as u32 + corr) * recip;
-                product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
-                temp = product as i16;
-            }
+            let sign1 = temp >> (core::mem::size_of_val(&temp) * 8 - 1);
+            let val1 = temp + sign1;
+            let abs = val1 ^ sign1;
+
+            let product = (abs as u32 + corr) * recip;
+            let product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
+            temp = (product as i16 ^ sign1) - sign1;
 
             if DELTA_Q {
                 if UPDATE_PREV {
