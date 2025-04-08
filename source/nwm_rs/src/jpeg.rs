@@ -1343,7 +1343,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             if RESCALE_PREV {
                 if RESCALE_PREV_SHR {
                     let mask = core::intrinsics::unchecked_shl(1, s) - 1;
-                    let off = (c >> (JCoef::BITS as u8 - 1)) & ((c & mask) > 0) as JCoef;
+                    let off = (c < 0) as JCoef & ((c & mask) > 0) as JCoef;
                     core::intrinsics::unchecked_shr(c, s) + off
                 } else {
                     core::intrinsics::unchecked_shl(c, s)
@@ -1379,8 +1379,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let shift = divShifts[i];
 
             let sign1 = temp >> (core::mem::size_of_val(&temp) * 8 - 1);
-            let val1 = temp + sign1;
-            let abs = val1 ^ sign1;
+            let abs = (temp + sign1) ^ sign1;
 
             let product = (abs as u32 + corr) * recip;
             let product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
@@ -1554,11 +1553,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                                                     let mask = core::intrinsics::unchecked_shl(
                                                         1, deltaQ0[i],
                                                     ) - 1;
-                                                    let off_next = (cache.next[i]
-                                                        >> (JCoef::BITS as u8 - 1))
+                                                    let off_next = (cache.next[i] < 0) as JCoef
                                                         & ((cache.next[i] & mask) > 0) as JCoef;
-                                                    let off_prev = ((*prev)[i]
-                                                        >> (JCoef::BITS as u8 - 1))
+                                                    let off_prev = ((*prev)[i] < 0) as JCoef
                                                         & (((*prev)[i] & mask) > 0) as JCoef;
                                                     let off_diff = (((*prev)[i] & mask)
                                                         > (cache.next[i] & mask))
@@ -1568,8 +1565,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                                                     let mask = core::intrinsics::unchecked_shl(
                                                         1, deltaQ0[i],
                                                     ) - 1;
-                                                    let off_next = (cache.next[i]
-                                                        >> (JCoef::BITS as u8 - 1))
+                                                    let off_next = (cache.next[i] < 0) as JCoef
                                                         & ((cache.next[i] & mask) > 0) as JCoef;
                                                     (off_next, off_next)
                                                 };
