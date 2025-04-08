@@ -830,6 +830,7 @@ fn JPEG_NBITS_NONZERO(x: i32) -> u8 {
     (mem::size_of_val(&x) * 8 - x.leading_zeros() as usize) as u8
 }
 
+#[allow(unused)]
 fn JPEG_NBITS(x: i32) -> u8 {
     if x > 0 {
         JPEG_NBITS_NONZERO(x)
@@ -1674,13 +1675,13 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let sign1 = val >> (i32::BITS as u8 - 1);
             let val1 = val + sign1;
             let abs = val1 ^ sign1;
-            (val1, JPEG_NBITS(abs) as i32, block[0])
+            (val1, JPEG_NBITS_NONZERO(abs) as i32, block[0])
         } else {
             let val = block[0] as i32 - last_dc_val as i32;
             let sign1 = val >> (i32::BITS as u8 - 1);
             let val1 = val + sign1;
             let abs = val1 ^ sign1;
-            (val1, JPEG_NBITS(abs) as i32, block[0])
+            (val1, JPEG_NBITS_NONZERO(abs) as i32, block[0])
         };
 
         unsafe {
