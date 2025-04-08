@@ -132,7 +132,6 @@ pub struct DeltaQCache {
     next: JBlock,
     xpos: u16,
     ypos: u16,
-    hit: bool,
 }
 
 pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
@@ -153,6 +152,7 @@ pub struct JpegSharedMut {
     dQRescalePrev: [i8; WORK_COUNT as usize],
     rPShifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; WORK_COUNT as usize],
     deltaQCache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; WORK_COUNT as usize],
+    deltaQCacheNext: [[u8; MAX_COMPONENTS]; WORK_COUNT as usize],
     deltaQCalc: [DeltaQManager; SCREEN_COUNT as usize],
     rand32: Rand32,
 }
@@ -1468,6 +1468,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         let w = self.worker.info.workIndex.get() as usize;
         let mut blkn = 0;
         let cache = unsafe { self.worker.shared_mut.deltaQCache.get_unchecked_mut(w) };
+        let cache_next_i = unsafe { self.worker.shared_mut.deltaQCacheNext.get_unchecked_mut(w) };
         let deltaQ = unsafe { *self.worker.shared_mut.workDeltaQ.get_unchecked(w) as usize };
         let deltaQ0 = unsafe { self.worker.shared.deltaQ0Tbls.get_unchecked(deltaQ) };
         let mut delta_cache_start = 0;
@@ -1526,12 +1527,16 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     };
 
                     if DELTA_CACHE {
-                        for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
+                        for qi in cache_next_i[ci]..DELTA_Q_CACHE_COUNTS[ci] {
                             let delta_cache_i = delta_cache_start + qi;
                             let cache = unsafe { cache.get_unchecked_mut(delta_cache_i as usize) };
 
-                            if cache.hit {
-                                continue;
+                            if cache.ypos > ypos {
+                                break;
+                            }
+
+                            if cache.ypos == ypos && cache.xpos > xpos {
+                                break;
                             }
 
                             if cache.xpos == xpos && cache.ypos == ypos {
@@ -1580,7 +1585,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                                     }
                                 }
                                 // nsDbgPrint!(int, c_str!("blkn"), blkn as i32);
-                                cache.hit = true;
+                                cache_next_i[ci] = qi + 1;
                                 cache_hit = true;
                                 break;
                             }
@@ -1869,6 +1874,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let deltaQ = self.worker.shared_mut.deltaQ.get_unchecked_mut(s);
             let rand32 = &mut self.worker.shared_mut.rand32;
             let cache = self.worker.shared_mut.deltaQCache.get_unchecked_mut(w);
+            let cache_next_i = self.worker.shared_mut.deltaQCacheNext.get_unchecked_mut(w);
             let prevDeltaQ = *deltaQ;
             let deltaQ0 = self
                 .worker
@@ -1896,6 +1902,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let mut next_tick = entries::get_next_send_tick();
 
             for ci in 0..MAX_COMPONENTS {
+                cache_next_i[ci] = 0;
+
                 let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
                 let comp = &self.worker.shared.compInfos.infos[ci];
@@ -1930,7 +1938,6 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
 
                     cache.xpos = xpos as u16;
                     cache.ypos = ypos as u16;
-                    cache.hit = false;
 
                     let prev = prev.add(
                         mcu_i as usize * self.worker.shared.maxBlocksInMcu
