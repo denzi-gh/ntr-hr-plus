@@ -386,7 +386,7 @@ static void plgSetBufferSwapCommon(u32 isDisplay1, u32 addr, u32 addrB, u32 stri
 		}
 	} else {
 		u32 pid = getCurrentProcessId();
-		rpSetGamePid(pid == ntrConfig->HomeMenuPid ? 0 : pid);
+		rpSetGamePid(pid == ntrConfig->HomeMenuPid ? 0 : pid, 1);
 	}
 
 	int isDirty = 0;

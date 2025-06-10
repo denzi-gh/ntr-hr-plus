@@ -26,7 +26,8 @@ pub fn handlePort(t: ThreadVars, cmd_id: u32_, norm_params: &[u32_], trans_param
         }
         SVC_NWM_CMD_GAME_PID_UPDATE => {
             let game_pid = *norm_params.get(0).unwrap_or(&0);
-            t.config().set_game_pid_ar(game_pid);
+            let flag = *norm_params.get(1).unwrap_or(&0);
+            t.config().set_game_pid_ar(game_pid, flag);
         }
         _ => (),
     }

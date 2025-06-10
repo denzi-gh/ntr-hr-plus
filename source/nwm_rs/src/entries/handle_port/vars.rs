@@ -3,8 +3,17 @@ use super::*;
 pub struct Config(());
 
 impl Config {
-    pub fn set_game_pid_ar(&self, v: u32_) {
-        unsafe { AtomicU32::from_mut(&mut (*rp_config).gamePid) }.store(v, Ordering::Relaxed);
+    // #[named]
+    pub fn set_game_pid_ar(&self, v: u32_, flag: u32_) {
+        // nsDbgPrint!(int, c_str!("game_pid"), v as i32);
+        // nsDbgPrint!(int, c_str!("flag"), flag as i32);
+        if flag > 0 {
+            unsafe {
+                crate::entries::thread_screen::set_port_game_pid(v);
+            }
+        } else {
+            unsafe { AtomicU32::from_mut(&mut (*rp_config).gamePid) }.store(v, Ordering::Relaxed);
+        }
     }
 
     pub fn set_ar(&self, a: &[u32_]) -> bool {
@@ -30,9 +39,8 @@ impl ThreadVars {
 
     pub fn set_port_game_pid_ar(&self, v: u32_) {
         unsafe {
-            crate::entries::thread_screen::set_port_game_pid(v);
-            // self.config()
-            //     .set_game_pid_ar(if v == (*ntr_config).HomeMenuPid { 0 } else { v });
+            self.config()
+                .set_game_pid_ar(if v == (*ntr_config).HomeMenuPid { 0 } else { v }, 1);
         }
     }
 

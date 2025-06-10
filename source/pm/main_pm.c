@@ -359,7 +359,7 @@ static int pmInjectToGame(Handle hGameProcess) {
 	}
 
 	nsDbgPrint("Game pid :%"PRIx32"\n", pid);
-	rpSetGamePid(pid);
+	rpSetGamePid(pid, 0);
 
 	plgLoader->gamePluginPid = pid;
 	ret = pmSaveToMenu(&plgLoader->gamePluginPid, sizeof(plgLoader->gamePluginPid));

@@ -68,8 +68,15 @@ fn is_in_fcram(phys: u32_) -> bool {
     false
 }
 
+// #[named]
 unsafe fn close_game_handle() {
     if cap_params.game != 0 {
+        // nsDbgPrint!(
+        //     int,
+        //     c_str!("cap_params.game_pid"),
+        //     cap_params.game_pid as i32
+        // );
+
         let _ = svcCloseHandle(cap_params.game);
         cap_params.game = 0;
         cap_params.game_fcram_base = 0;
@@ -377,6 +384,9 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
             }
             let cap_info = update_gpu_regs(is_top);
             if cap_info.fill & (1 << 24) > 0 {
+                unsafe {
+                    close_game_handle();
+                }
                 continue;
             }
 

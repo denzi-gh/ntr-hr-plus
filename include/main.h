@@ -66,7 +66,7 @@ void handlePortCmd(u32 cmd_id, u32 norm_param_count, u32 trans_param_size, u32 *
 void handlePortThreadPre(void);
 void handlePortThread(void *arg);
 Handle rpGetPortHandle(void);
-void rpSetGamePid(u32 gamePid);
+void rpSetGamePid(u32 gamePid, u32 flag);
 int remotePlayMenu(u32 localaddr);
 int nsDbgNext(void);
 u32 plgRegisterCallback(u32 type, void* callback, u32);
