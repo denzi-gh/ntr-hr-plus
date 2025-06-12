@@ -161,6 +161,12 @@ mod first_time_init {
         }
         recv_seg_mem_inited.store(true, Ordering::Release);
 
+        let res = svcCreateMutex(&mut screen_handles_lock, false);
+        if res != 0 {
+            nsDbgPrint!(createScreenMutexFailed, res);
+            return None;
+        }
+
         let aux1Stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
         let aux2Stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
         let nwmStack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;

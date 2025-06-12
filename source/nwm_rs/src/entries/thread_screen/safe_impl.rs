@@ -68,6 +68,35 @@ fn is_in_fcram(phys: u32_) -> bool {
     false
 }
 
+#[named]
+pub fn close_handles() {
+    unsafe {
+        if cap_params.game != 0 || overlay_game_handle != 0 {
+            loop {
+                if entries::reset_threads() {
+                    return;
+                }
+                let res = svcWaitSynchronization(screen_handles_lock, THREAD_WAIT_NS);
+                if res != 0 {
+                    if res != RES_TIMEOUT as s32 {
+                        svcSleepThread(THREAD_WAIT_NS);
+                        return;
+                    }
+                    continue;
+                }
+                break;
+            }
+
+            close_game_handle();
+
+            let res = svcReleaseMutex(screen_handles_lock);
+            if res != 0 {
+                nsDbgPrint!(releaseMutexFailed, c_str!("screen_handles_lock"), res);
+            }
+        }
+    }
+}
+
 // #[named]
 unsafe fn close_game_handle() {
     if cap_params.game != 0 {
@@ -126,7 +155,13 @@ unsafe fn get_game_handle() -> Handle {
                         let res = getProcessTIDByHandle(process, tid.as_mut_ptr() as *mut _) as s32;
                         if res == 0 {
                             if tid.assume_init().get_unchecked(1) & 0xffff == 0 {
+                                if cap_params.pid == pid {
+                                    svcSleepThread(THREAD_WAIT_NS);
+                                    cap_params.pid = 0;
+                                    continue;
+                                }
                                 cap_params.game = process;
+                                cap_params.pid = pid;
                                 break;
                             }
                         }
@@ -271,6 +306,7 @@ unsafe fn capture_screen(is_top: bool, cap_info: &CapInfo, dst: u32, w: WorkInde
     true
 }
 
+#[named]
 pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
     loop {
         let vars_sync = sync.acquire()?;
@@ -384,14 +420,36 @@ pub fn thread_screen_loop(sync: ScreenEncodeSync) -> Option<()> {
             }
             let cap_info = update_gpu_regs(is_top);
             if cap_info.fill & (1 << 24) > 0 {
-                unsafe {
-                    close_game_handle();
-                }
+                close_handles();
                 continue;
             }
 
             let w = vars.screen_work_index();
-            if unsafe { capture_screen(is_top, &cap_info, vars.img_dst(is_top), w) } {
+            if unsafe {
+                let mut ret = loop {
+                    if entries::reset_threads() {
+                        break false;
+                    }
+                    let res = svcWaitSynchronization(screen_handles_lock, THREAD_WAIT_NS);
+                    if res != 0 {
+                        if res != RES_TIMEOUT as s32 {
+                            svcSleepThread(THREAD_WAIT_NS);
+                            break false;
+                        }
+                        continue;
+                    }
+                    break true;
+                };
+                if ret {
+                    ret = capture_screen(is_top, &cap_info, vars.img_dst(is_top), w);
+
+                    let res = svcReleaseMutex(screen_handles_lock);
+                    if res != 0 {
+                        nsDbgPrint!(releaseMutexFailed, c_str!("screen_handles_lock"), res);
+                    }
+                }
+                ret
+            } {
                 vars.release(is_top, cap_info.format, w);
                 break;
             }

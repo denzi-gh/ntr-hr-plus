@@ -1,5 +1,7 @@
 use super::*;
 
+pub use super::safe_impl::close_handles;
+
 static mut priority_is_top: bool = false;
 static mut priority_factor: u32_ = 0;
 static mut priority_factor_scaled: u32_ = 0;
@@ -28,6 +30,7 @@ pub struct CapParams {
     pub game: Handle,
     pub game_pid: u32_,
     pub game_fcram_base: u32_,
+    pub pid: u32_,
 }
 
 pub static mut cap_params: CapParams = const_default();

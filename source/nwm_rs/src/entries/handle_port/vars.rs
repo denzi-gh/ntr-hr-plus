@@ -13,6 +13,7 @@ impl Config {
             }
         } else {
             unsafe { AtomicU32::from_mut(&mut (*rp_config).gamePid) }.store(v, Ordering::Relaxed);
+            crate::entries::thread_screen::close_handles();
         }
     }
 

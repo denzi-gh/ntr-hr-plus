@@ -81,6 +81,8 @@ impl nsDbgPrint_t {
 
     nsDbgPrint_fn!(waitRestartEventFailed, "Wait restart event failed %08x\n", ret: s32);
 
+    nsDbgPrint_fn!(createScreenMutexFailed, "Create screen handles mutex failed %08x\n", ret: s32);
+
     nsDbgPrint_fn!(createPortEventFailed, "Create port event failed %08x\n", ret: s32);
 
     nsDbgPrint_fn!(createNwmEventFailed, "Create nwm event failed %08x\n", ret: s32);
