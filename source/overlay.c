@@ -287,7 +287,7 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 
 	OVERLAY_STATS_INFO *ov = &nsConfig->ovStats;
 	struct overlay_stats_screen_t *stats = &ov->s[s];
-#define PARTS(n) (n) / 1000, abs(n) % 1000
+#define PARTS(n) (u32)((n) / 1000), (u32)(abs(n) % 1000)
 	switch (ov->kcp_mode) {
 		case 0: {
 			char buf[LOCAL_OPT_TEXT_BUF_SIZE];
