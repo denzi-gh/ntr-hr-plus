@@ -258,6 +258,7 @@ int nsPoll2(int s) {
 		if (nsControlRecv(nwm_recv_sock) < 0) {
 			// nsDbgPrint("nsControlRecv failed\n");
 			nsPoll2End();
+			return -1;
 		}
 	}
 	if (pi[0].revents & (POLLIN | POLLHUP))

@@ -561,7 +561,7 @@ unsafe extern "C" fn nsControlRecv(fd: c_int) -> c_int {
             let err = *__errno();
             if err != ctru::EWOULDBLOCK as i32 || err != ctru::EAGAIN as i32 {
                 nsDbgPrint!(nwmInputFailed, ret as i32, err);
-                return 0;
+                return -1;
             }
             break;
         }
