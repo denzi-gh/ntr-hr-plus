@@ -458,6 +458,61 @@ static int pluginLoaderMenu(void) {
 	return 0;
 }
 
+int nfcPatched = 0;
+static void rpDoNFCPatch(void) {
+	if (nfcPatched) {
+		showMsg("Already patched NFC");
+		return;
+	}
+
+	int pid = 0x1a; // nwm process
+	Handle hProcess;
+	int ret;
+	if ((ret = svcOpenProcess(&hProcess, pid))) {
+		showMsg("Failed to open nwm process");
+		return;
+	}
+
+	u32 addr = 0x0105AE4;
+	u16 buf;
+	if ((ret = rtCheckRemoteMemory(hProcess, addr, sizeof(buf), MEMPERM_READ))) {
+		showMsg("Failed to protect nwm memory");
+		goto final;
+	}
+
+	if ((ret = copyRemoteMemory(CUR_PROCESS_HANDLE, &buf, hProcess, (void *)addr, sizeof(buf)))) {
+		showMsg("Failed to read nwm memory");
+		goto final;
+	}
+
+	if (buf == 0x4620) {
+		nsDbgPrint("patching NFC (11.4) firm\n");
+		addr = 0x0105B00;
+	} else {
+		nsDbgPrint("patching NFC (<= 11.3) firm\n");
+	}
+
+	if ((ret = rtCheckRemoteMemory(hProcess, addr, sizeof(buf), MEMPERM_READWRITE | MEMPERM_EXECUTE))) {
+		showMsg("Failed to protect nwm memory for write");
+		goto final;
+	}
+
+	buf = 0x4770;
+	if ((ret = copyRemoteMemory(hProcess, (void *)addr, CUR_PROCESS_HANDLE, &buf, sizeof(buf)))) {
+		showMsg("Failed to write nwm memory");
+		goto final;
+	}
+
+	ASL(&nfcPatched, 1);
+	showMsg("NFC patch success");
+
+	rpCheckReliableStreamForNFC();
+
+final:
+	svcCloseHandle(hProcess);
+	return;
+}
+
 enum {
 	HOTKEY_ENTRY_X_Y,
 	HOTKEY_ENTRY_L_START,
@@ -561,6 +616,7 @@ enum {
 	MENU_ENTRY_PLUGIN_LOADER,
 	MENU_ENTRY_HOTKEY,
 	MENU_ENTRY_CPU_MODE,
+	MENU_ENTRY_NFC_PATCH,
 	MENU_ENTRY_QTM_PATCH,
 
 	MENU_ENTRIES_COUNT,
@@ -587,6 +643,7 @@ static void showMainMenu(void) {
 		entries[MENU_ENTRY_PLUGIN_LOADER] = plgTranslate("Plugin Loader");
 		entries[MENU_ENTRY_HOTKEY] = plgTranslate("Set Menu Hotkey");
 		entries[MENU_ENTRY_CPU_MODE] = plgTranslate("CPU Clock & Cache");
+		entries[MENU_ENTRY_NFC_PATCH] = plgTranslate("NFC Patch");
 		entries[MENU_ENTRY_QTM_PATCH] = qtmDisabled ? plgTranslate("QTM Enable") : plgTranslate("QTM Disable");
 		u32 count = MENU_ENTRIES_COUNT;
 
@@ -597,6 +654,7 @@ static void showMainMenu(void) {
 
 		const char *descs[MENU_ENTRIES_COUNT_MAX] = { 0 };
 		descs[MENU_ENTRY_PLUGIN_LOADER] = "Changes in here may need game restart\nto take effect.";
+		descs[MENU_ENTRY_NFC_PATCH] = "Allow remote play to continue in games\nsuch as USUM.";
 		descs[MENU_ENTRY_QTM_PATCH] = qtmDisabled ?
 			"Restore head tracking." :
 			"Disable head tracking for current boot\nto speed up remote play.\nNew 3DS only; no effect on New 2DS.";
@@ -630,6 +688,12 @@ static void showMainMenu(void) {
 
 			case MENU_ENTRY_CPU_MODE:
 				ntrCPUModeMenu();
+				break;
+
+			case MENU_ENTRY_NFC_PATCH:
+				releaseVideo();
+				rpDoNFCPatch();
+				acquireVideo();
 				break;
 
 			case MENU_ENTRY_QTM_PATCH:

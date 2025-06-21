@@ -17,6 +17,7 @@ typedef struct {
 
 int rpStartupFromMenu(RP_CONFIG *config);
 void rpStartup(u8 *buf);
+void rpCheckReliableStreamForNFC(void);
 
 typedef u32 (*sendPacketTypedef)(u8 *, u32);
 extern sendPacketTypedef nwmSendPacket;
