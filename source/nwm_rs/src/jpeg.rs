@@ -2077,7 +2077,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     let ri = 1f32 / rb;
                     let r = 1f32 - ri;
 
-                    if need_ov_stats && qc.qd > 0 {
+                    if false && need_ov_stats && qc.qd > 0 {
                         let qd = qc.qd as f32;
 
                         let nd = qc.nbits - comp_size;
@@ -2104,7 +2104,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     }
                 };
 
-                let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [4f32, 16f32, 64f32];
+                let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [4f32 /*, 16f32, 64f32*/];
                 for i in 0..(if need_ov_stats {
                     RP_DELTA_Q_COEFS_COUNT as usize
                 } else {
@@ -2191,8 +2191,8 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 ov_screen.qd = qc.qd as u32_;
                 for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     let f = &mut ov_screen.f[i];
-                    f.m = (qc.f[i].m * 1000f32) as s32;
-                    f.p = (sqrtf(qc.f[i].p) * 1000f32) as s32;
+                    // f.m = (qc.f[i].m * 1000f32) as s32;
+                    // f.p = (sqrtf(qc.f[i].p) * 1000f32) as s32;
                     f.d = (qc.f[i].d * 1000f32) as s32;
                 }
             }

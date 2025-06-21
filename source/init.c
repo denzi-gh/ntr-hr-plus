@@ -249,15 +249,14 @@ void unloadPayloadBin(void) {
 	}
 }
 
-void rpSetGamePid(u32 gamePid, u32 flag) {
+void rpSetGamePid(u32 gamePid) {
 	Handle hClient = rpGetPortHandle();
 	if (!hClient)
 		return;
 
 	u32* cmdbuf = getThreadCommandBuffer();
-	cmdbuf[0] = IPC_MakeHeader(SVC_NWM_CMD_GAME_PID_UPDATE, 2, 0);
+	cmdbuf[0] = IPC_MakeHeader(SVC_NWM_CMD_GAME_PID_UPDATE, 1, 0);
 	cmdbuf[1] = gamePid;
-	cmdbuf[2] = flag;
 
 	s32 ret = svcSendSyncRequest(hClient);
 	if (ret != 0) {

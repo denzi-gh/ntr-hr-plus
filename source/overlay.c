@@ -248,20 +248,20 @@ static void drawOverlayOnScreenMode0(u32 addr, u32 stride, u32 format, u32 scrnW
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf);
 }
 
-static void drawOverlayOnScreenMode2(u32 addr, u32 stride, u32 format, u32 scrnWidth, const char *buf, const char *buf2, const char *buf3, const char *buf4, const char *buf5/*, const char *buf6*/) {
+static void drawOverlayOnScreenMode2(u32 addr, u32 stride, u32 format, u32 scrnWidth, const char *buf, const char *buf2, const char *buf3/*, const char *buf4, const char *buf5, const char *buf6*/) {
 	int len = strlen(buf);
 	int len2 = strlen(buf2);
 	int len3 = strlen(buf3);
-	int len4 = strlen(buf4);
-	int len5 = strlen(buf5);
+	// int len4 = strlen(buf4);
+	// int len5 = strlen(buf5);
 	// int len6 = strlen(buf6);
-	ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 5 + ROW_MARGIN * 6, MAX(MAX(MAX(MAX(len, len2), len3), len4), len5) * CHAR_WIDTH + COL_MARGIN * 2, 1);
+	ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 3 + ROW_MARGIN * 4, MAX(MAX(len, len2), len3) * CHAR_WIDTH + COL_MARGIN * 2, 1);
 	// ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 6 + ROW_MARGIN * 7, MAX(MAX(MAX(MAX(MAX(len, len2), len3), len4), len5), len6) * CHAR_WIDTH + COL_MARGIN * 2, 1);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 2 + CHAR_HEIGHT, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf2);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 3 + CHAR_HEIGHT * 2, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf3);
-	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 4 + CHAR_HEIGHT * 3, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf4);
-	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 5 + CHAR_HEIGHT * 4, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf5);
+	// ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 4 + CHAR_HEIGHT * 3, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf4);
+	// ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 5 + CHAR_HEIGHT * 4, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf5);
 	// ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 6 + CHAR_HEIGHT * 5, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf6);
 }
 
@@ -316,10 +316,13 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 			}
 		}
 			break;
+// #define PRINT_DELTA_Q(buf, f) \
+// 	xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE, \
+// 	"%3"PRId32".%03"PRId32" %4"PRId32".%03"PRId32" %4"PRId32".%03"PRId32, \
+// 	PARTS((f).m), PARTS((f).p), PARTS((f).d))
 #define PRINT_DELTA_Q(buf, f) \
 	xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE, \
-	"%3"PRId32".%03"PRId32" %4"PRId32".%03"PRId32" %4"PRId32".%03"PRId32, \
-	PARTS((f).m), PARTS((f).p), PARTS((f).d))
+	"%4"PRId32".%03"PRId32, PARTS((f).d))
 		case 2: {
 			char buf[LOCAL_OPT_TEXT_BUF_SIZE];
 			xsnprintf(buf, LOCAL_OPT_TEXT_BUF_SIZE,
@@ -334,15 +337,15 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 				PARTS(stats->delta_q.qb), PARTS(stats->delta_q.qc), PARTS(stats->delta_q.nbits), stats->delta_q.qd);
 			char buf3[LOCAL_OPT_TEXT_BUF_SIZE];
 			PRINT_DELTA_Q(buf3, stats->delta_q.f[0]);
-			char buf4[LOCAL_OPT_TEXT_BUF_SIZE];
-			PRINT_DELTA_Q(buf4, stats->delta_q.f[1]);
-			char buf5[LOCAL_OPT_TEXT_BUF_SIZE];
-			PRINT_DELTA_Q(buf5, stats->delta_q.f[2]);
+			// char buf4[LOCAL_OPT_TEXT_BUF_SIZE];
+			// PRINT_DELTA_Q(buf4, stats->delta_q.f[1]);
+			// char buf5[LOCAL_OPT_TEXT_BUF_SIZE];
+			// PRINT_DELTA_Q(buf5, stats->delta_q.f[2]);
 			// char buf6[LOCAL_OPT_TEXT_BUF_SIZE];
 			// PRINT_DELTA_Q(buf4, stats->delta_q.f[3]);
-			drawOverlayOnScreenMode2(addr, stride, format, scrnWidth, buf, buf2, buf3, buf4, buf5/*, buf6*/);
+			drawOverlayOnScreenMode2(addr, stride, format, scrnWidth, buf, buf2, buf3/*, buf4, buf5, buf6*/);
 			if (isDisplay1 == 0 && addrB && addrB != addr)  {
-				drawOverlayOnScreenMode2(addrB, stride, format, scrnWidth, buf, buf2, buf3, buf4, buf5/*, buf6*/);
+				drawOverlayOnScreenMode2(addrB, stride, format, scrnWidth, buf, buf2, buf3/*, buf4, buf5, buf6*/);
 			}
 		}
 #undef PRINT_DELTA_Q
@@ -373,20 +376,15 @@ static RT_HOOK SetBufferSwapHook;
 
 static int rpPortSend(u32 isTop);
 static void plgSetBufferSwapCommon(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format) {
-	if (plgLoaderEx->remotePlayBoost) {
-		if (plgOverlayEvent && *plgOverlayEvent) {
-			ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
-			s32 ret;
-			ret = svcSignalEvent(*plgOverlayEvent);
-			if (ret != 0) {
-				nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
-			}
-		} else {
-			rpPortSend(isDisplay1 ? 0 : 1);
+	if (plgLoaderEx->remotePlayBoost && plgOverlayEvent && *plgOverlayEvent) {
+		ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
+		s32 ret;
+		ret = svcSignalEvent(*plgOverlayEvent);
+		if (ret != 0) {
+			nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
 		}
 	} else {
-		u32 pid = getCurrentProcessId();
-		rpSetGamePid(pid == ntrConfig->HomeMenuPid ? 0 : pid, 1);
+		rpPortSend(isDisplay1 ? 0 : 1);
 	}
 
 	int isDirty = 0;
