@@ -108,3 +108,4 @@ pub static mut restart_done_event: Handle = const_default();
 pub static mut restart_sleep: bool = const_default();
 pub static mut restart_pending: bool = const_default();
 pub static mut screen_handles_lock: Handle = const_default();
+pub static mut screen_handles_inited: AtomicBool = const_default();

@@ -166,6 +166,7 @@ mod first_time_init {
             nsDbgPrint!(createScreenMutexFailed, res);
             return None;
         }
+        screen_handles_inited.store(true, Ordering::Release);
 
         let aux1Stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
         let aux2Stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
@@ -576,58 +577,61 @@ mod loop_main {
 
             let core_count = vars.core_count.get();
 
-            let _aux1 = if core_count >= 2 {
-                Some(JoinThread::create(CreateThread::create(
-                    Some(crate::entries::thread_aux::thread_aux),
-                    1,
-                    s.aux1,
-                    vars.thread_prio as i32,
-                    3,
-                )?))
-            } else {
-                None
-            };
+            {
+                let _aux1 = if core_count >= 2 {
+                    Some(JoinThread::create(CreateThread::create(
+                        Some(crate::entries::thread_aux::thread_aux),
+                        1,
+                        s.aux1,
+                        vars.thread_prio as i32,
+                        3,
+                    )?))
+                } else {
+                    None
+                };
 
-            let _aux2 = if core_count >= 3 {
-                Some(JoinThread::create(CreateThread::create(
-                    Some(crate::entries::thread_aux::thread_aux),
+                let _aux2 = if core_count >= 3 {
+                    Some(JoinThread::create(CreateThread::create(
+                        Some(crate::entries::thread_aux::thread_aux),
+                        2,
+                        s.aux2,
+                        RP_THREAD_PRIO_MAX as s32,
+                        1,
+                    )?))
+                } else {
+                    None
+                };
+
+                let _nwm = JoinThread::create(CreateThread::create(
+                    Some(match entries::thread_nwm::get_reliable_stream_method() {
+                        entries::thread_nwm::ReliableStreamMethod::None => {
+                            crate::entries::thread_nwm::thread_nwm
+                        }
+                        entries::thread_nwm::ReliableStreamMethod::KCP => {
+                            crate::entries::thread_nwm::kcp_thread_nwm
+                        }
+                    }),
+                    0,
+                    s.nwm,
+                    RP_THREAD_PRIO_MIN as s32,
                     2,
-                    s.aux2,
-                    RP_THREAD_PRIO_MAX as s32,
-                    1,
-                )?))
-            } else {
-                None
-            };
+                )?);
 
-            let _nwm = JoinThread::create(CreateThread::create(
-                Some(match entries::thread_nwm::get_reliable_stream_method() {
-                    entries::thread_nwm::ReliableStreamMethod::None => {
-                        crate::entries::thread_nwm::thread_nwm
-                    }
-                    entries::thread_nwm::ReliableStreamMethod::KCP => {
-                        crate::entries::thread_nwm::kcp_thread_nwm
-                    }
-                }),
-                0,
-                s.nwm,
-                RP_THREAD_PRIO_MIN as s32,
-                2,
-            )?);
+                let _screen = JoinThread::create(CreateThread::create(
+                    Some(crate::entries::thread_screen::thread_screen),
+                    0,
+                    s.screen,
+                    RP_THREAD_PRIO_MIN as s32,
+                    2,
+                )?);
 
-            let _screen = JoinThread::create(CreateThread::create(
-                Some(crate::entries::thread_screen::thread_screen),
-                0,
-                s.screen,
-                RP_THREAD_PRIO_MIN as s32,
-                2,
-            )?);
+                rp_svc_print_limits();
 
-            rp_svc_print_limits();
-
-            let t = crate::ThreadId::init();
-            crate::entries::work_thread::work_thread_loop(t);
-            crate::entries::work_thread::set_reset_threads_ar();
+                let t = crate::ThreadId::init();
+                crate::entries::work_thread::work_thread_loop(t);
+                crate::entries::work_thread::set_reset_threads_ar();
+            }
+            crate::entries::thread_screen::close_handles();
 
             nsDbgPrint!(mainLoopReset);
         }

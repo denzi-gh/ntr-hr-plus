@@ -7,7 +7,9 @@ impl Config {
     pub fn set_game_pid_ar(&self, v: u32_) {
         // nsDbgPrint!(int, c_str!("game_pid"), v as i32);
         unsafe { AtomicU32::from_mut(&mut (*rp_config).gamePid) }.store(v, Ordering::Relaxed);
-        crate::entries::thread_screen::close_handles();
+        if unsafe { screen_handles_inited.load(Ordering::Acquire) } {
+            crate::entries::thread_screen::close_handles();
+        }
     }
 
     pub fn set_ar(&self, a: &[u32_]) -> bool {
