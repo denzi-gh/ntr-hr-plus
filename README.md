@@ -90,6 +90,10 @@ The recommended way is to enable Input Redirection under Misc. settings in Rosal
 
 Alternatively, apply NFC patch in the NTR-HR menu. This method however is not compatible with Reliable Stream, which will automatically be disabled.
 
+### Improve performance on New 3DS to be closer to New 2DS
+
+QTM disable option in the NTR-HR menu can be used to increase Remote Play performance (max frame-rate) for New 3DS by around 10%~15%, making it closer to New 2DS. This should have no effect on gameplay. This will also **NOT** fix lag due to WiFi environment.
+
 ## License
 
 GPLv2 as the original NTR 3.6 by cell9.
