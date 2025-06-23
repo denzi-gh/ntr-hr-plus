@@ -1,3 +1,5 @@
+// Contains code modified from https://github.com/44670/ntr_overlay_samples
+
 #include "global.h"
 
 #include "3ds/ipc.h"
