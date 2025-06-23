@@ -92,7 +92,7 @@ Alternatively, apply NFC patch in the NTR-HR menu. This method however is not co
 
 ### Improve performance on New 3DS to be closer to New 2DS
 
-QTM disable option in the NTR-HR menu can be used to increase Remote Play performance (max frame-rate) for New 3DS by around 10%~15%, making it closer to New 2DS. This should have no effect on gameplay. This will also **NOT** fix lag due to WiFi environment.
+QTM disable option in the NTR-HR menu can be used to increase Remote Play performance (max frame-rate) for New 3DS by around 10%~15%, making it closer to New 2DS. This should have no effect on gameplay. This will **NOT** fix lag due to WiFi environment. It only give more CPU time for Remote Play on your 3DS, while lag is mostly due to WiFi setup.
 
 ## License
 
