@@ -76,7 +76,19 @@ Audio capture is **NOT** supported. Use a 3.5 mm audio aux cable to connect from
 
 ### New 3DS/New 2DS only
 
-Old (original) 3DS and 2DS are not supported. Only the New variants has the CPU necessary to stream at a usable frame-rate.
+Old (original) 3DS and 2DS are **NOT** supported. Only the New variants has the CPU necessary to stream at a usable frame-rate.
+
+### DS games, DSiWare, and GBA games
+
+DS games, DSiWare, and GBA games are **NOT** supported, as 3DS' CPU run under a compabitility mode that loses all the computing power normal 3DS would have.
+
+### Fix USUM and other Pokemon games hanging when loading a save
+
+The recommended way is to enable Input Redirection under Misc. settings in Rosalina, or enable Debugger, also in Rosalina (default keybind for Luma3DS/Rosalina menu is L+Down+Select).
+
+(If you WiFi is cut somehow while above options are enabled, your 3DS will likely freeze. To unfreeze your console, go into Rosalina menu again and disable IR/Debugger respectively.)
+
+Alternatively, apply NFC patch in the NTR-HR menu. This method however is not compatible with Reliable Stream, which will automatically be disabled.
 
 ## License
 
