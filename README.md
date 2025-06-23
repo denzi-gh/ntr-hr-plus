@@ -1,42 +1,42 @@
-Improved frame rate for NTR wireless streaming with New 3DS (and some other misc streaming-related changes).
+Improved frame rate for NTR wireless streaming with New 3DS/New 2DS (and some other misc streaming-related changes).
 
-For use with [Snickerstream](https://github.com/RattletraPM/Snickerstream), [Chokistream](https://github.com/Eiim/Chokistream), or any [NTR](https://www.gamebrew.org/wiki/NTRViewer_3DS) compatible viewers.
+For use with [Snickerstream](https://github.com/RattletraPM/Snickerstream), [Chokistream](https://github.com/Eiim/Chokistream), or any other [NTR](https://www.gamebrew.org/wiki/NTRViewer_3DS) compatible viewers.
+
+[NTRViewer-HR](https://github.com/xzn/ntrviewer-hr) is a companion PC viewer for Windows/Linux/macOS containing some additional features.
 
 ## Summary
 
-NTR is a homebrew originally made by cell9 that allows game patching, debugging, and wireless streaming on 3DS.
+NTR is a homebrew originally made by cell9 that allows game patching, debugging, and wireless streaming on New 3DS.
 
 This fork attempts to improve the wireless streaming aspect of the homebrew. Currently it is able achieve 60 ~ 90 fps for average quality settings (at 18Mbps).
 
-## Changes from [NTR 3.6](https://github.com/44670/NTR)
+## Changes from [NTR 3.6](https://github.com/44670/NTR) and [NTR 3.6.1](https://github.com/PabloMK7/NTR)
 
-- Use up to three cores for encoding
-- - Improved frame rate by around 80% to 120% compared to 3.6
-- Can now switch between games and keep the stream going
-- No more green tint when streaming games with RGB565 output (e.g. SMT4)
-- Can now update quality setting, QoS, and screen priority settings while streaming
-- New menu item in NTR menu (accessed by X + Y), can be used to change viewer's port and other settings
-- - Has NFC patching functionality
-- - Can start Remote Play from the menu and change viewer's IP
-- Skip duplicate frames (when actual frame rate is lower than how fast NTR can encode)
-- - Should lead to better frame pacing
-- Various optimizations and updated dependencies
+- Use up to three cores for encoding. Improved frame rate by around 80% to 120% compared to 3.6.
+- Can now switch between games and keep the stream going.
+- No more green tint when streaming games with RGB565 output (e.g. SMT4).
+- Can now update quality setting, QoS, and screen priority settings while streaming.
+- New menu item in NTR menu (accessed by X + Y), can be used to change viewer's port and other settings.
+- - Has NFC patching functionality built-in, to avoid USUM hang when using Remote Play. (Alternative to Input Redirection/Debugger in Rosalina.)
+- - Can start Remote Play from the menu and change viewer's IP and port.
+- - QTM (3D head-tracking) disable patch, to improve Remote Play performance on New 3DS (New 2DS unaffected).
+- - Chroma subsampling option for customizing image quality at the cost of frame-rate.
+- - Some other misc. settings.
+- Skip duplicate frames (when actual frame rate is lower than how fast NTR can encode). Should lead to better frame pacing.
+- Various optimizations and updated dependencies.
 - Fixed race conditions in startup unhooking code. Should no longer crash/fail to initialize randomly when starting NTR, or when starting remote play.
 
 Removed all other features aside from streaming and PLG loading:
 
-- Screenshots, debugger, and night color are available with Luma3DS/rosalina
+- Screenshots, debugger, and night color are available with Luma3DS/Rosalina.
 - Real-time save/load doesn't save/load handles (and has no way of doing so) and generally doesn't work very well. I can add this back in if needed.
-- No way to disable high CPU clock/L2 cache after starting remote play. I may add an option for this.
 
 ## Known issues
 
-- Skip duplicate frames doesn't work as expected sometimes.
 - Some games are not compatible with streaming.
 - When cheat plugins have been loaded, launching another game (or the same game again) would hang for certain plugins.
 - [UWPStreamer](https://github.com/toolboc/UWPStreamer) flickers and crashes sometimes.
 - [NTRView for Wii U](https://github.com/yawut/ntrview-wiiu) flickers especially when core count is set to more than one.
-- 3DS web browser will crash if used with remote play.
 
 ## Credits
 
@@ -46,12 +46,21 @@ Removed all other features aside from streaming and PLG loading:
 
 Especially thanks to cell9 for releasing the source of NTR 3.6 making this mod possible
 
+## Usage guide
+
+See https://wiki.hacks.guide/wiki/3DS:Wireless_streaming for more info on setup and instructions.
+
+Once NTR-HR is running, press X+Y on your New 3DS/New 2DS to open NTR-HR menu, which contains additional options.
 
 ## Recommended setup
 
 ### Connecting 3DS to your PC
 
-A WiFi dongle dedicated to host a hotspot for the 3DS is recommended. You can go to device manager and disable 5GHz mode for the WiFi dongle you are using for hotspot to maximize connection stability and connection speed for 3DS. If you have something like a Raspberry Pi you can connect the RPI to PC with Ethernet and run the hotspot off the RPI instead (with bridged connection). This should guarantee a connection speed up to 18Mbps without dropping too many packets.
+A dedicated WiFi AP connecting your 3DS wireless and no other wireless device, with your PC connected with Ethernet, should yield best result. An example would be a Raspberry Pi connected to PC with Ethernet, and bridged WiFi just for 3DS.
+
+Otherwise a WiFi dongle dedicated to host a hotspot for the 3DS would work as well. Note that on Windows it's unavoidable that WiFi-scanning will causes periodic lag spike if you connect with this method. On Linux you can play with config to prevent all other background uses of the WiFi dongle.
+
+If your 3DS is connected to a router which also has other WiFi devices connected (other consoles, phones, etc.) lag will be unavoidable in general.
 
 ### Viewer settings
 
@@ -60,3 +69,17 @@ Quality is recommended to be between 75 and 90. At 75 you'd get between 55 to 75
 QoS can be up to 18 for around 18Mbps. Higher values will cause more packet drops.
 
 Priority settings is up to your personal preference.
+
+### Audio capture
+
+Audio capture is **NOT** supported. Use a 3.5 mm audio aux cable to connect from your 3DS' headphone jack to your PC's line-in as a workaround for audio capture.
+
+### New 3DS/New 2DS only
+
+Old (original) 3DS and 2DS are not supported. Only the New variants has the CPU necessary to stream at a usable frame-rate.
+
+## License
+
+GPLv2 as the original NTR 3.6 by cell9.
+
+Various third party code are available in more permissive licenses. See individual files and subfolders for more info.

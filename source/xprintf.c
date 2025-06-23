@@ -29,6 +29,10 @@
 
 */
 
+// Modified for use with NTR-HR
+// Copyright (c) 2025
+// MIT License
+
 #ifdef USE_XPRNTF_CFG
 #include "xprintf-cfg.h"
 #else
