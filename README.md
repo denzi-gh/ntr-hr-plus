@@ -80,7 +80,7 @@ Old (original) 3DS and 2DS are **NOT** supported. Only the New variants has the 
 
 ### DS games, DSiWare, and GBA games
 
-DS games, DSiWare, and GBA games are **NOT** supported, as 3DS' CPU run under a compabitility mode that loses all the computing power normal 3DS would have.
+DS games, DSiWare, and GBA games are **NOT** supported, as 3DS' CPU run under a compatibility mode that loses all the computing power normal 3DS would have.
 
 ### Fix USUM and other Pokemon games hanging when loading a save
 
