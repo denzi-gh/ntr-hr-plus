@@ -53,12 +53,6 @@ mod first_time_init {
             return None;
         }
 
-        let res = create_event(&mut wait_nwm_event);
-        if res != 0 {
-            nsDbgPrint!(createEventFailed, c_str!("wait nwm"), res);
-            return None;
-        }
-
         let res = create_event(&mut restart_ready_event);
         if res != 0 {
             nsDbgPrint!(createRestartEventFailed, res);

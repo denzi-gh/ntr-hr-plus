@@ -133,20 +133,27 @@ unsafe fn set_packet_data_size() {
     }
 }
 
-pub static mut nwm_is_waiting: AtomicBool = const_default();
 static mut min_send_interval_tick: AtomicU32 = const_default();
 static mut min_send_interval_ns: AtomicU32 = const_default();
 #[export_name = "rp_current_qos"]
 static mut current_qos: AtomicU32 = const_default();
 
-pub fn get_next_send_tick() -> u32_ {
-    unsafe { rp_output_next_tick.load(Ordering::Relaxed) }
+#[allow(unused)]
+pub fn nwm_need_waiting() -> bool {
+    false
 }
 
+#[allow(unused)]
+pub fn get_next_send_tick() -> u32_ {
+    unsafe { rp_output_next_tick.load(Ordering::Acquire) }
+}
+
+#[allow(unused)]
 pub fn get_min_send_interval_tick() -> u32_ {
     unsafe { min_send_interval_tick.load(Ordering::Relaxed) }
 }
 
+#[allow(unused)]
 pub fn get_min_send_interval_ns() -> u32_ {
     unsafe { min_send_interval_ns.load(Ordering::Relaxed) }
 }
@@ -183,7 +190,7 @@ pub unsafe fn reset_vars(dst_flags: u32, qos: u32) -> Option<()> {
     nwm_thread_id = ThreadId::init();
     rp_output_next_tick.store(
         svcGetSystemTick() as u32 + min_send_interval_tick.load(Ordering::Relaxed),
-        Ordering::Relaxed,
+        Ordering::Release,
     );
     cur_seg_mem_count = 0;
     Some(())
@@ -484,7 +491,7 @@ unsafe extern "C" fn rp_udp_output(
         return -3;
     }
 
-    let next_send_tick = rp_output_next_tick.load(Ordering::Relaxed);
+    let next_send_tick = rp_output_next_tick.load(Ordering::Acquire);
     let mut curr_tick = svcGetSystemTick() as u32;
     let tick_diff = (next_send_tick - curr_tick) as s32;
     let duration = if tick_diff > 0 {
@@ -514,7 +521,8 @@ unsafe extern "C" fn rp_udp_output(
         min_send_interval_tick.load(Ordering::Relaxed)
     };
     *tick = curr_tick;
-    rp_output_next_tick.store(curr_tick + next_interval, Ordering::Relaxed);
+    rp_output_next_tick.store(curr_tick + next_interval, Ordering::Release);
+
     nwm_output(buf.sub(NWM_HDR_SIZE as usize), len as usize);
     return len;
 }
@@ -615,6 +623,12 @@ impl NwmCbLock {
         let _ = nwm_cb_lock()?;
         Some(Self())
     }
+
+    #[allow(unused)]
+    pub unsafe fn lock_ns(wait: s64) -> Option<Self> {
+        let _ = nwm_cb_lock_ns(wait)?;
+        Some(Self())
+    }
 }
 
 impl Drop for NwmCbLock {
@@ -623,10 +637,14 @@ impl Drop for NwmCbLock {
     }
 }
 
-#[named]
 unsafe fn nwm_cb_lock() -> Option<()> {
+    nwm_cb_lock_ns(THREAD_WAIT_NS)
+}
+
+#[named]
+unsafe fn nwm_cb_lock_ns(wait: s64) -> Option<()> {
     while !entries::work_thread::reset_threads() {
-        let res = svcWaitSynchronization(reliable_stream_cb_lock, THREAD_WAIT_NS);
+        let res = svcWaitSynchronization(reliable_stream_cb_lock, wait);
 
         if res == 0 {
             return Some(());
@@ -806,7 +824,7 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
         let mut has_dst = false;
 
         while !entries::work_thread::reset_threads() {
-            let next_send_tick = rp_output_next_tick.load(Ordering::Relaxed);
+            let next_send_tick = rp_output_next_tick.load(Ordering::Acquire);
 
             if (svcGetSystemTick() as u32 - next_send_tick) as s32 >= RP_KCP_TIMEOUT_TICK {
                 // Reset KCP
@@ -847,13 +865,6 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
             let mut retry = false;
 
             let relock_nwm = timeout != 0;
-
-            nwm_is_waiting.store(relock_nwm, Ordering::Relaxed);
-
-            let res = svcSignalEvent(wait_nwm_event);
-            if res != 0 {
-                nsDbgPrint!(waitNwmEventSignalFailed, res);
-            }
 
             if relock_nwm {
                 nwm_cb_unlock();
@@ -957,9 +968,10 @@ unsafe fn kcp_thread_nwm_loop() -> bool {
                     nwm_cb_unlock();
                     return false;
                 }
+
                 if !(*kcp).session_established {
                     rp_output_next_tick
-                        .store(next_send_tick + SYSCLOCK_ARM11 / 16, Ordering::Relaxed);
+                        .store(next_send_tick + SYSCLOCK_ARM11 / 16, Ordering::Release);
                 }
             }
         }

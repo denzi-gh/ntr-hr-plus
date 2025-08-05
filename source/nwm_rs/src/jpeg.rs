@@ -572,38 +572,7 @@ impl<'b> Jpeg<'b> {
     }
 }
 
-#[named]
-fn do_wait_for_nwm(next_tick: &mut u32) {
-    unsafe {
-        let curr_tick = svcGetSystemTick() as u32_;
-        let diff_tick = (curr_tick - *next_tick) as s32;
-        if diff_tick >= 0 {
-            if !entries::nwm_is_waiting.load(Ordering::Relaxed) {
-                let res = svcClearEvent(wait_nwm_event);
-                if res != 0 {
-                    nsDbgPrint!(waitNwmEventClearFailed, res);
-                }
-
-                let res = svcWaitSynchronization(
-                    wait_nwm_event,
-                    entries::get_min_send_interval_ns() as s64,
-                );
-                if res != 0 {
-                    if res != RES_TIMEOUT as s32 {
-                        nsDbgPrint!(waitNwmEventSyncFailed, res);
-                    }
-                    // nsDbgPrint!(int, c_str!("thre_ns"), thre_ns as i32);
-                    *next_tick += entries::get_min_send_interval_tick();
-                } else {
-                    *next_tick = entries::get_next_send_tick();
-                }
-            } else {
-                *next_tick += entries::get_min_send_interval_tick();
-            }
-            // nsDbgPrint!(int, c_str!("next_tick"), next_tick as i32);
-        }
-    }
-}
+fn do_wait_for_nwm() {}
 
 fn pconvert(r: u8, g: u8, b: u8, y: &mut u8, cb: &mut u8, cr: &mut u8, ctab: &[i32; TABLE_SIZE]) {
     /* If the inputs are 0.._MAXJSAMPLE, the outputs of these equations
@@ -1476,10 +1445,9 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
         let mut delta_cache_start = 0;
 
         let need_wait_for_nwm = DELTA_Q && self.worker.threadId.get() == 0;
-        let mut next_tick = entries::get_next_send_tick();
 
         if need_wait_for_nwm {
-            do_wait_for_nwm(&mut next_tick);
+            do_wait_for_nwm();
         }
 
         for ci in 0..MAX_COMPONENTS {
@@ -1609,7 +1577,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     blkn += 1;
 
                     if need_wait_for_nwm {
-                        do_wait_for_nwm(&mut next_tick);
+                        do_wait_for_nwm();
                     }
                 }
                 ypos += DCTSIZE as u16;
@@ -1898,7 +1866,6 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
             let need_wait_for_nwm = self.worker.threadId.get() == 0;
-            let mut next_tick = entries::get_next_send_tick();
 
             for ci in 0..MAX_COMPONENTS {
                 cache_next_i[ci] = 0;
@@ -1981,7 +1948,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                     update_qnv(&mut qnv.ac, &qn.ac);
 
                     if need_wait_for_nwm {
-                        do_wait_for_nwm(&mut next_tick);
+                        do_wait_for_nwm();
                     }
                 }
 
@@ -2205,7 +2172,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
             *self.worker.shared_mut.dQRescalePrev.get_unchecked_mut(w) = dQRescalePrev;
 
             if need_wait_for_nwm {
-                do_wait_for_nwm(&mut next_tick);
+                do_wait_for_nwm();
             }
 
             if dQRescalePrev != 0 {
@@ -2242,7 +2209,7 @@ impl<'a, 'b, 'c, const REL_STREAM: bool, const DELTA_Q: bool>
                 }
 
                 if need_wait_for_nwm {
-                    do_wait_for_nwm(&mut next_tick);
+                    do_wait_for_nwm();
                 }
             }
         }
