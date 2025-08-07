@@ -1,7 +1,4 @@
 #![no_std]
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 #![allow(internal_features)]
 #![allow(incomplete_features)]
 #![feature(atomic_from_mut)]

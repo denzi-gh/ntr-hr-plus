@@ -1,34 +1,34 @@
 #![allow(dead_code)]
 
-use super::{u32_, IoBaseLcd, IoBasePdc};
+use super::{IoBaseLcd, IoBasePdc};
 
 // From Luma3DS
-pub const GPU_FB_TOP_VSCANS: u32_ = IoBasePdc + 0x430;
-pub const GPU_FB_TOP_SIZE: u32_ = IoBasePdc + 0x45c;
-pub const GPU_FB_TOP_LEFT_ADDR_1: u32_ = IoBasePdc + 0x468;
-pub const GPU_FB_TOP_LEFT_ADDR_2: u32_ = IoBasePdc + 0x46C;
-pub const GPU_FB_TOP_FMT: u32_ = IoBasePdc + 0x470;
-pub const GPU_FB_TOP_CTRL: u32_ = IoBasePdc + 0x474;
-pub const GPU_FB_TOP_SEL: u32_ = IoBasePdc + 0x478;
-pub const GPU_FB_TOP_COL_LUT_INDEX: u32_ = IoBasePdc + 0x480;
-pub const GPU_FB_TOP_COL_LUT_ELEM: u32_ = IoBasePdc + 0x484;
-pub const GPU_FB_TOP_STRIDE: u32_ = IoBasePdc + 0x490;
-pub const GPU_FB_TOP_RIGHT_ADDR_1: u32_ = IoBasePdc + 0x494;
-pub const GPU_FB_TOP_RIGHT_ADDR_2: u32_ = IoBasePdc + 0x498;
+pub const GPU_FB_TOP_VSCANS: u32 = IoBasePdc + 0x430;
+pub const GPU_FB_TOP_SIZE: u32 = IoBasePdc + 0x45c;
+pub const GPU_FB_TOP_LEFT_ADDR_1: u32 = IoBasePdc + 0x468;
+pub const GPU_FB_TOP_LEFT_ADDR_2: u32 = IoBasePdc + 0x46C;
+pub const GPU_FB_TOP_FMT: u32 = IoBasePdc + 0x470;
+pub const GPU_FB_TOP_CTRL: u32 = IoBasePdc + 0x474;
+pub const GPU_FB_TOP_SEL: u32 = IoBasePdc + 0x478;
+pub const GPU_FB_TOP_COL_LUT_INDEX: u32 = IoBasePdc + 0x480;
+pub const GPU_FB_TOP_COL_LUT_ELEM: u32 = IoBasePdc + 0x484;
+pub const GPU_FB_TOP_STRIDE: u32 = IoBasePdc + 0x490;
+pub const GPU_FB_TOP_RIGHT_ADDR_1: u32 = IoBasePdc + 0x494;
+pub const GPU_FB_TOP_RIGHT_ADDR_2: u32 = IoBasePdc + 0x498;
 
-pub const GPU_FB_BOTTOM_VSCANS: u32_ = IoBasePdc + 0x530;
-pub const GPU_FB_BOTTOM_SIZE: u32_ = IoBasePdc + 0x55c;
-pub const GPU_FB_BOTTOM_ADDR_1: u32_ = IoBasePdc + 0x568;
-pub const GPU_FB_BOTTOM_ADDR_2: u32_ = IoBasePdc + 0x56C;
-pub const GPU_FB_BOTTOM_FMT: u32_ = IoBasePdc + 0x570;
-pub const GPU_FB_BOTTOM_CTRL: u32_ = IoBasePdc + 0x574;
-pub const GPU_FB_BOTTOM_SEL: u32_ = IoBasePdc + 0x578;
-pub const GPU_FB_BOTTOM_COL_LUT_INDEX: u32_ = IoBasePdc + 0x580;
-pub const GPU_FB_BOTTOM_COL_LUT_ELEM: u32_ = IoBasePdc + 0x584;
-pub const GPU_FB_BOTTOM_STRIDE: u32_ = IoBasePdc + 0x590;
+pub const GPU_FB_BOTTOM_VSCANS: u32 = IoBasePdc + 0x530;
+pub const GPU_FB_BOTTOM_SIZE: u32 = IoBasePdc + 0x55c;
+pub const GPU_FB_BOTTOM_ADDR_1: u32 = IoBasePdc + 0x568;
+pub const GPU_FB_BOTTOM_ADDR_2: u32 = IoBasePdc + 0x56C;
+pub const GPU_FB_BOTTOM_FMT: u32 = IoBasePdc + 0x570;
+pub const GPU_FB_BOTTOM_CTRL: u32 = IoBasePdc + 0x574;
+pub const GPU_FB_BOTTOM_SEL: u32 = IoBasePdc + 0x578;
+pub const GPU_FB_BOTTOM_COL_LUT_INDEX: u32 = IoBasePdc + 0x580;
+pub const GPU_FB_BOTTOM_COL_LUT_ELEM: u32 = IoBasePdc + 0x584;
+pub const GPU_FB_BOTTOM_STRIDE: u32 = IoBasePdc + 0x590;
 
-pub const GPU_VRAM_BANK_CTRL: u32_ = IoBasePdc + 0x30;
-pub const GPU_BACKLIGHT_CTRL: u32_ = IoBasePdc + 0xC0;
+pub const GPU_VRAM_BANK_CTRL: u32 = IoBasePdc + 0x30;
+pub const GPU_BACKLIGHT_CTRL: u32 = IoBasePdc + 0xC0;
 
-pub const LCD_TOP_FILLCOLOR: u32_ = IoBaseLcd + 0x204;
-pub const LCD_BOTTOM_FILLCOLOR: u32_ = IoBaseLcd + 0xA04;
+pub const LCD_TOP_FILLCOLOR: u32 = IoBaseLcd + 0x204;
+pub const LCD_BOTTOM_FILLCOLOR: u32 = IoBaseLcd + 0xA04;
