@@ -233,7 +233,9 @@ pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> 
             if res != RES_TIMEOUT as s32 {
                 unsafe {
                     ns_dbg_print_cname!(cname, wait_syn_failed, syn_name, res);
+                    set_reset_threads();
                     svcSleepThread(THREAD_WAIT_NS.get());
+                    return None;
                 }
             }
             continue;

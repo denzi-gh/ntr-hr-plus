@@ -310,7 +310,7 @@ impl WorkFrame {
                 (rows, rows_last)
             }
         } else {
-            l.store(last_row_last_n_range, Ordering::Relaxed);
+            l.store(last_row_last_n_range, Ordering::Release);
             (n, n_last)
         };
 
@@ -486,7 +486,7 @@ impl WorkAcquire {
                     free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                     user,
                 };
-                worker.encode(dst, src, pre_progress, progress)
+                worker.encode(dst, src, pre_progress, progress)?
             }
             entries::thread_nwm::ReliableStream::KCP => {
                 let mut worker = unsafe { (*jpeg::JPEG).get_worker::<true>(w, t) };
@@ -510,7 +510,7 @@ impl WorkAcquire {
                         free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
                         user,
                     };
-                    worker.encode(dst, src, pre_progress, progress)
+                    worker.encode(dst, src, pre_progress, progress)?
                 } else {
                     return None;
                 }

@@ -4,13 +4,7 @@ pub struct Impl(());
 
 impl Impl {
     pub fn signal_port_event(&self, is_top: bool) -> Result {
-        unsafe {
-            svcSignalEvent(
-                *SYN_HANDLES
-                    .screens_port_ready
-                    .get(&is_top_index(is_top)),
-            )
-        }
+        unsafe { svcSignalEvent(*SYN_HANDLES.screens_port_ready.get(&is_top_index(is_top))) }
     }
 
     pub fn set_game_pid(&self, v: u32) {
@@ -27,7 +21,7 @@ impl Impl {
                 let f =
                     unsafe { AtomicU32::from_ptr((config_consts::RP_CONFIG as *mut u32).add(i)) };
                 let p = unsafe { *a.as_ptr().add(i) };
-                f.store(p, Ordering::Relaxed);
+                f.store(p, Ordering::Release);
             }
             true
         } else {

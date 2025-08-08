@@ -121,8 +121,8 @@ pub struct DeltaQCache {
 pub struct JpegSharedMut {
     pub compressed_size: [AtomicU32; SCREEN_COUNT as usize],
     pub work_inited: [bool; WORK_COUNT as usize],
-    pub work_sem_count: [u8; WORK_COUNT as usize],
-    pub screen_bool: [bool; SCREEN_COUNT as usize],
+    pub work_sem_count: [AtomicU8; WORK_COUNT as usize],
+    pub screen_bool: [AtomicBool; SCREEN_COUNT as usize],
     pub last_restart_interval: [u16; SCREEN_COUNT as usize],
     delta_q: [u8; SCREEN_COUNT as usize],
     work_delta_q: [u8; WORK_COUNT as usize],
@@ -131,6 +131,8 @@ pub struct JpegSharedMut {
     delta_q_cache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; WORK_COUNT as usize],
     delta_q_cache_next: [[u8; MAX_COMPONENTS]; WORK_COUNT as usize],
     delta_q_calc: [DeltaQManager; SCREEN_COUNT as usize],
+    dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
+    dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
     rand32: Rand32,
 }
 
@@ -506,13 +508,200 @@ struct JpegEncode<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> {
     dst: WorkerDst,
 }
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
-    fn encode<F, G>(&mut self, src: &[u8], mut pre_progress: F, mut progress: G) -> JpegDqRet {
-        JpegDqRet {
-            delta_q: 0,
-            mcus: 0,
-        }
+fn get_bpp_for_format(c: ColorSpace) -> u8 {
+    match c {
+        ColorSpace::XBGR => 4,
+        ColorSpace::BGR => 3,
+        _ => 2,
     }
+}
+
+impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+    fn write_headers(&mut self) {}
+
+    fn write_rst(&mut self) {}
+
+    fn write_trailer(&mut self) {}
+
+    fn write_term(&mut self) {}
+
+    fn reset_mcu(&mut self) {
+        self.worker.huff_state = const_default();
+        self.worker.huff_state.free_bits = BIT_BUF_SIZE as isize;
+        self.worker.last_dc_val = const_default();
+    }
+
+    fn flush_mcu(&mut self) {}
+
+    #[named]
+    fn encode<F, G>(
+        &mut self,
+        src: &[u8],
+        mut pre_progress: F,
+        mut progress: G,
+    ) -> Option<JpegDqRet>
+    where
+        F: FnMut(),
+        G: FnMut(),
+    {
+        let bpp = get_bpp_for_format(self.worker.info.color_space);
+        let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
+        let is_top = self.worker.info.is_top;
+        let mcus = if is_top {
+            self.worker.shared.mcus_top
+        } else {
+            self.worker.shared.mcus_bot
+        };
+
+        pre_progress();
+
+        if !REL_STREAM && self.worker.thread_index.get() == 0 {
+            self.write_headers();
+        }
+
+        self.reset_mcu();
+
+        let w = self.worker.info.work_index.get() as usize;
+        let s = is_top_index(is_top).get() as usize;
+
+        let prev = unsafe {
+            if DELTA_Q {
+                if src.len() == 0 {
+                    wait_syn(cname!(), self.worker.shared.work_sem[w], c_str!("work_sem"))?;
+                }
+
+                let cell = self.worker.shared_mut.cell;
+                (if is_top {
+                    (*cell).dq_prev_coeffs_top.as_mut_ptr()
+                } else {
+                    (*cell).dq_prev_coeffs_bot.as_mut_ptr()
+                } as *mut JBlock)
+                    .add(
+                        self.worker.info.restart_interval as usize
+                            * self.worker.shared.max_blocks_in_mcu
+                            * self.worker.thread_index.get() as usize,
+                    )
+            } else {
+                ptr::null_mut()
+            }
+        };
+
+        let hss = self.worker.shared.max_h_samp_factor == MAX_SAMP_FACTOR;
+        let vss = self.worker.shared.max_v_samp_factor == MAX_SAMP_FACTOR;
+
+        if vss {
+            let src_chunks = src
+                .chunks_exact(pitch)
+                .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
+            for (i, chunks) in src_chunks.enumerate() {
+                /* Pre-process */
+                let mut chunks = chunks.array_chunks::<{ DCTSIZE }>();
+
+                let chunk0 = chunks.next().unwrap();
+                self.pre_process(*chunk0, false);
+
+                let chunk1 = chunks.next().unwrap();
+                self.pre_process(*chunk1, true);
+
+                pre_progress();
+
+                /* Compress and encode */
+                self.process(
+                    if DELTA_Q {
+                        unsafe {
+                            prev.add(
+                                i * self.worker.shared.mcus_per_row
+                                    * self.worker.shared.max_blocks_in_mcu,
+                            )
+                        }
+                    } else {
+                        ptr::null_mut()
+                    },
+                    i as u8,
+                );
+
+                progress();
+            }
+        } else {
+            let pre_process = if hss {
+                Self::pre_process_no_vsubsamp::<true>
+            } else {
+                Self::pre_process_no_vsubsamp::<false>
+            };
+
+            let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
+            for (i, chunk) in src_chunks.enumerate() {
+                pre_process(self, chunk);
+
+                pre_progress();
+
+                /* Compress and encode */
+                self.process(
+                    if !DELTA_Q {
+                        ptr::null_mut()
+                    } else {
+                        unsafe {
+                            prev.add(
+                                i * self.worker.shared.mcus_per_row
+                                    * self.worker.shared.max_blocks_in_mcu,
+                            )
+                        }
+                    },
+                    i as u8,
+                );
+
+                progress();
+            }
+        }
+
+        self.flush_mcu();
+
+        let mut delta_q = 0;
+        if !REL_STREAM {
+            if self.worker.thread_index.get()
+                == thread_index_last(self.worker.shared.core_count).get()
+            {
+                self.write_trailer();
+            } else {
+                self.write_rst();
+            }
+        }
+
+        self.write_term();
+
+        if DELTA_Q {
+            unsafe {
+                let cell = self.worker.shared_mut.cell;
+                delta_q = (*cell).work_delta_q[w];
+
+                let c = &mut (*cell).work_sem_count[w];
+
+                if c.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    c.store(self.worker.info.core_count.get() as u8, Ordering::Release);
+                    (*cell).work_inited[w] = false;
+
+                    let b = &mut (*cell).screen_bool[s];
+                    if b.swap(true, Ordering::AcqRel) {
+                        b.store(false, Ordering::Release);
+                    } else {
+                        release_sem(
+                            cname!(),
+                            self.worker.shared.screen_sem[s],
+                            c_str!("screen_sem"),
+                        );
+                    }
+                }
+            }
+        }
+
+        Some(JpegDqRet { delta_q, mcus })
+    }
+
+    fn pre_process(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {}
+
+    fn pre_process_no_vsubsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {}
+
+    fn process(&mut self, prev: *mut JBlock, row_i: u8) {}
 }
 
 pub struct Jpeg {
@@ -520,8 +709,6 @@ pub struct Jpeg {
     shared_mut: JpegSharedMut,
     bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
     info: [CInfo; WORK_COUNT as usize],
-    dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
-    dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
 }
 
 impl Jpeg {
@@ -560,7 +747,7 @@ impl<'a, const REL_STREAM: bool> JpegWorker<'a, REL_STREAM> {
         src: &[u8],
         pre_progress: F,
         progress: G,
-    ) -> JpegDqRet
+    ) -> Option<JpegDqRet>
     where
         F: FnMut(),
         G: FnMut(),
