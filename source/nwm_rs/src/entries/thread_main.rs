@@ -27,7 +27,7 @@ pub const NWM_BUFFER_SIZE: usize =
 fn once_jpeg() -> Option<()> {
     let jpeg = request_mem_from_pool::<{ mem::size_of::<jpeg::Jpeg>() }>()?;
     unsafe {
-        entries::work_thread::JPEG = jpeg.to_ptr() as *mut jpeg::Jpeg;
+        jpeg::JPEG = jpeg.to_ptr() as *mut jpeg::Jpeg;
     }
 
     Some(())

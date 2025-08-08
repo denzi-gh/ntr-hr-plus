@@ -152,6 +152,10 @@ static mut MAX_QOS: u32 = const_default();
 #[unsafe(export_name = "rp_current_qos")]
 static mut CURRENT_QOS: u32 = const_default();
 
+pub fn rp_delta_q_qos() -> u32 {
+    unsafe { CURRENT_QOS }
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn rp_set_qos(qos: u32) {}
 

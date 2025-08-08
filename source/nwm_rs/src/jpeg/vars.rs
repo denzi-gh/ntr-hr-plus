@@ -931,3 +931,5 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
         bit_pos[codesize[i as usize] as usize] += 1;
     }
 }
+
+pub static mut JPEG: *mut Jpeg = const_default();

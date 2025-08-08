@@ -141,6 +141,27 @@ impl JpegSharedMut {
         }
         self.rand32 = Rand32::new(get_system_tick().get() as u64);
     }
+
+    fn init(&mut self, delta_prog: bool, max_blocks_in_mcu: usize, q_steps: f32) {
+        if delta_prog {
+            self.compressed_size = const_default();
+            for s in 0..SCREEN_COUNT {
+                self.delta_q[s as usize] = DELTA_Q_COUNT - 1;
+            }
+        }
+
+        self.delta_q_calc = const_default();
+
+        if delta_prog {
+            for i in 0..SCREEN_COUNT as usize {
+                for j in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                    self.delta_q_calc[i].f[j].m = q_steps;
+                    self.delta_q_calc[i].f[j].p = q_steps * q_steps;
+                }
+                self.delta_q_calc[i].nbits = (MIN_DCT_COMP_SIZE * max_blocks_in_mcu) as f32;
+            }
+        }
+    }
 }
 
 const fn jdiv_round_up(a: usize, b: usize) -> usize
@@ -151,7 +172,53 @@ const fn jdiv_round_up(a: usize, b: usize) -> usize
 }
 
 impl JpegShared {
-    fn init_delta_q_tbls(&mut self) {
+    fn init(
+        &mut self,
+        quality: u32,
+        delta_prog: bool,
+        core_count: CoreCount,
+        hq: u32,
+    ) -> (usize, f32) {
+        self.quality = quality;
+        self.quant_tbls
+            .set_quality(if delta_prog { 100 } else { self.quality });
+        self.divisors
+            .set_divisors(&self.quant_tbls, &mut self.div_shifts);
+
+        if delta_prog {
+            for q in 0..DELTA_Q_COUNT {
+                let div_shifts = &mut self.div_delta_q_shifts[q as usize];
+                for i in 0..NUM_QUANT_TBLS {
+                    let base_shifts = &self.div_shifts[i];
+                    let shifts = &mut div_shifts[i];
+                    let ltbl = &self.delta_q_tbls[q as usize][i];
+
+                    for i in 0..DCTSIZE2 {
+                        shifts[i] = base_shifts[i] + ltbl[i];
+                    }
+                }
+            }
+            const QOS_ADJ_B: f32 = u8::BITS as f32;
+            const QOS_MIN_F: f32 = 0.625f32;
+            const QOS_MAX_L_F: f32 = 0.875f32;
+            const QOS_MAX_H_F: f32 = 0.75f32;
+            self.qos_adj = QOS_ADJ_B * QOS_MIN_F
+                + ((QOS_MAX_L_F
+                    + (QOS_MAX_H_F - QOS_MAX_L_F)
+                        * entries::thread_nwm::rp_delta_q_qos() as f32
+                        * (1f32 / RP_QOS_MAX as f32)
+                    - QOS_MIN_F)
+                    * QOS_ADJ_B
+                    * self.quality as f32
+                    * (1f32 / RP_QUALITY_MAX as f32));
+        }
+
+        self.core_count = core_count;
+        self.chroma_ss = hq as u8;
+        self.set_comp_infos(hq, delta_prog)
+    }
+
+    fn once_delta_q_tbls(&mut self) {
         for d in (0..DELTA_Q_COUNT as usize).rev() {
             let f = DELTA_Q_MAX / DELTA_Q_COUNT as f32 * d as f32;
 
@@ -182,10 +249,10 @@ impl JpegShared {
             slice::from_raw_parts_mut(self as *mut _ as *mut u8, mem::size_of_val(self)).fill(0);
         }
         self.jpeg_tbls = JpegTbls::once();
-        self.init_delta_q_tbls();
+        self.once_delta_q_tbls();
     }
 
-    fn set_comp_infos(&mut self, hq: u32, delta_prog: bool) {
+    fn set_comp_infos(&mut self, hq: u32, delta_prog: bool) -> (usize, f32) {
         let comp_infos = if hq as u8_ == RP_CHROMASS_444 {
             &self.jpeg_tbls.comp_infos_444
         } else if hq as u8_ == RP_CHROMASS_422 {
@@ -247,6 +314,10 @@ impl JpegShared {
             self.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
 
             self.delta_q_params.m = (MIN_DCT_COMP_SIZE * self.max_blocks_in_mcu) as f32;
+
+            (self.max_blocks_in_mcu, q_steps)
+        } else {
+            (0, 0f32)
         }
     }
 }
@@ -384,7 +455,7 @@ impl WorkerDst {
     fn dq_update_size<const DLETA_Q: bool>(&mut self, size: u32) {
         if DLETA_Q {
             let comp_size = unsafe {
-                (*entries::work_thread::JPEG)
+                (*JPEG)
                     .shared_mut
                     .compressed_size
                     .get_unchecked_mut(self.s.get() as usize)
@@ -442,6 +513,13 @@ pub struct Jpeg {
     info: [CInfo; WORK_COUNT as usize],
     dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
     dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
+}
+
+impl Jpeg {
+    pub fn init(&mut self, quality: u32, core_count: CoreCount, hq: u32, delta_prog: bool) {
+        let (max_blocks_in_mcu, q_steps) = self.shared.init(quality, delta_prog, core_count, hq);
+        self.shared_mut.init(delta_prog, max_blocks_in_mcu, q_steps);
+    }
 }
 
 const DELTA_Q_PREV_COEFFS_TOP_N: usize =

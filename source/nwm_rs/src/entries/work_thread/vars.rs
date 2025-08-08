@@ -1,7 +1,5 @@
 use super::*;
 
-pub static mut JPEG: *mut jpeg::Jpeg = const_default();
-
 pub struct Impl {
     w: WorkIndex,
     t: ThreadIndex,
