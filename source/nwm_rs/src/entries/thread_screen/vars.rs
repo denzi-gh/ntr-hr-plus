@@ -154,15 +154,22 @@ impl ScreenReady {
         unsafe {
             let w = PARAMS.work_index.get_atomic();
             let w = SYN_HANDLES.works.get_mut(&w);
-            let synced = &mut w.work_done_flag;
+            let flag = &mut w.work_done_flag;
 
-            if !synced.load(Ordering::Acquire) {
+            if !flag.load(Ordering::Acquire) {
                 wait_syn(cname!(), w.work_done, c_str!("work_done"))?;
-                synced.store(true, Ordering::Release);
+                flag.store(true, Ordering::Release);
             }
         }
 
         Some(WorkDone(()))
+    }
+}
+
+pub unsafe fn work_done_flag_release(w: WorkIndex) {
+    unsafe {
+        let w = SYN_HANDLES.works.get_mut(&w);
+        w.work_done_flag.store(false, Ordering::Release);
     }
 }
 
@@ -230,18 +237,20 @@ pub unsafe fn screen_ready_release() {
 }
 
 pub enum SkipFrameParams {
-    Frame(),
+    Frame,
     SkipFrame(ThreadIndex),
 }
 
 pub unsafe fn skip_frame_release(work_index: WorkIndex, skip_frame: SkipFrameParams) {
-    match skip_frame {
-        SkipFrameParams::Frame() => todo!(),
-        SkipFrameParams::SkipFrame(t) => unsafe {
-            *PARAMS.skip_frames.get_mut(&work_index) = true;
-            PARAMS.thread_index = t;
-            screen_ready_release()
-        },
+    unsafe {
+        match skip_frame {
+            SkipFrameParams::Frame => *PARAMS.skip_frames.get_mut(&work_index) = false,
+            SkipFrameParams::SkipFrame(t) => {
+                *PARAMS.skip_frames.get_mut(&work_index) = true;
+                PARAMS.thread_index = t;
+                screen_ready_release()
+            }
+        }
     }
 }
 

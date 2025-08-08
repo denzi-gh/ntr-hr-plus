@@ -34,6 +34,10 @@ impl Impl {
 
 static mut CURRENT_FRAME_IDS: RangedArray<u8, SCREEN_COUNT> = const_default();
 static mut LAST_FRAME_TIMINGS: RangedArray<u32, SCREEN_COUNT> = const_default();
+static mut FRAME_TIMES: RangedArray<u32, SCREEN_COUNT> = const_default();
+static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
+
+static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
 
 pub struct WorkReady(Impl);
 
@@ -172,12 +176,67 @@ impl WorkFrame {
         self.work_ready_release()
     }
 
+    #[named]
     fn work_ready_release(self) -> Option<WorkAcquire> {
+        unsafe {
+            entries::thread_screen::skip_frame_release(
+                self.0.0.w,
+                entries::thread_screen::SkipFrameParams::Frame,
+            );
+
+            entries::thread_screen::work_done_flag_release(self.0.0.w);
+        }
+
+        unsafe {
+            let bctx = self.0.0.bctx();
+
+            let ft = AtomicU32::from_mut(FRAME_TIMES.get_mut(&is_top_index(bctx.is_top)));
+            let mut cur = ft.load(Ordering::Acquire);
+
+            let frame_time = self.2;
+            loop {
+                let new =
+                    if cur / FRAME_TIME_MAX_F > frame_time || frame_time / FRAME_TIME_MAX_F > cur {
+                        frame_time
+                    } else {
+                        (cur * (FRAME_TIME_FACTOR - 1) + frame_time) / FRAME_TIME_FACTOR
+                    };
+                match ft.compare_exchange_weak(cur, new, Ordering::AcqRel, Ordering::Acquire) {
+                    Ok(_) => break,
+                    Err(tmp) => cur = tmp,
+                }
+            }
+        }
+
+        for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
+            if j != self.0.0.t {
+                unsafe {
+                    release_sem(
+                        cname!(),
+                        SYN_HANDLES.threads.get(&j).work_ready,
+                        c_str!("work_ready"),
+                    );
+                }
+            }
+        }
+
         Some(WorkAcquire(self.0.0))
     }
 
     fn init_work(&self) -> bool {
-        false
+        let bctx = self.0.0.bctx();
+
+        let w = self.0.0.w;
+        let last_s = unsafe { LAST_ENCODED_SCREEN };
+        let curr_s = is_top_index(bctx.is_top);
+
+        let core_count = core_count_in_use();
+        let core_count_other = core_count.get() - 1;
+        let thread_index_last = thread_index_last(core_count);
+
+        let l = unsafe { &mut LAST_ROW_LAST_N };
+
+        true
     }
 }
 

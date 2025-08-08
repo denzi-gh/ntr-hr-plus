@@ -6,6 +6,9 @@ mod ranged;
 pub use gpu::*;
 pub use ranged::*;
 
+pub const FRAME_TIME_MAX_F: u32 = 4;
+pub const FRAME_TIME_FACTOR: u32 = 3;
+
 pub mod config_consts {
     use super::*;
 
@@ -125,6 +128,7 @@ pub struct SynHandles {
 pub static mut SYN_HANDLES: SynHandles = const_default();
 
 pub fn thread_index_last(core_count: CoreCount) -> ThreadIndex {
+    assert!(core_count.get() >= 1);
     ThreadIndex::init(core_count.get() - 1)
 }
 
