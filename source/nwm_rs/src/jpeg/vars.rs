@@ -113,7 +113,7 @@ const fn add_huff_table(tbl: &mut HuffTbl, bits: &[u8; 17], val: &[u8]) {
 }
 
 impl HuffTbls {
-    pub const fn init(&mut self) {
+    pub const fn once(&mut self) {
         add_huff_table(
             &mut self.dc_huff_tbls[0],
             &BITS_DC_LUMINANCE,
@@ -136,7 +136,7 @@ impl HuffTbls {
         );
     }
 
-    pub fn init_dq(&mut self) {
+    pub fn once_dq(&mut self) {
         let mut freq: [u16; 257] = const_default();
 
         {
@@ -212,7 +212,7 @@ const fn fix(x: f64) -> isize {
 }
 
 impl ColorConvTabs {
-    pub const fn init(&mut self) {
+    pub const fn once(&mut self) {
         let mut i = 0;
         loop {
             self.rgb_ycc_tab[i + R_Y_OFF] = (fix(0.29900) * i as isize) as i32;
@@ -746,13 +746,14 @@ pub struct JpegTbls {
 }
 
 impl JpegTbls {
-    pub fn init() -> Self {
+    pub fn once() -> Self {
         let mut tbls: Self = const_default();
-        tbls.huff_tbls.init();
+        tbls.huff_tbls.once();
         tbls.entropy_tbls.set_entropy_tbls(&tbls.huff_tbls, false);
-        tbls.dq_huff_tbls.init_dq();
-        tbls.dq_entropy_tbls.set_entropy_tbls(&tbls.dq_huff_tbls, true);
-        tbls.color_conv_tbls.init();
+        tbls.dq_huff_tbls.once_dq();
+        tbls.dq_entropy_tbls
+            .set_entropy_tbls(&tbls.dq_huff_tbls, true);
+        tbls.color_conv_tbls.once();
         tbls.comp_infos_420.set_color_space_ycb_cr_420();
         tbls.comp_infos_422.set_color_space_ycb_cr_422();
         tbls.comp_infos_444.set_color_space_ycb_cr_444();

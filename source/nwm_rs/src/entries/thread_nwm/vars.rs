@@ -316,7 +316,8 @@ const PACKET_DATA_SIZE_COMPAT: usize = {
     size
 };
 
-const PACKET_DATA_SIZE_KCP: usize = (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize;
+pub const PACKET_DATA_SIZE_KCP: usize =
+    (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize;
 
 unsafe fn set_packet_data_size() {
     unsafe {
@@ -467,4 +468,44 @@ unsafe fn nwm_cb_unlock() {
             c_str!("RELIABLE_STREAM_CB_LOCK"),
         );
     }
+}
+
+pub static mut RP_FRAME_COMPRESSED_SIZE: [AtomicU32; WORK_COUNT as usize] = const_default();
+
+pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
+pub const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
+
+const _JPEG_COMP_COUNT_NBITS_ASSERT: () = {
+    assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
+};
+
+pub unsafe fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16) {
+    let mut curr = comp_size.load(Ordering::Acquire);
+    loop {
+        let prev_size = curr & ((1 << JPEG_COMP_COUNT_SIZE_NBITS) - 1);
+        let prev_blkn =
+            (curr >> JPEG_COMP_COUNT_SIZE_NBITS) & ((1 << JPEG_COMP_COUNT_BLKN_NBITS) - 1);
+
+        let next_size = prev_size + size;
+        let next_blkn = prev_blkn + blkn as u32;
+        let next = (next_size & ((1 << JPEG_COMP_COUNT_SIZE_NBITS) - 1))
+            | ((next_blkn & ((1 << JPEG_COMP_COUNT_BLKN_NBITS) - 1)) << JPEG_COMP_COUNT_SIZE_NBITS);
+
+        match comp_size.compare_exchange_weak(curr, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => break,
+            Err(temp) => curr = temp,
+        }
+    }
+}
+
+pub unsafe fn rp_update_size(w: WorkIndex, size: u32) {
+    unsafe {
+        RP_FRAME_COMPRESSED_SIZE
+            .get_unchecked_mut(w.get() as usize)
+            .fetch_add(size, Ordering::AcqRel);
+    }
+}
+
+pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
+    false
 }
