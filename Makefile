@@ -1,4 +1,4 @@
-# Need 2025-02-02 nightly rust for now
+# Need 2025-08-08 nightly rust for now
 
 DEV_BIN_DIR := $(DEVKITARM)/bin
 UNAME := $(shell uname)

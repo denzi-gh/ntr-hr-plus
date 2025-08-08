@@ -478,12 +478,12 @@ impl WorkAcquire {
                     )
                 })();
 
-                let dst = crate::jpeg::WorkerDst {
+                let dst = jpeg::WorkerDst {
                     blkn: 0,
                     s,
                     w,
                     dst: dst as *mut u8,
-                    free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
+                    free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
                     user,
                 };
                 worker.encode(dst, src, pre_progress, progress)?
@@ -502,12 +502,12 @@ impl WorkAcquire {
 
                     Some((jpeg::WorkderDstUser { hdr }, dst))
                 })() {
-                    let dst = crate::jpeg::WorkerDst {
+                    let dst = jpeg::WorkerDst {
                         blkn: 0,
                         s,
                         w,
                         dst: dst as *mut u8,
-                        free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
+                        free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
                         user,
                     };
                     worker.encode(dst, src, pre_progress, progress)?

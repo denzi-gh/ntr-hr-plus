@@ -450,7 +450,7 @@ impl WorkerDst {
     }
 
     pub unsafe fn advance_to(&mut self, dst: *mut u8) {
-        self.free_in_bytes -= unsafe { dst.sub_ptr(self.dst) } as u16;
+        self.free_in_bytes -= unsafe { dst.offset_from_unsigned(self.dst) } as u16;
         self.dst = dst;
     }
 
@@ -496,8 +496,10 @@ pub struct JpegWorker<'a, const REL_STREAM: bool> {
     info: &'a CInfo,
     thread_index: ThreadIndex,
     huff_state: HuffState,
-    last_dc_val: [i16; MAX_COMPONENTS],
+    last_dc_vals: LastDcVals,
 }
+
+type LastDcVals = RangedArray<i16, { MAX_COMPONENTS as u32 }>;
 
 pub struct JpegSharedMutCell {
     cell: *mut JpegSharedMut,
@@ -528,7 +530,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     fn reset_mcu(&mut self) {
         self.worker.huff_state = const_default();
         self.worker.huff_state.free_bits = BIT_BUF_SIZE as isize;
-        self.worker.last_dc_val = const_default();
+        self.worker.last_dc_vals = const_default();
     }
 
     fn flush_mcu(&mut self) {}
@@ -595,13 +597,17 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 .array_chunks::<{ DCTSIZE * MAX_SAMP_FACTOR }>();
             for (i, chunks) in src_chunks.enumerate() {
                 /* Pre-process */
-                let mut chunks = chunks.array_chunks::<{ DCTSIZE }>();
+                if let (chunks, []) = chunks.as_chunks::<{ DCTSIZE }>() {
+                    let mut chunks = chunks.iter();
 
-                let chunk0 = chunks.next().unwrap();
-                self.pre_process(*chunk0, false);
+                    let chunk0 = chunks.next().unwrap();
+                    self.pre_process(*chunk0, false);
 
-                let chunk1 = chunks.next().unwrap();
-                self.pre_process(*chunk1, true);
+                    let chunk1 = chunks.next().unwrap();
+                    self.pre_process(*chunk1, true);
+                } else {
+                    return None;
+                }
 
                 pre_progress();
 
@@ -697,9 +703,140 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         Some(JpegDqRet { delta_q, mcus })
     }
 
-    fn pre_process(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {}
+    fn need_subsamp<const COMP_I: u8, const H_SAMP: bool, const V_SAMP: bool>() -> bool {
+        (H_SAMP || V_SAMP) && COMP_I != 0
+    }
 
-    fn pre_process_no_vsubsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {}
+    fn need_subsamp_ci<const H_SAMP: bool, const V_SAMP: bool>(ci: u8) -> bool {
+        if ci == 0 {
+            Self::need_subsamp::<0, H_SAMP, V_SAMP>()
+        } else if ci == 1 {
+            Self::need_subsamp::<1, H_SAMP, V_SAMP>()
+        } else if ci == 2 {
+            Self::need_subsamp::<2, H_SAMP, V_SAMP>()
+        } else {
+            false
+        }
+    }
+
+    pub fn color_convert<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; S],
+        output_base: usize,
+    ) {
+        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        for ci in 0..MAX_COMPONENTS {
+            let color = &mut self.worker.bufs.color[ci];
+            if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                color.ptr = &mut color.buf[0][0];
+            } else {
+                let output_base = output_base * S as usize;
+                let output_step = S;
+                let output: &mut u8 =
+                    &mut self.worker.bufs.prep[ci][output_base..output_base + output_step][0][0];
+                color.ptr = output;
+            }
+        }
+        match self.worker.info.color_space {
+            ColorSpace::XBGR => cconvert::<3, 2, 1, 4, { S }>(
+                input,
+                &mut self.worker.bufs.color,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+            ),
+            ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
+                input,
+                &mut self.worker.bufs.color,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+            ),
+            ColorSpace::RGB565 => cconvert2::<{ S }, _>(
+                input,
+                rgb565_comps,
+                &mut self.worker.bufs.color,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+            ),
+            ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
+                input,
+                rgb5a1_comps,
+                &mut self.worker.bufs.color,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+            ),
+            ColorSpace::RGB4 => todo!(),
+        }
+    }
+
+    fn h2v1_downsample(
+        input: &[u8; GSP_SCREEN_WIDTH as usize],
+        output: &mut [u8; GSP_SCREEN_WIDTH as usize],
+    ) {
+        let mut bias = 0;
+        for (input, output) in input
+            .as_chunks::<{ MAX_SAMP_FACTOR }>()
+            .0
+            .iter()
+            .zip(output)
+        {
+            *output = ((input[0] as u16
+                + input[1] as u16
+                + input[0] as u16
+                + input[1] as u16
+                + bias as u16)
+                >> 2) as u8;
+            bias ^= 1; /* 1=>2, 2=>1 */
+        }
+    }
+
+    fn h2v2_downsample(
+        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR],
+        output: &mut [u8; GSP_SCREEN_WIDTH as usize],
+    ) {
+        let [input0, input1] = input;
+        let input0 = input0.as_chunks::<{ MAX_SAMP_FACTOR }>().0.iter();
+        let input1 = input1.as_chunks::<{ MAX_SAMP_FACTOR }>().0.iter();
+        let mut bias = 1;
+
+        for ((input0, input1), output) in input0.zip(input1).zip(output) {
+            *output = ((input0[0] as u16
+                + input0[1] as u16
+                + input1[0] as u16
+                + input1[1] as u16
+                + bias as u16)
+                >> 2) as u8;
+            bias ^= 3; /* 1=>2, 2=>1 */
+        }
+    }
+
+    pub fn downsample<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
+        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        for ci in 0..MAX_COMPONENTS {
+            let input = &self.worker.bufs.color[ci];
+            if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                if V_SAMP {
+                    let output = &mut self.worker.bufs.prep[ci][output_base];
+                    Self::h2v2_downsample(&input.buf, output);
+                } else {
+                    let output = &mut self.worker.bufs.prep[ci][output_base];
+                    Self::h2v1_downsample(&input.buf[0], output);
+                }
+            }
+        }
+    }
+
+    fn pre_process(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {
+        for (base, chunk) in src.as_chunks::<{ MAX_SAMP_FACTOR }>().0.iter().enumerate() {
+            let output_base = if which_half { base + DCTSIZE / 2 } else { base };
+            self.color_convert::<_, true, true>(chunk, output_base);
+            self.downsample::<true, true>(output_base);
+        }
+    }
+
+    fn pre_process_no_vsubsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
+        for (base, chunk) in src.as_chunks::<1>().0.iter().enumerate() {
+            self.color_convert::<_, H_SAMP, false>(chunk, base);
+            self.downsample::<H_SAMP, false>(base);
+        }
+    }
 
     fn process(&mut self, prev: *mut JBlock, row_i: u8) {}
 }
@@ -735,9 +872,123 @@ impl Jpeg {
             info: work_index.index_into_mut(&mut self.info),
             thread_index,
             huff_state: const_default(),
-            last_dc_val: const_default(),
+            last_dc_vals: const_default(),
         }
     }
+}
+
+fn pconvert(r: u8, g: u8, b: u8, y: &mut u8, cb: &mut u8, cr: &mut u8, ctab: &[i32; TABLE_SIZE]) {
+    /* If the inputs are 0.._MAXJSAMPLE, the outputs of these equations
+     * must be too; we do not need an explicit range-limiting operation.
+     * Hence the value being shifted is never negative, and we don't
+     * need the general RIGHT_SHIFT macro.
+     */
+    /* Y */
+    *y = ((ctab[r as usize + R_Y_OFF] + ctab[g as usize + G_Y_OFF] + ctab[b as usize + B_Y_OFF])
+        >> SCALEBITS) as u8;
+    /* Cb */
+    *cb =
+        ((ctab[r as usize + R_CB_OFF] + ctab[g as usize + G_CB_OFF] + ctab[b as usize + B_CB_OFF])
+            >> SCALEBITS) as u8;
+    /* Cr */
+    *cr =
+        ((ctab[r as usize + R_CR_OFF] + ctab[g as usize + G_CR_OFF] + ctab[b as usize + B_CR_OFF])
+            >> SCALEBITS) as u8;
+}
+
+fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, const N: usize>(
+    input: &[&[u8]; N],
+    output: &mut [WorkerColorBuf; MAX_COMPONENTS],
+    tab: &[i32; TABLE_SIZE],
+) where
+    [(); GSP_SCREEN_WIDTH as usize * P]:,
+{
+    let [output0, output1, output2] = output;
+    let output0 = unsafe {
+        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    let output1 = unsafe {
+        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    let output2 = unsafe {
+        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    for i in 0..N {
+        let input: &[u8; GSP_SCREEN_WIDTH as usize * P] = input[i].try_into().unwrap();
+
+        let output0 = unsafe { output0.get_unchecked_mut(i) };
+        let output1 = unsafe { output1.get_unchecked_mut(i) };
+        let output2 = unsafe { output2.get_unchecked_mut(i) };
+
+        for (((input, output0), output1), output2) in input
+            .as_chunks::<P>()
+            .0
+            .iter()
+            .zip(output0.into_iter())
+            .zip(output1.into_iter())
+            .zip(output2.into_iter())
+        {
+            let r = input[R];
+            let g = input[G];
+            let b = input[B];
+
+            pconvert(r, g, b, output0, output1, output2, tab);
+        }
+    }
+}
+
+fn cconvert2<const N: usize, F>(
+    input: &[&[u8]; N],
+    comps: F,
+    output: &mut [WorkerColorBuf; MAX_COMPONENTS],
+    tab: &ColorConvTabs,
+) where
+    F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
+    [(); GSP_SCREEN_WIDTH as usize * 2]:,
+{
+    let [output0, output1, output2] = output;
+    let output0 = unsafe {
+        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    let output1 = unsafe {
+        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    let output2 = unsafe {
+        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
+    };
+    for i in 0..N {
+        let input: &[u8; GSP_SCREEN_WIDTH as usize * 2] = input[i].try_into().unwrap();
+
+        let output0 = unsafe { output0.get_unchecked_mut(i) };
+        let output1 = unsafe { output1.get_unchecked_mut(i) };
+        let output2 = unsafe { output2.get_unchecked_mut(i) };
+
+        for (((input, output0), output1), output2) in input
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(output0.into_iter())
+            .zip(output1.into_iter())
+            .zip(output2.into_iter())
+        {
+            let (r, g, b) = comps(input[0] as u16 | ((input[1] as u16) << 8), tab);
+
+            pconvert(r, g, b, output0, output1, output2, &tab.rgb_ycc_tab);
+        }
+    }
+}
+
+fn rgb565_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
+    let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
+    let g = tab.g_6_tab[((input >> 5) & 0x3f) as usize];
+    let b = tab.rb_5_tab[(input & 0x1f) as usize];
+    (r, g, b)
+}
+fn rgb5a1_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
+    let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
+    let g = tab.rb_5_tab[((input >> 6) & 0x1f) as usize];
+    let b = tab.rb_5_tab[((input >> 1) & 0x1f) as usize];
+    (r, g, b)
 }
 
 impl<'a, const REL_STREAM: bool> JpegWorker<'a, REL_STREAM> {

@@ -1,4 +1,4 @@
-use crate::{vars::config_consts::OV_STATS, *};
+use crate::*;
 
 struct ThreadsStacks<'a> {
     aux1: &'a mut StackRegion<{ RP_THREAD_STACK_SIZE as usize }>,

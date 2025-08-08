@@ -23,7 +23,7 @@ where
 {
     type Item = IRanged<NB, NE>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<IRanged<NB, NE>> {
         if self.b {
             return None;
         }

@@ -9,22 +9,17 @@
 #![feature(adt_const_params)]
 #![feature(inherent_associated_types)]
 #![feature(trivial_bounds)]
-#![feature(maybe_uninit_uninit_array)]
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(stmt_expr_attributes)]
-#![feature(array_chunks)]
 #![feature(iter_array_chunks)]
-#![feature(ptr_sub_ptr)]
 #![feature(array_ptr_get)]
-#![feature(generic_arg_infer)]
-#![feature(get_many_mut)]
 #![feature(more_float_constants)]
 #![allow(static_mut_refs)]
 
-use crate::dbg::*;
-use crate::fix::*;
-use crate::utils::*;
-use crate::vars::*;
+use dbg::*;
+use fix::*;
+use utils::*;
+use vars::*;
 use ::libc::*;
 use const_default::{ConstDefault, const_default};
 use core::ops::*;
