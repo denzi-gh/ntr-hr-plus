@@ -137,9 +137,9 @@ pub struct JpegSharedMut {
 }
 
 impl JpegSharedMut {
-    pub fn once(&mut self) {
+    fn once(&mut self) {
         unsafe {
-            slice::from_raw_parts_mut(self as *mut _ as *mut u8, mem::size_of_val(self)).fill(0);
+            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
         }
         self.rand32 = Rand32::new(get_system_tick().get() as u64);
     }
@@ -246,9 +246,9 @@ impl JpegShared {
         }
     }
 
-    pub fn once(&mut self) {
+    fn once(&mut self) {
         unsafe {
-            slice::from_raw_parts_mut(self as *mut _ as *mut u8, mem::size_of_val(self)).fill(0);
+            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
         }
         self.jpeg_tbls = JpegTbls::once();
         self.once_delta_q_tbls();
@@ -335,18 +335,19 @@ const _ARQ_RP_HDR_SIZE_ASSERT: () = {
 };
 
 const _ARQ_RP_W_SIZE_ASSERT: () = {
-    assert!(WORK_COUNT - 1 <= ((1 << RP_KCP_HDR_W_NBITS) - 1));
+    assert!(WORK_COUNT - 1 <= ((1 << entries::work_thread::RP_KCP_HDR_W_NBITS) - 1));
 };
 
 // We store RP_CORE_COUNT_MAX as a special value to indicate term packet
 const _ARQ_RP_T_SIZE_ASSERT: () = {
-    assert!(RP_CORE_COUNT_MAX <= ((1 << RP_KCP_HDR_T_NBITS) - 1));
+    assert!(RP_CORE_COUNT_MAX <= ((1 << entries::work_thread::RP_KCP_HDR_T_NBITS) - 1));
 };
 
 impl ArqRpHdr {
     pub unsafe fn write_hdr(&self, dst: *mut u8) {
         let hdr = (self.w.get() as u16) << (PID_NBITS + CID_NBITS)
-            | (self.t.get() as u16) << (PID_NBITS + CID_NBITS + RP_KCP_HDR_W_NBITS);
+            | (self.t.get() as u16)
+                << (PID_NBITS + CID_NBITS + entries::work_thread::RP_KCP_HDR_W_NBITS);
         unsafe {
             ptr::copy_nonoverlapping(&hdr, dst as *mut _, 1);
         }
@@ -457,9 +458,9 @@ impl WorkerDst {
     fn dq_update_size<const DLETA_Q: bool>(&mut self, size: u32) {
         if DLETA_Q {
             let comp_size = unsafe { (*JPEG).shared_mut.compressed_size.get_mut(&self.s) };
-            unsafe { entries::thread_nwm::rp_dq_update_size(comp_size, size, self.blkn) }
+            entries::thread_nwm::rp_dq_update_size(comp_size, size, self.blkn)
         } else {
-            unsafe { entries::thread_nwm::rp_update_size(self.w, size) }
+            entries::thread_nwm::rp_update_size(self.w, size)
         }
     }
 }
@@ -694,11 +695,17 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    fn write_rst(&mut self) {}
+    fn write_rst(&mut self) {
+        self.write_marker(M_RST0 + self.worker.thread_index.get() as u8);
+    }
 
-    fn write_trailer(&mut self) {}
+    fn write_trailer(&mut self) {
+        self.write_marker(M_EOI);
+    }
 
-    fn write_term(&mut self) {}
+    fn write_term(&mut self) {
+        self.dst.term::<REL_STREAM, DELTA_Q>();
+    }
 
     fn reset_mcu(&mut self) {
         self.worker.huff_state = const_default();
@@ -1149,7 +1156,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let mut qnv: [QuantizeRet; NUM_QUANT_TBLS] = const_default();
         let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
-        let need_wait_for_nwm = self.worker.thread_index.get() == 0;
+        let _need_wait_for_nwm = self.worker.thread_index.get() == 0;
 
         for ci in 0..MAX_COMPONENTS {
             cache_next_i[ci] = 0;
@@ -1496,7 +1503,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let delta_q0 = unsafe { self.worker.shared.delta_q0_tbls.get_unchecked(delta_q) };
         let mut delta_cache_start = 0;
 
-        let need_wait_for_nwm = DELTA_Q && self.worker.thread_index.get() == 0;
+        let _need_wait_for_nwm = DELTA_Q && self.worker.thread_index.get() == 0;
 
         let comp_infos = unsafe { &*self.worker.shared.comp_infos };
         for ci in 0..MAX_COMPONENTS {
@@ -2183,6 +2190,11 @@ pub struct Jpeg {
 }
 
 impl Jpeg {
+    pub unsafe fn once(&mut self) {
+        self.shared.once();
+        self.shared_mut.once();
+    }
+
     pub fn init(&mut self, quality: u32, core_count: CoreCount, hq: u32, delta_prog: bool) {
         let (max_blocks_in_mcu, q_steps) = self.shared.init(quality, delta_prog, core_count, hq);
         self.shared_mut.init(delta_prog, max_blocks_in_mcu, q_steps);

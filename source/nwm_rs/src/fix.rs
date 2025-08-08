@@ -2,6 +2,7 @@ use crate::*;
 
 pub const SCALE_BITS: u32 = 16;
 
+#[allow(unused)]
 pub const ONE_HALF: u32 = 1 << (SCALE_BITS - 1);
 
 pub const fn fix(x: c_double) -> u32 {

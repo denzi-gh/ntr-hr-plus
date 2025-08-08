@@ -28,6 +28,9 @@ fn once_jpeg() -> Option<()> {
     let jpeg = request_mem_from_pool::<{ mem::size_of::<jpeg::Jpeg>() }>()?;
     unsafe {
         jpeg::JPEG = jpeg.to_ptr() as *mut jpeg::Jpeg;
+        let jpeg = &mut *jpeg::JPEG;
+
+        jpeg.once();
     }
 
     Some(())
@@ -204,6 +207,17 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
 
         entries::thread_nwm::init_reliable_stream_cb(qos)?;
 
+        let jpeg = &mut *jpeg::JPEG;
+        let quality = RP_CONFIG.quality().load(Ordering::Acquire);
+        let chroma_ss = RP_CONFIG.chroma_ss().load(Ordering::Acquire);
+        jpeg.init(
+            quality,
+            core_count,
+            chroma_ss,
+            entries::thread_nwm::get_reliable_stream_delta_prog(),
+        );
+        entries::work_thread::init(quality, chroma_ss);
+
         entries::thread_nwm::init_nwm_infos(nwm_bufs, core_count);
 
         entries::thread_nwm::init_ov_stats();
@@ -217,7 +231,7 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
 }
 
 #[named]
-fn main(impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
+fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
     pause()?;
 
     let init = init(&s.nwm_bufs)?;

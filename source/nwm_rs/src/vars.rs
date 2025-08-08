@@ -228,6 +228,7 @@ pub unsafe fn cleanup_syn_handles(core_count: CoreCount) {
 
 static mut RESET_THREADS: AtomicBool = const_default();
 
+#[must_use]
 pub fn reset_threads() -> bool {
     unsafe { RESET_THREADS.load(Ordering::Acquire) }
 }
@@ -249,6 +250,3 @@ pub fn core_count_in_use() -> CoreCount {
 pub unsafe fn set_core_count_in_use(v: u32) {
     unsafe { CORE_COUNT_IN_USE.set(v) }
 }
-
-pub const RP_KCP_HDR_W_NBITS: u32 = 1;
-pub const RP_KCP_HDR_T_NBITS: u32 = 2;

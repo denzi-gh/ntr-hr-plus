@@ -34,6 +34,28 @@ impl Impl {
     }
 }
 
+pub unsafe fn init(quality: u32, chroma_ss: u32) {
+    unsafe {
+        LAST_ROW_LAST_N.store(0, Ordering::Release);
+        LAST_ENCODED_SCREEN = ScreenIndex::init(0);
+        LAST_SCREEN_LAST_ROW = 0;
+
+        for i in ScreenIndex::all() {
+            FRAME_TIMES
+                .get_mut(&i)
+                .store(SYSCLOCK_ARM11, Ordering::Release);
+
+            *CURRENT_FRAME_IDS.get_mut(&i) = 0;
+            *LAST_FRAME_TIMINGS.get_mut(&i) = get_system_tick().get() as u32;
+        }
+
+        TERM_DSTS = const_default();
+        TERM_INFOS = const_default();
+        JPEG_QUALITY = quality;
+        JPEG_CHROMA_SS = chroma_ss;
+    }
+}
+
 static mut CURRENT_FRAME_IDS: RangedArray<u8, SCREEN_COUNT> = const_default();
 static mut LAST_FRAME_TIMINGS: RangedArray<u32, SCREEN_COUNT> = const_default();
 static mut FRAME_TIMES: RangedArray<AtomicU32, SCREEN_COUNT> = const_default();
@@ -84,7 +106,9 @@ pub struct BlitCtxInit(WorkReady, bool);
 impl BlitCtxInit {
     #[named]
     fn dma_sync(&self) {
-        wait_syn(cname!(), self.0.0.work_ready_params().dma, c_str!("dma"));
+        if wait_syn(cname!(), self.0.0.work_ready_params().dma, c_str!("dma")).is_none() {
+            return;
+        }
 
         let bctx = self.0.0.bctx();
         unsafe {
@@ -427,9 +451,270 @@ impl Drop for JpegRet {
     }
 }
 
+static mut TERM_DSTS: RangedArray<RangedArray<*mut u8, RP_CORE_COUNT_MAX>, WORK_COUNT> =
+    const_default();
+
+pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
+    let d = unsafe { TERM_DSTS.get_mut(&w).get_mut(&t) };
+    if *d == ptr::null_mut() {
+        *d = dst;
+        return true;
+    }
+    return false;
+}
+
 #[named]
 unsafe fn send_term_dsts(w: WorkIndex, jpeg: &jpeg::JpegDqRet) -> bool {
-    false
+    if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
+        return true;
+    }
+
+    if wait_syn(
+        cname!(),
+        unsafe { entries::thread_nwm::SEG_MEM_TERM_SEM },
+        c_str!("SEG_MEM_TERM_SEM"),
+    )
+    .is_none()
+    {
+        return false;
+    }
+
+    let mut terms: [*mut u8; RP_CORE_COUNT_MAX as usize + 1] = const_default();
+    let mut term_cur = 0;
+    let mut term_size = 0;
+    terms[term_cur] = if let Some(d) = unsafe { rp_term_data_buf_malloc() } {
+        entries::thread_nwm::rp_data_buf_data(d)
+    } else {
+        return false;
+    };
+
+    let rp_packet_data_size = entries::thread_nwm::get_packet_data_size();
+    let mut copy_to_terms = |mut data: *const u8, mut len: usize| {
+        while len > 0 {
+            let len_0 = rp_packet_data_size as usize - term_size;
+            if len_0 >= len {
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        data,
+                        terms.get_unchecked_mut(term_cur).add(term_size),
+                        len,
+                    );
+                }
+                term_size += len;
+                break;
+            } else {
+                if len_0 > 0 {
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            data,
+                            terms.get_unchecked_mut(term_cur).add(term_size),
+                            len_0,
+                        );
+                    }
+                    data = unsafe { data.add(len_0) };
+                    len -= len_0;
+                }
+                term_cur += 1;
+                term_size = 0;
+                terms[term_cur] = if let Some(d) = unsafe { rp_term_data_buf_malloc() } {
+                    entries::thread_nwm::rp_data_buf_data(d)
+                } else {
+                    return false;
+                };
+            }
+        }
+        true
+    };
+
+    let info = unsafe { TERM_INFOS.get(&w) };
+    let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
+    let hdr = (delta_prog as u16)
+        << (RP_KCP_HDR_CHROMASS_NBITS + RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
+        | (unsafe { JPEG_CHROMA_SS as u16 }) << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
+        | (is_top_index(info.is_top).get() as u16)
+            << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
+        | (info.core_count.get() as u16) << RP_KCP_HDR_QUALITY_NBITS
+        | (if delta_prog {
+            jpeg.delta_q as u16
+        } else {
+            unsafe { JPEG_QUALITY as u16 }
+        });
+    if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
+        return false;
+    }
+
+    let core_count = core_count_in_use();
+    let mut sizes: RangedArray<u32, RP_CORE_COUNT_MAX> = const_default();
+    for i in ThreadIndex::up_to(&thread_index_last(core_count)) {
+        let dst = *unsafe { TERM_DSTS.get_mut(&w).get_mut(&i) };
+        if dst == ptr::null_mut() {
+            return false;
+        }
+
+        unsafe {
+            ptr::copy_nonoverlapping(
+                dst.sub(mem::size_of::<u32>()) as *const _,
+                sizes.get_mut(&i),
+                1,
+            )
+        };
+        let size = *sizes.get(&i) as u16;
+
+        let hdr = size
+            | ((if i.get() == core_count.get() - 1 {
+                info.v_last_adjusted
+            } else {
+                info.v_adjusted
+            } as u16
+                & ((1 << RP_KCP_HDR_RC_NBITS) - 1))
+                << RP_KCP_HDR_SIZE_NBITS);
+        if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
+            return false;
+        }
+    }
+
+    for i in ThreadIndex::up_to(&thread_index_last(core_count)) {
+        let dst_ref = unsafe { TERM_DSTS.get_mut(&w).get_mut(&i) };
+        let dst = *dst_ref;
+
+        if !copy_to_terms(dst, *sizes.get(&i) as usize) {
+            return false;
+        }
+
+        unsafe {
+            rp_seg_data_buf_free(dst.sub(ARQ_DATA_HDR_SIZE as usize));
+        }
+        *dst_ref = ptr::null_mut();
+    }
+
+    for i in 0..=term_cur {
+        let mut dst = *unsafe { terms.get_unchecked_mut(i) };
+
+        if i == term_cur {
+            unsafe {
+                ptr::write_bytes(dst.add(term_size), 0, rp_packet_data_size - term_size);
+            }
+        }
+
+        let mut size = rp_packet_data_size as u32;
+
+        dst = unsafe { dst.sub(ARQ_DATA_HDR_SIZE as usize) };
+        size += ARQ_DATA_HDR_SIZE;
+
+        let hdr = (w.get() as u16) << (PID_NBITS + CID_NBITS)
+            | (RP_CORE_COUNT_MAX as u16) << (PID_NBITS + CID_NBITS + RP_KCP_HDR_W_NBITS);
+        unsafe {
+            ptr::copy_nonoverlapping(&hdr, dst as *mut _, 1);
+        }
+
+        size |= 1 << 31;
+        if i == term_cur {
+            size |= 1 << 30;
+        }
+        unsafe { ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1) };
+
+        let cb = unsafe { &mut *entries::thread_nwm::RELIABLE_STREAM_CB };
+        while !reset_threads() {
+            let res = unsafe { rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _) };
+            if res == 0 {
+                break;
+            }
+            if res != RES_TIMEOUT as s32 {
+                ns_dbg_print!(failed, c_str!("Wait for nwm_syn"), res);
+                set_reset_threads();
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+pub const RP_KCP_HDR_W_NBITS: u32 = 1;
+pub const RP_KCP_HDR_T_NBITS: u32 = 2;
+const RP_KCP_HDR_SIZE_NBITS: u32 = 11;
+const RP_KCP_HDR_RC_NBITS: u32 = 5;
+
+#[named]
+pub unsafe fn rp_term_data_buf_malloc() -> Option<*mut c_char> {
+    wait_syn(
+        cname!(),
+        unsafe { entries::thread_nwm::SEG_MEM_LOCK },
+        c_str!("SEG_MEM_LOCK"),
+    )?;
+
+    let cb = unsafe { &mut *entries::thread_nwm::RELIABLE_STREAM_CB };
+    let dst = unsafe { mp_malloc(&mut cb.locked.send_pool) } as *mut u8;
+
+    let ret = if dst == ptr::null_mut() {
+        ns_dbg_print!(msg, c_str!("Mem pool send alloc failed"));
+        set_reset_threads();
+        None
+    } else {
+        Some(dst)
+    };
+
+    unsafe {
+        release_mutex(
+            cname!(),
+            entries::thread_nwm::SEG_MEM_LOCK,
+            c_str!("SEG_MEM_LOCK"),
+        );
+    }
+    ret
+}
+
+#[named]
+#[unsafe(no_mangle)]
+pub unsafe fn rp_term_data_buf_free_base(dst: *const ::libc::c_char) -> bool {
+    if wait_syn(
+        cname!(),
+        unsafe { entries::thread_nwm::SEG_MEM_LOCK },
+        c_str!("SEG_MEM_LOCK"),
+    )
+    .is_none()
+    {
+        return false;
+    }
+
+    let cb = unsafe { &mut *entries::thread_nwm::RELIABLE_STREAM_CB };
+    let ret = if unsafe {
+        mp_free(
+            &mut cb.locked.send_pool,
+            dst.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) as *mut _,
+        )
+    } < 0
+    {
+        ns_dbg_print!(msg, c_str!("Mem pool send free failed"));
+        false
+    } else {
+        true
+    };
+    unsafe {
+        release_mutex(
+            cname!(),
+            entries::thread_nwm::SEG_MEM_LOCK,
+            c_str!("SEG_MEM_LOCK"),
+        );
+    }
+    ret
+}
+
+#[unsafe(no_mangle)]
+unsafe fn rp_term_data_buf_free(dst: *const ::libc::c_char) -> bool {
+    unsafe { rp_term_data_buf_free_base(dst.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize)) }
+}
+
+#[named]
+#[unsafe(no_mangle)]
+unsafe fn rp_term_notify() {
+    unsafe {
+        release_sem(
+            cname!(),
+            entries::thread_nwm::SEG_MEM_TERM_SEM,
+            c_str!("SEG_MEM_TERM_SEM"),
+        );
+    }
 }
 
 const fn j_max_half_factor(v: u32) -> u32 {
@@ -529,7 +814,6 @@ impl WorkAcquire {
     }
 }
 
-#[named]
 fn capture_screen(should_capture: &mut AtomicBool) {
     if should_capture.swap(true, Ordering::AcqRel) == false {
         unsafe {
@@ -610,3 +894,5 @@ pub struct TermInfo {
 }
 
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
+static mut JPEG_QUALITY: u32 = const_default();
+static mut JPEG_CHROMA_SS: u32 = const_default();

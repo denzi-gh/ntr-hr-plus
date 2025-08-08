@@ -783,8 +783,6 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
 
     /* This algorithm is explained in section K.2 of the JPEG standard */
 
-    // bits.fill(0);
-    // codesize.fill(0);
     for i in 0..257 {
         others[i] = -1; /* init links to empty */
     }

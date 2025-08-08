@@ -15,14 +15,14 @@ pub unsafe fn once_reliable_stream_cb() -> Option<()> {
         if let Some(m) = request_mem_from_pool::<{ mem::size_of::<rp_cb>() }>() {
             RELIABLE_STREAM_CB = m.to_ptr() as *mut rp_cb;
             let cb = &mut *RELIABLE_STREAM_CB;
-            slice::from_raw_parts_mut(cb as *mut _ as *mut u8, mem::size_of::<rp_cb>()).fill(0);
+            ptr::write_bytes(cb as *mut _ as *mut u8, 0, mem::size_of::<rp_cb>());
         } else {
             return None;
         }
 
         let res = svcCreateMutex(&mut RELIABLE_STREAM_CB_LOCK, false);
         if res != 0 {
-            ns_dbg_print!(failed, c_str!("Create nwm mutex failed"), res);
+            ns_dbg_print!(failed, c_str!("Create nwm mutex"), res);
             return None;
         }
         let res = create_event(&mut RELIABLE_STREAM_CB_EVT);
@@ -80,11 +80,11 @@ pub unsafe fn init_reliable_stream_cb(qos: u32) -> Option<()> {
 
 pub unsafe fn init_ov_stats() {
     unsafe {
-        slice::from_raw_parts_mut(
+        ptr::write_bytes(
             config_consts::OV_STATS as *mut u8,
+            0,
             mem::size_of_val(&*config_consts::OV_STATS),
-        )
-        .fill(0);
+        );
         (*config_consts::OV_STATS).kcp_mode = match entries::thread_nwm::get_reliable_stream() {
             entries::thread_nwm::ReliableStream::None => 0,
             entries::thread_nwm::ReliableStream::KCP => {
@@ -158,28 +158,189 @@ pub fn rp_delta_q_qos() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn rp_set_qos(qos: u32) {}
+extern "C" fn rp_set_qos(qos: u32) {
+    unsafe { init_min_send_interval(qos) }
+}
 
+#[named]
 #[unsafe(no_mangle)]
 extern "C" fn rp_udp_output(buf: *mut u8, len: s32, tick: *mut u32, kcp: *mut ikcpcb) -> s32 {
-    0
+    if len > PACKET_SIZE as s32 {
+        ns_dbg_print!(failed, c_str!("Nwm output packet len overflow"), len);
+        return -3;
+    }
+
+    let next_send_tick = unsafe { RP_OUTPUT_NEXT_TICK };
+    let mut curr_tick = get_system_tick().get() as u32;
+    let tick_diff = (next_send_tick - curr_tick) as s32;
+    let duration_ns = if tick_diff > 0 {
+        DurationTick::init(tick_diff as s64).get_ns()
+    } else {
+        DurationNs::init(0)
+    };
+    if duration_ns.get() > 0 {
+        unsafe {
+            nwm_cb_unlock();
+        }
+        sleep_thread(duration_ns);
+        if nwm_cb_lock() == None {
+            set_reset_threads();
+            return -5;
+        }
+
+        if unsafe { (*kcp).rp_output_retry } {
+            return 0;
+        }
+        curr_tick = if NWM_AGGRESSIVE_NEXT_TICK > 0 {
+            next_send_tick
+        } else {
+            get_system_tick().get() as u32
+        };
+    }
+
+    let next_interval =
+        if unsafe { (*kcp).session_established } && NWM_PROPORTIONAL_MIN_INTERVAL > 0 {
+            unsafe { MIN_SEND_INTERVAL_TICK * len as u32 / PACKET_SIZE }
+        } else {
+            unsafe { MIN_SEND_INTERVAL_TICK }
+        };
+    unsafe { *tick = curr_tick };
+    unsafe { RP_OUTPUT_NEXT_TICK = curr_tick + next_interval };
+
+    unsafe { nwm_output(buf.sub(NWM_HDR_SIZE as usize), len as usize) };
+    return len;
 }
 
+unsafe fn rp_recv_data_buf()
+-> Option<&'static mut [[c_char; RP_RECV_PACKET_SIZE as usize]; RP_RECV_BUF_N as usize]> {
+    if !unsafe { RELIABLE_STREAM_CB_INITED.load(Ordering::Acquire) } {
+        return None;
+    }
+
+    let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+    Some(&mut cb.locked.recv_buf)
+}
+
+#[named]
 #[unsafe(no_mangle)]
 extern "C" fn nsControlRecv(fd: c_int) -> c_int {
+    let recv_bufs = if let Some(dst) = unsafe { rp_recv_data_buf() } {
+        dst
+    } else {
+        return -1;
+    };
+
+    let mut recv_ret = 0;
+    let mut recv_idx = 0;
+    let mut recv_buf = ptr::null_mut::<u8>();
+    loop {
+        let buf = unsafe { recv_bufs.get_unchecked_mut(recv_idx) };
+        let ret = unsafe {
+            recv(
+                fd,
+                buf.as_mut_ptr() as *mut _,
+                RP_RECV_PACKET_SIZE as usize,
+                0,
+            )
+        };
+        if ret == 0 {
+            break;
+        } else if ret < 0 {
+            let err = unsafe { *__errno() };
+            if err != ctru::EWOULDBLOCK as i32 || err != ctru::EAGAIN as i32 {
+                ns_dbg_print!(failed, c_str!("Nwm input"), err);
+                return -1;
+            }
+            break;
+        }
+        recv_ret = ret;
+        recv_buf = buf.as_mut_ptr();
+        recv_idx = (recv_idx + 1) % RP_RECV_BUF_N as usize;
+    }
+
+    if recv_ret == 0 {
+        ns_dbg_print!(msg, c_str!("Nwm input nothing"));
+        return 0;
+    }
+
+    let nwm_lock = if let Some(l) = NwmCbLock::lock() {
+        l
+    } else {
+        return -1;
+    };
+
+    match get_reliable_stream() {
+        ReliableStream::None => {
+            return 0;
+        }
+        ReliableStream::KCP => {
+            let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+            let kcp = &mut cb.locked.ikcp;
+
+            let ret = unsafe { ikcp_input(kcp, recv_buf, recv_ret as i32) };
+            if ret < 0 {
+                // Reset KCP
+                if ret < -0x10 {
+                    ns_dbg_print!(failed, c_str!("KCP input"), ret);
+                }
+                set_reset_threads();
+                return -1;
+            }
+            drop(nwm_lock);
+            let _ = unsafe { svcSignalEvent(RELIABLE_STREAM_CB_EVT) };
+        }
+    }
+
     0
 }
 
+#[named]
 #[unsafe(no_mangle)]
 extern "C" fn ikcp_seg_data_buf_malloc() -> *mut c_char {
-    ptr::null_mut()
+    if let Some(dst) = loop {
+        if unsafe { CUR_SEG_MEM_COUNT } == SEND_CUR_BUFS_COUNT {
+            break None;
+        }
+
+        let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+        let dst = unsafe { mp_malloc(&mut cb.locked.cur_send_pool) } as *mut u8;
+        if dst == ptr::null_mut() {
+            ns_dbg_print!(msg, c_str!("Mem pool cur send alloc failed"));
+            set_reset_threads();
+            break None;
+        }
+
+        unsafe { CUR_SEG_MEM_COUNT += 1 };
+        break Some(dst);
+    } {
+        return unsafe { dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) };
+    } else {
+        return ptr::null_mut();
+    }
+}
+
+#[named]
+#[unsafe(no_mangle)]
+extern "C" fn ikcp_seg_data_buf_free(dst: *const c_char) {
+    let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+    if unsafe {
+        mp_free(
+            &mut cb.locked.cur_send_pool,
+            dst.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) as *mut _,
+        )
+    } < 0
+    {
+        ns_dbg_print!(msg, c_str!("Mem pool cur send free failed"));
+        set_reset_threads();
+        return;
+    }
+    unsafe { CUR_SEG_MEM_COUNT -= 1 };
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn ikcp_seg_data_buf_free(dst: *const c_char) {}
-
-#[unsafe(no_mangle)]
-extern "C" fn rp_seg_data_buf_free(data_buf: *const c_char) {}
+extern "C" fn rp_seg_data_buf_free(data_buf: *const c_char) {
+    unsafe { rp_data_buf_free(data_buf.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) as *mut _) }
+}
 
 const RP_KCP_TIMEOUT_TICK: s32 = 2 * SYSCLOCK_ARM11 as s32;
 
@@ -369,7 +530,7 @@ unsafe fn do_kcp_thread_nwm() -> bool {
                 }
 
                 if !(*kcp).session_established {
-                    unsafe {RP_OUTPUT_NEXT_TICK = next_send_tick + SYSCLOCK_ARM11 / 16};
+                    unsafe { RP_OUTPUT_NEXT_TICK = next_send_tick + SYSCLOCK_ARM11 / 16 };
                 }
             }
         }
@@ -398,7 +559,9 @@ pub extern "C" fn thread_nwm(_: *mut c_void) {
                 sleep_thread(MIN_SEND_INTERVAL_NS);
                 continue;
             }
-            wait_syn(cname!(), SYN_HANDLES.nwm_ready, c_str!("nwm_ready"));
+            if wait_syn(cname!(), SYN_HANDLES.nwm_ready, c_str!("nwm_ready")).is_none() {
+                break;
+            }
         }
         svcExitThread()
     }
@@ -846,8 +1009,17 @@ pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_coun
                     * packet_data_size
                     + hdr_size;
                 let buf = nwm_bufs.get(&i).add(j.get() as usize * buf_size);
+
                 info.buf = buf.add(hdr_size);
                 info.buf_packet_last = buf.add(buf_size as usize - packet_data_size);
+
+                let buf = info.buf;
+                let info = &mut info.info;
+                *info = DataInfo {
+                    send_pos: buf,
+                    pos: AtomicPtr::new(buf),
+                    flag: AtomicU32::new(0),
+                };
             }
         }
     }
@@ -934,11 +1106,6 @@ impl NwmCbLock {
         Some(Self())
     }
 
-    pub fn lock_ns(wait: s64) -> Option<Self> {
-        nwm_cb_lock_ns(wait)?;
-        Some(Self())
-    }
-
     pub fn get(&mut self) -> &mut rp_cb_locked {
         unsafe { &mut (*RELIABLE_STREAM_CB).locked }
     }
@@ -950,12 +1117,8 @@ impl Drop for NwmCbLock {
     }
 }
 
-fn nwm_cb_lock() -> Option<()> {
-    nwm_cb_lock_ns(THREAD_WAIT_NS.get())
-}
-
 #[named]
-fn nwm_cb_lock_ns(wait: s64) -> Option<()> {
+fn nwm_cb_lock() -> Option<()> {
     wait_syn(
         cname!(),
         unsafe { RELIABLE_STREAM_CB_LOCK },
@@ -984,7 +1147,7 @@ const _JPEG_COMP_COUNT_NBITS_ASSERT: () = {
     assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
 };
 
-pub unsafe fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16) {
+pub fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16) {
     let mut curr = comp_size.load(Ordering::Acquire);
     loop {
         let prev_size = curr & ((1 << JPEG_COMP_COUNT_SIZE_NBITS) - 1);
@@ -1027,15 +1190,103 @@ pub fn rp_clear_size(w: WorkIndex) {
     }
 }
 
+#[named]
 pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
-    false
+    let rp_packet_data_size = get_packet_data_size_const::<RS>();
+    let mut size = rp_packet_data_size;
+    const TERM_FLAG: u8 = 0x10;
+    if term {
+        size -= dst.free_in_bytes as usize;
+    }
+
+    dst.dst = if !RS {
+        let ninfo = unsafe { &*dst.user.info };
+        let dinfo = &ninfo.info;
+
+        let mut pos_next = unsafe { (*dinfo.pos.as_ptr()).add(size) };
+
+        dinfo.pos.store(pos_next, Ordering::Release);
+        if term {
+            dinfo.flag.store(TERM_FLAG as u32, Ordering::Release);
+        }
+
+        if !term && pos_next > ninfo.buf_packet_last {
+            pos_next = ninfo.buf_packet_last;
+            ns_dbg_print!(msg, c_str!("Send buffer overflow"));
+        }
+
+        let res = unsafe { svcSignalEvent(SYN_HANDLES.nwm_ready) };
+        if res != 0 {
+            ns_dbg_print!(failed, c_str!("Signal nwm ready"), res);
+        }
+
+        pos_next
+    } else {
+        let hdr = unsafe { &dst.user.hdr };
+        let mut dst = if term {
+            unsafe {
+                dst.dst
+                    .sub(rp_packet_data_size - dst.free_in_bytes as usize)
+            }
+        } else {
+            unsafe { dst.dst.sub(rp_packet_data_size) }
+        };
+
+        let mut size = size as u32;
+        if !term {
+            dst = unsafe { dst.sub(ARQ_DATA_HDR_SIZE as usize) };
+            size += ARQ_DATA_HDR_SIZE;
+            unsafe {
+                hdr.write_hdr(dst);
+            }
+        }
+
+        unsafe {
+            ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1);
+        }
+
+        if term {
+            return unsafe { entries::work_thread::set_term_dst(dst, hdr.w, hdr.t) };
+        } else {
+            let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+            while !reset_threads() {
+                let res = unsafe { rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _) };
+                if res == 0 {
+                    break;
+                }
+                if res != RES_TIMEOUT as s32 {
+                    ns_dbg_print!(failed, c_str!("Release nwm_syn"), res);
+                    set_reset_threads();
+                    return false;
+                }
+            }
+
+            if let Some(dst) = unsafe { rp_data_buf_malloc() } {
+                rp_data_buf_data(dst)
+            } else {
+                return false;
+            }
+        }
+    };
+    dst.free_in_bytes = rp_packet_data_size as u16;
+    true
 }
 
+#[named]
 pub unsafe fn rp_data_buf_malloc() -> Option<*mut c_char> {
-    None
+    unsafe {
+        wait_syn(cname!(), SEG_MEM_SEM, c_str!("SEG_MEM_SEM"))?;
+        entries::work_thread::rp_term_data_buf_malloc()
+    }
 }
 
-unsafe fn rp_data_buf_free(dst: *const ::libc::c_char) {}
+#[named]
+unsafe fn rp_data_buf_free(dst: *const ::libc::c_char) {
+    unsafe {
+        entries::work_thread::rp_term_data_buf_free_base(dst);
+        release_sem(cname!(), SEG_MEM_SEM, c_str!("SEG_MEM_SEM"));
+    }
+}
 
 pub fn rp_data_buf_data(dst: *mut c_char) -> *mut c_char {
     unsafe { dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE + ARQ_DATA_HDR_SIZE) as usize) }

@@ -1,5 +1,3 @@
-use core::{mem::MaybeUninit, sync};
-
 use super::*;
 
 pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
@@ -46,6 +44,7 @@ type FrameQueues = RangedArray<u32, SCREEN_COUNT>;
 
 static mut CONFIG: Config = const_default();
 
+const FRAME_TIMING_FACTOR_DQ: u32 = 2;
 pub fn frame_timing_allowance() -> u32 {
     unsafe { CONFIG.frame_timing_allowance }
 }
@@ -137,7 +136,52 @@ pub extern "C" fn thread_screen(_: *mut c_void) {
     }
 }
 
-pub unsafe fn init(mode: u32) {}
+pub fn set_no_skip_frames() {
+    set_no_skip_frame(true);
+    set_no_skip_frame(false);
+
+    let _ = unsafe { svcSignalEvent(*SYN_HANDLES.screens_port_ready.get(&is_top_index(true))) };
+    let _ = unsafe { svcSignalEvent(*SYN_HANDLES.screens_port_ready.get(&is_top_index(false))) };
+}
+
+pub unsafe fn init(mode: u32) {
+    let is_top = (mode & 0xff00) > 0;
+    let factor = mode & 0xff;
+
+    let conf = unsafe { &mut CONFIG };
+    conf.priority_is_top = is_top;
+    conf.priority_factor = factor;
+    conf.priority_factor_scaled = fix(factor as c_double);
+    set_no_skip_frames();
+
+    for i in ScreenIndex::all() {
+        *conf.frame_counts.get_mut(&i) = 1;
+        *conf.frame_queues.get_mut(&i) = conf.priority_factor_scaled;
+    }
+
+    let params = unsafe { &mut PARAMS };
+    for i in WorkIndex::all() {
+        *params.skip_frames.get_mut(&i) = false;
+    }
+    params.work_index = WorkIndex::init(0);
+    params.thread_index = ThreadIndex::init(0);
+
+    for i in WorkIndex::all() {
+        unsafe {
+            SYN_HANDLES
+                .works
+                .get_mut(&i)
+                .work_done_flag
+                .store(false, Ordering::Release)
+        };
+    }
+
+    conf.frame_timing_allowance = if entries::thread_nwm::get_reliable_stream_delta_prog() {
+        SYSCLOCK_ARM11 / FRAME_TIMING_FACTOR_DQ
+    } else {
+        SYSCLOCK_ARM11
+    };
+}
 
 pub struct Impl(());
 
@@ -380,10 +424,17 @@ type DmaHandles = RangedArray<Handle, WORK_COUNT>;
 #[derive(ConstDefault)]
 pub struct ScreenParams {
     pub dmas: DmaHandles,
-    pub game: Handle,
+    pub game_handle: Handle,
     pub game_pid: u32,
     pub game_fcram_base: u32,
     pub pid: u32,
+    pub overlay: OverlayParams,
+}
+
+#[derive(ConstDefault)]
+pub struct OverlayParams {
+    pub game_pid: u32,
+    pub game_handle: Handle,
 }
 
 pub static mut SCREEN_PARAMS: ScreenParams = const_default();
@@ -557,7 +608,7 @@ fn capture_screen(
             return false;
         };
 
-        let mut dma = MaybeUninit::uninit();
+        let mut dma = mem::MaybeUninit::uninit();
         let res = svcStartInterProcessDma(
             dma.as_mut_ptr(),
             CUR_PROCESS_HANDLE,
@@ -573,7 +624,7 @@ fn capture_screen(
             return false;
         }
 
-        send_overlay_stats(params);
+        send_overlay_stats(&mut params.overlay);
 
         let dma = dma.assume_init();
         *params.dmas.get_mut(&w) = dma;
@@ -584,13 +635,144 @@ fn capture_screen(
     }
 }
 
-fn close_game_handle(params: &mut ScreenParams) {}
+fn close_game_handle(params: &mut ScreenParams) {
+    if params.game_handle != 0 {
+        unsafe {
+            let _ = svcCloseHandle(params.game_handle);
+        }
+        params.game_handle = 0;
+        params.game_fcram_base = 0;
+        params.game_pid = 0;
 
-fn get_game_handle(params: &mut ScreenParams) -> Handle {
-    0
+        set_no_skip_frames();
+    }
+    close_overlay_handle(&mut params.overlay);
 }
 
-fn send_overlay_stats(params: &mut ScreenParams) {}
+fn close_overlay_handle(params: &mut OverlayParams) {
+    if params.game_handle != 0 {
+        unsafe {
+            let _ = svcCloseHandle(params.game_handle);
+        }
+        params.game_handle = 0;
+    }
+    params.game_pid = 0;
+}
+
+fn get_game_handle(params: &mut ScreenParams) -> Handle {
+    let game_pid = RP_CONFIG.game_pid().load(Ordering::Acquire);
+    if game_pid != params.game_pid {
+        close_game_handle(params);
+        params.game_pid = game_pid;
+    }
+
+    let mut process = mem::MaybeUninit::uninit();
+
+    if params.game_handle == 0 {
+        if game_pid != 0 {
+            let res = unsafe { svcOpenProcess(process.as_mut_ptr(), game_pid) };
+            if res == 0 {
+                params.game_handle = unsafe { process.assume_init() };
+            }
+        }
+        if params.game_handle == 0 {
+            let mut process_count = mem::MaybeUninit::uninit();
+            let mut pids = [const { mem::MaybeUninit::uninit() }; LOCAL_PID_BUF_COUNT as usize];
+            let res = unsafe {
+                svcGetProcessList(
+                    process_count.as_mut_ptr(),
+                    pids.as_mut_ptr() as *mut u32_,
+                    LOCAL_PID_BUF_COUNT as s32,
+                )
+            };
+            if res == 0 {
+                for i in 0..unsafe { process_count.assume_init() } {
+                    let pid = unsafe { pids.get_unchecked(i as usize).assume_init() };
+                    if pid < 0x28 {
+                        continue;
+                    }
+
+                    let res = unsafe { svcOpenProcess(process.as_mut_ptr(), pid) };
+                    if res == 0 {
+                        let process = unsafe { process.assume_init() };
+                        let mut tid = mem::MaybeUninit::<[u32_; 2]>::uninit();
+                        let res =
+                            unsafe { getProcessTIDByHandle(process, tid.as_mut_ptr() as *mut _) }
+                                as s32;
+                        if res == 0 {
+                            if unsafe { tid.assume_init().get_unchecked(1) & 0xffff == 0 } {
+                                if params.pid == pid {
+                                    sleep_thread(THREAD_WAIT_NS);
+                                    params.pid = 0;
+                                } else {
+                                    params.game_handle = process;
+                                    params.pid = pid;
+                                    break;
+                                }
+                            }
+                        }
+                        let _ = unsafe { svcCloseHandle(process) };
+                    }
+                }
+            }
+        }
+        if params.game_handle == 0 {
+            return 0;
+        }
+    }
+    if params.game_fcram_base == 0 {
+        if unsafe { svcFlushProcessDataCache(params.game_handle, 0x14000000, 0x1000) } == 0 {
+            params.game_fcram_base = 0x14000000;
+        } else if unsafe { svcFlushProcessDataCache(params.game_handle, 0x30000000, 0x1000) } == 0 {
+            params.game_fcram_base = 0x30000000;
+        } else {
+            close_game_handle(params);
+            return 0;
+        }
+    }
+
+    params.game_handle
+}
+
+fn send_overlay_stats(params: &mut OverlayParams) {
+    if unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats == 0 } {
+        close_overlay_handle(params);
+        return;
+    }
+
+    let game_pid = port_game_pid();
+
+    let game_pid = if game_pid == 0 {
+        RP_CONFIG.game_pid().load(Ordering::Acquire)
+    } else if game_pid == unsafe { (*config_consts::NTR_CONFIG).HomeMenuPid } {
+        0
+    } else {
+        game_pid
+    };
+    if params.game_pid != game_pid {
+        close_overlay_handle(params);
+
+        if game_pid > 0 {
+            let res = unsafe { svcOpenProcess(&mut params.game_handle, game_pid) };
+            if res >= 0 {
+                params.game_pid = game_pid;
+            }
+        }
+    }
+
+    let process = if params.game_pid == 0 {
+        unsafe { entries::start_up::HOME_PROCESS_HANDLE }
+    } else {
+        params.game_handle
+    };
+
+    let addr = config_consts::OV_STATS as *mut _;
+    let len = unsafe { mem::size_of_val(&*config_consts::OV_STATS) } as u32;
+
+    unsafe {
+        let _ = copyRemoteMemory(process, addr, CUR_PROCESS_HANDLE, addr, len);
+    }
+}
 
 fn is_in_vram(phys: u32) -> bool {
     if phys >= 0x18000000 {

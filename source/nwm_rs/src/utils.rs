@@ -8,14 +8,6 @@ pub const fn ntohs(v: u16) -> u16 {
     v.swap_bytes()
 }
 
-pub const fn align_to_page_size(s: usize) -> usize {
-    if s == 0 {
-        0
-    } else {
-        ((s - 1) / 0x1000 + 1) * 0x1000
-    }
-}
-
 pub struct MemRegionBase<B, const N: usize>(mem::MaybeUninit<[B; N]>);
 
 impl<B, const N: usize> MemRegionBase<B, N> {
@@ -74,12 +66,6 @@ where
 }
 
 pub struct PhantomType<'a, T>(pub T, PhantomData<&'a ()>);
-
-impl<T> PhantomType<'_, T> {
-    pub fn init(t: T) -> Self {
-        Self(t, PhantomData)
-    }
-}
 
 type PhantomResult<'a> = PhantomType<'a, Result>;
 
