@@ -78,8 +78,8 @@ pub struct JpegShared {
     jpeg_tbls: JpegTbls,
     delta_q_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
-    pub work_sem: [Handle; WORK_COUNT as usize],
-    pub screen_sem: [Handle; SCREEN_COUNT as usize],
+    pub work_sem: RangedArray<Handle, WORK_COUNT>,
+    pub screen_sem: RangedArray<Handle, SCREEN_COUNT>,
     delta_q_params: DeltaQParams,
 }
 
@@ -119,17 +119,17 @@ pub struct DeltaQCache {
 }
 
 pub struct JpegSharedMut {
-    pub compressed_size: [AtomicU32; SCREEN_COUNT as usize],
-    pub work_inited: [bool; WORK_COUNT as usize],
-    pub work_sem_count: [AtomicU8; WORK_COUNT as usize],
-    pub screen_bool: [AtomicBool; SCREEN_COUNT as usize],
-    pub last_restart_interval: [u16; SCREEN_COUNT as usize],
-    delta_q: [u8; SCREEN_COUNT as usize],
-    work_delta_q: [u8; WORK_COUNT as usize],
-    dq_rescale_prev: [i8; WORK_COUNT as usize],
-    rp_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; WORK_COUNT as usize],
-    delta_q_cache: [[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize]; WORK_COUNT as usize],
-    delta_q_cache_next: [[u8; MAX_COMPONENTS]; WORK_COUNT as usize],
+    pub compressed_size: RangedArray<AtomicU32, SCREEN_COUNT>,
+    pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
+    pub work_sem_count: RangedArray<AtomicU8, WORK_COUNT>,
+    pub screen_bool: RangedArray<AtomicBool, SCREEN_COUNT>,
+    pub last_restart_interval: RangedArray<u16, SCREEN_COUNT>,
+    delta_q: RangedArray<u8, SCREEN_COUNT>,
+    work_delta_q: RangedArray<u8, WORK_COUNT>,
+    dq_rescale_prev: RangedArray<s8, WORK_COUNT>,
+    rp_shifts: RangedArray<[[u8; DCTSIZE2]; NUM_QUANT_TBLS], WORK_COUNT>,
+    delta_q_cache: RangedArray<[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize], WORK_COUNT>,
+    delta_q_cache_next: RangedArray<[u8; MAX_COMPONENTS], WORK_COUNT>,
     delta_q_calc: [DeltaQManager; SCREEN_COUNT as usize],
     dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
     dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
@@ -147,8 +147,8 @@ impl JpegSharedMut {
     fn init(&mut self, delta_prog: bool, max_blocks_in_mcu: usize, q_steps: f32) {
         if delta_prog {
             self.compressed_size = const_default();
-            for s in 0..SCREEN_COUNT {
-                self.delta_q[s as usize] = DELTA_Q_COUNT - 1;
+            for s in ScreenIndex::all() {
+                *self.delta_q.get_mut(&s) = DELTA_Q_COUNT - 1;
             }
         }
 
@@ -456,12 +456,7 @@ impl WorkerDst {
 
     fn dq_update_size<const DLETA_Q: bool>(&mut self, size: u32) {
         if DLETA_Q {
-            let comp_size = unsafe {
-                (*JPEG)
-                    .shared_mut
-                    .compressed_size
-                    .get_unchecked_mut(self.s.get() as usize)
-            };
+            let comp_size = unsafe { (*JPEG).shared_mut.compressed_size.get_mut(&self.s) };
             unsafe { entries::thread_nwm::rp_dq_update_size(comp_size, size, self.blkn) }
         } else {
             unsafe { entries::thread_nwm::rp_update_size(self.w, size) }
@@ -563,20 +558,24 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         self.reset_mcu();
 
-        let w = self.worker.info.work_index.get() as usize;
-        let s = is_top_index(is_top).get() as usize;
+        let w = self.worker.info.work_index;
+        let s = is_top_index(is_top);
 
         let prev = unsafe {
             if DELTA_Q {
                 if src.len() == 0 {
-                    wait_syn(cname!(), self.worker.shared.work_sem[w], c_str!("work_sem"))?;
+                    wait_syn(
+                        cname!(),
+                        *self.worker.shared.work_sem.get(&w),
+                        c_str!("work_sem"),
+                    )?;
                 }
 
-                let cell = self.worker.shared_mut.cell;
+                let shared_mut = &mut *self.worker.shared_mut.cell;
                 (if is_top {
-                    (*cell).dq_prev_coeffs_top.as_mut_ptr()
+                    shared_mut.dq_prev_coeffs_top.as_mut_ptr()
                 } else {
-                    (*cell).dq_prev_coeffs_bot.as_mut_ptr()
+                    shared_mut.dq_prev_coeffs_bot.as_mut_ptr()
                 } as *mut JBlock)
                     .add(
                         self.worker.info.restart_interval as usize
@@ -677,22 +676,25 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         if DELTA_Q {
             unsafe {
-                let cell = self.worker.shared_mut.cell;
-                delta_q = (*cell).work_delta_q[w];
+                let shared_mut = &mut *self.worker.shared_mut.cell;
+                delta_q = *shared_mut.work_delta_q.get(&w);
 
-                let c = &mut (*cell).work_sem_count[w];
+                let c = shared_mut.work_sem_count.get_mut(&w);
 
                 if c.fetch_sub(1, Ordering::AcqRel) == 1 {
                     c.store(self.worker.info.core_count.get() as u8, Ordering::Release);
-                    (*cell).work_inited[w] = false;
+                    shared_mut
+                        .work_inited
+                        .get_mut(&w)
+                        .store(false, Ordering::Release);
 
-                    let b = &mut (*cell).screen_bool[s];
+                    let b = shared_mut.screen_bool.get_mut(&s);
                     if b.swap(true, Ordering::AcqRel) {
                         b.store(false, Ordering::Release);
                     } else {
                         release_sem(
                             cname!(),
-                            self.worker.shared.screen_sem[s],
+                            *self.worker.shared.screen_sem.get(&s),
                             c_str!("screen_sem"),
                         );
                     }
@@ -733,7 +735,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             } else {
                 let output_base = output_base * S as usize;
                 let output_step = S;
-                let output: &mut u8 =
+                let output =
                     &mut self.worker.bufs.prep[ci][output_base..output_base + output_step][0][0];
                 color.ptr = output;
             }
@@ -838,7 +840,730 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    fn process(&mut self, prev: *mut JBlock, row_i: u8) {}
+    #[named]
+    fn process(&mut self, prev: *mut JBlock, row_i: u8) {
+        let mut delta_cache = false;
+        for mcu_col_num in 0..self.worker.shared.mcus_per_row {
+            if DELTA_Q {
+                let s = is_top_index(self.worker.info.is_top);
+                let w = self.worker.info.work_index;
+                let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
+
+                if row_i == 0 && mcu_col_num == 0 {
+                    if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
+                        let last_restart_interval = shared_mut.last_restart_interval.get_mut(&s);
+                        let b = shared_mut.screen_bool.get(&s);
+                        let need_sync = self.worker.info.restart_interval != *last_restart_interval;
+
+                        let need_sync = if !need_sync {
+                            b.swap(true, Ordering::AcqRel)
+                        } else {
+                            need_sync
+                        };
+
+                        if need_sync {
+                            if wait_syn(
+                                cname!(),
+                                *self.worker.shared.screen_sem.get(&s),
+                                c_str!("screen_sem"),
+                            )
+                            .is_none()
+                            {
+                                return;
+                            }
+
+                            b.store(false, Ordering::Release);
+                            *last_restart_interval = self.worker.info.restart_interval;
+                        }
+
+                        self.compute_dq(prev);
+                        shared_mut
+                            .compressed_size
+                            .get(&s)
+                            .store(0, Ordering::Release);
+                        delta_cache = true;
+
+                        unsafe {
+                            release_sem_count(
+                                cname!(),
+                                *self.worker.shared.work_sem.get(&w),
+                                c_str!("work_sem"),
+                                self.worker.info.core_count.get() as s32 - 1,
+                            );
+                        }
+                    } else {
+                        if wait_syn(
+                            cname!(),
+                            *self.worker.shared.work_sem.get(&w),
+                            c_str!("work_sem"),
+                        )
+                        .is_none()
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                let dq_rescale_prev = *shared_mut.dq_rescale_prev.get(&w);
+                let prev = unsafe { prev.add(mcu_col_num * self.worker.shared.max_blocks_in_mcu) };
+
+                if dq_rescale_prev > 0 {
+                    self.compress_dq::<true, false>(delta_cache, mcu_col_num, prev);
+                } else if dq_rescale_prev < 0 {
+                    self.compress_dq::<true, true>(delta_cache, mcu_col_num, prev);
+                } else {
+                    self.compress_dq::<false, false>(delta_cache, mcu_col_num, prev);
+                }
+            } else {
+                self.compress::<false, false, false>(mcu_col_num, ptr::null_mut());
+            }
+
+            self.encode_mcu();
+        }
+    }
+
+    #[named]
+    fn compute_dq(&mut self, prev: *mut JBlock) {
+        let need_ov_stats = unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats > 0 };
+
+        let s = is_top_index(self.worker.info.is_top);
+        let w = self.worker.info.work_index;
+
+        let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
+
+        let delta_q = shared_mut.delta_q.get_mut(&s);
+        let rand32 = &mut shared_mut.rand32;
+        let cache = shared_mut.delta_q_cache.get_mut(&w);
+        let cache_next_i = shared_mut.delta_q_cache_next.get_mut(&w);
+
+        let prev_delta_q = *delta_q;
+        let delta_q0 = &self.worker.shared.delta_q0_tbls[prev_delta_q as usize];
+        let div_parts = &self.worker.shared.divisors.divisors;
+        let div_shifts = &self.worker.shared.div_delta_q_shifts[DELTA_Q_COUNT as usize - 1];
+
+        let mut delta_cache_start = 0;
+        let mut blkn_start = 0;
+
+        let mut qnv: [QuantizeRet; NUM_QUANT_TBLS] = const_default();
+        let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
+
+        let need_wait_for_nwm = self.worker.thread_index.get() == 0;
+
+        for ci in 0..MAX_COMPONENTS {
+            cache_next_i[ci] = 0;
+
+            let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
+
+            let comp = unsafe { &(*self.worker.shared.comp_infos).infos[ci] };
+            let qni = comp.quant_tbl_no;
+            let mcu_we = comp.h_samp_exp;
+            let mcu_he = comp.v_samp_exp;
+
+            dq_cache_gen_unique_indices(rand32, &mut indices, DELTA_Q_CACHE_COUNTS[ci], unsafe {
+                core::intrinsics::unchecked_shl(
+                    self.worker.shared.mcus_per_row as u8,
+                    mcu_we + mcu_he,
+                )
+            });
+
+            for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
+                let delta_cache_i = delta_cache_start + qi;
+                let blkn = indices[qi as usize];
+
+                let cache = unsafe { cache.get_unchecked_mut(delta_cache_i as usize) };
+
+                let mcu_i = unsafe { core::intrinsics::unchecked_shr(blkn, mcu_we + mcu_he) };
+                let mcu_r =
+                    blkn & (unsafe { core::intrinsics::unchecked_shl(1, mcu_we + mcu_he) } - 1);
+
+                let xpos = mcu_r & (unsafe { core::intrinsics::unchecked_shl(1, mcu_we) } - 1);
+                let ypos = unsafe { core::intrinsics::unchecked_shr(mcu_r, mcu_we) };
+
+                let xpos = xpos + unsafe { core::intrinsics::unchecked_shl(mcu_i, mcu_we) };
+                let xpos = xpos as usize * DCTSIZE;
+                let ypos = ypos as usize * DCTSIZE;
+
+                cache.xpos = xpos as u16;
+                cache.ypos = ypos as u16;
+
+                let prev = unsafe {
+                    prev.add(
+                        mcu_i as usize * self.worker.shared.max_blocks_in_mcu
+                            + mcu_r as usize
+                            + blkn_start,
+                    )
+                };
+
+                let qn = if prev_delta_q == DELTA_Q_COUNT - 1 {
+                    unsafe {
+                        forward_dct::<DELTA_Q, false, false, false>(
+                            &self.worker.bufs.prep[ci],
+                            &mut cache.cache,
+                            ypos as u16,
+                            xpos as u16,
+                            div_parts.get_unchecked(comp.quant_tbl_no as usize),
+                            div_shifts.get_unchecked(comp.quant_tbl_no as usize),
+                            prev,
+                            delta_q0.get_unchecked(comp.quant_tbl_no as usize),
+                            &mut cache.next,
+                        )
+                    }
+                } else {
+                    unsafe {
+                        forward_dct::<DELTA_Q, false, true, false>(
+                            &self.worker.bufs.prep[ci],
+                            &mut cache.cache,
+                            ypos as u16,
+                            xpos as u16,
+                            div_parts.get_unchecked(comp.quant_tbl_no as usize),
+                            div_shifts.get_unchecked(comp.quant_tbl_no as usize),
+                            prev,
+                            delta_q0.get_unchecked(comp.quant_tbl_no as usize),
+                            &mut cache.next,
+                        )
+                    }
+                };
+
+                let qnv = &mut *unsafe { qnv.get_unchecked_mut(qni as usize) };
+                let update_qnv = |qnv: &mut QuantizeCounts, qn: &QuantizeCounts| {
+                    qnv.nbits += qn.nbits;
+                };
+                update_qnv(&mut qnv.dc, &qn.dc);
+                update_qnv(&mut qnv.ac, &qn.ac);
+            }
+
+            *unsafe { qnc.get_unchecked_mut(qni as usize) } += DELTA_Q_CACHE_COUNTS[ci];
+            delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
+            blkn_start += unsafe { core::intrinsics::unchecked_shl(1, mcu_we + mcu_he) };
+        }
+
+        const TARGET_FRAME_RATE: u32 = 60;
+        let s_1 = is_top_index(!self.worker.info.is_top);
+
+        let frame_time = entries::work_thread::get_frame_time(s)
+            .load(Ordering::Acquire)
+            .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
+        let frame_time_1 = entries::work_thread::get_frame_time(s_1)
+            .load(Ordering::Acquire)
+            .max(SYSCLOCK_ARM11 / TARGET_FRAME_RATE);
+
+        let frame_rate_get_clamp_min = |frame_time: u32| {
+            f32::min(
+                TARGET_FRAME_RATE as f32,
+                SYSCLOCK_ARM11 as f32 / frame_time as f32,
+            )
+        };
+
+        let frame_rate = frame_rate_get_clamp_min(frame_time);
+        let frame_rate_clamp_max = |frame_rate: f32, _s: ScreenIndex| frame_rate.max(1f32);
+        let frame_rate = frame_rate_clamp_max(frame_rate, s);
+        let frame_rate_1 = frame_rate_get_clamp_min(frame_time_1);
+        let frame_rate_f = 1f32 / (frame_rate + frame_rate_clamp_max(frame_rate_1, s_1));
+
+        let qr = (DELTA_Q_COUNT as u32 / 6
+            + DELTA_Q_COUNT as u32 * self.worker.shared.quality * self.worker.shared.quality
+                / 12000) as u8;
+        let (qc, qc_1) = if s.get() == RP_SCREEN_TOP as u32 {
+            let [qc, qc_1] = &mut shared_mut.delta_q_calc;
+            (qc, qc_1)
+        } else {
+            let [qc_1, qc] = &mut shared_mut.delta_q_calc;
+            (qc, qc_1)
+        };
+
+        let current_qos = entries::thread_nwm::rp_delta_q_qos() as f32;
+
+        let mcus = (if s.get() == RP_SCREEN_TOP as u32 {
+            self.worker.shared.mcus_top
+        } else {
+            self.worker.shared.mcus_bot
+        }) as f32;
+        let mcus_1 = (if s_1.get() == RP_SCREEN_TOP as u32 {
+            self.worker.shared.mcus_top
+        } else {
+            self.worker.shared.mcus_bot
+        }) as f32;
+
+        let mcus_f = 1f32 / (mcus + mcus_1);
+        let mcusi = 1f32 / mcus;
+        let qos_adj = self.worker.shared.qos_adj;
+        let qos_b = current_qos * frame_rate_f * mcusi * qos_adj;
+        let qos_b = qos_b * 2f32 * mcus * mcus_f;
+
+        let comp_size = shared_mut.compressed_size.get(&s).load(Ordering::Acquire);
+        let comp_size = {
+            let size = comp_size & ((1 << entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS) - 1);
+            let blkn = (comp_size >> entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS)
+                & ((1 << entries::thread_nwm::JPEG_COMP_COUNT_BLKN_NBITS) - 1);
+            if blkn > 0 {
+                size as f32 * mcus * self.worker.shared.max_blocks_in_mcu as f32 / blkn as f32
+            } else {
+                0f32
+            }
+        };
+        let comp_size = comp_size * u8::BITS as f32 * mcusi;
+
+        let (qos, qos_c) = if comp_size > 0f32 {
+            let qos_d = if qc.qb > comp_size {
+                qc.qb - comp_size
+            } else if qc.qc < comp_size {
+                qc.qc - comp_size
+            } else {
+                0f32
+            };
+
+            let update_coefs = |qe: &mut DeltaQCoefs, rb: f32| {
+                let ri = 1f32 / rb;
+                let r = 1f32 - ri;
+
+                if false && need_ov_stats && qc.qd > 0 {
+                    let qd = qc.qd as f32;
+
+                    let nd = qc.nbits - comp_size;
+                    let pm = qd * qe.m;
+                    let pm = pm - nd;
+                    let pm = pm * pm;
+
+                    let w = unsafe { sqrtf(qd / (DELTA_Q_COUNT - 1) as f32) };
+                    let wri = w * ri;
+                    let wr = 1f32 - wri;
+                    qe.p = qe.p * wr + pm * wri;
+
+                    if nd > 0f32 {
+                        let m = nd / qd;
+                        qe.m = qe.m * wr + m * wri;
+                    }
+                }
+                let qd_a = qe.d.abs();
+                let qd_b = qos_d.abs();
+                if qd_a * ri > qd_b || qd_b * ri > qd_a {
+                    qe.d = qos_d;
+                } else {
+                    qe.d = qe.d * r + qos_d * ri;
+                }
+            };
+
+            let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [4f32];
+            for i in 0..(if need_ov_stats {
+                RP_DELTA_Q_COEFS_COUNT as usize
+            } else {
+                1
+            }) {
+                update_coefs(&mut qc.f[i], rr[i]);
+            }
+
+            let qd = qc.f[0].d.min(0f32);
+            let qd_1 = qc_1.f[0].d.max(0f32);
+            let qos_c =
+                qos_b + qd + qd_1 * frame_rate_1.min(frame_rate) * mcus_1 * mcusi / frame_rate;
+
+            (qos_c, qos_c)
+        } else {
+            (qos_b, qos_b)
+        };
+
+        let nbits = {
+            let mut ret = 0f32;
+            let qf = &self.worker.shared.delta_q_params.qf;
+            for i in 0..NUM_QUANT_TBLS {
+                ret += (qnv[i].dc.nbits as f32 / qnc[i] as f32
+                    + qnv[i].ac.nbits as f32 / qnc[i] as f32)
+                    * qf[i];
+            }
+            ret + self.worker.shared.delta_q_params.m // todo
+        };
+
+        {
+            let q_steps_i = self.worker.shared.delta_q_params.q_steps_i;
+            let comp_d = if comp_size > 0f32 {
+                qos - comp_size
+            } else {
+                0f32
+            };
+            let qd_1 = comp_d * q_steps_i;
+            let nd = qc.nbits - nbits;
+            let qd_2 = nd * q_steps_i;
+            const QD2_THRES: f32 = 4f32;
+            const QD2_MUL: f32 = 4f32 / 3f32;
+            let qd2 = (if qd_2 < 0f32 {
+                (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
+            } else {
+                (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
+            }) * QD2_MUL;
+
+            let scale_qd = |qd: f32, np: f32, pp: f32, ns: f32, ps: f32| {
+                if qd < 0f32 {
+                    (-unsafe { powf(-qd, np) } * (SCALE_QD_F * ns)).max(-SCALE_QD_F)
+                } else {
+                    (unsafe { powf(qd, pp) } * (SCALE_QD_F * ps)).min(SCALE_QD_F)
+                }
+            };
+
+            let qd1: f32 = scale_qd(qd_1, 1.25f32, 1.25f32, 1f32, 1f32);
+            let qd2 = scale_qd(qd2, 4f32 / 3f32, 4f32 / 3f32, 4f32, 4f32);
+
+            let qd = qd1 + qd2;
+            qc.q = qc.q * 0.75f32 + qd * (1f32 / 3f32);
+            if qc.q > 0f32 && qd < 0f32 || qc.q < 0f32 && qd > 0f32 {
+                qc.q = 0f32;
+            } else {
+                let q_thres = current_qos * (3f32 / RP_QOS_MAX as f32);
+                if qc.q.abs() >= q_thres {
+                    let q = (prev_delta_q as i32 + unsafe { roundf(qd) } as i32).clamp(0, qr as i32)
+                        as u8;
+                    *delta_q = q;
+                    qc.qd = DELTA_Q_COUNT - 1 - q;
+                    qc.nbits = nbits;
+                    qc.q = 0f32;
+                }
+            }
+        }
+
+        qc.qb = qos_b;
+        qc.qc = qos_c;
+        if need_ov_stats {
+            let ov_screen = unsafe {
+                (*config_consts::OV_STATS)
+                    .s
+                    .get_unchecked_mut(s.get() as usize)
+            };
+            ov_screen.comp_size = (comp_size * 1000f32) as s32;
+            let ov_screen = &mut ov_screen.delta_q;
+            ov_screen.qb = (qos_b * 1000f32) as s32;
+            ov_screen.qc = (qos_c * 1000f32) as s32;
+            ov_screen.nbits = (nbits * 1000f32) as s32;
+            ov_screen.qd = qc.qd as u32_;
+            for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                let f = &mut ov_screen.f[i];
+                f.d = (qc.f[i].d * 1000f32) as s32;
+            }
+        }
+
+        let d_qrescale_prev = *delta_q as i8 - prev_delta_q as i8;
+        *shared_mut.work_delta_q.get_mut(&w) = *delta_q;
+        *shared_mut.dq_rescale_prev.get_mut(&w) = d_qrescale_prev;
+
+        if d_qrescale_prev != 0 {
+            for n in 0..NUM_QUANT_TBLS {
+                let d_qshifts = unsafe {
+                    &self
+                        .worker
+                        .shared
+                        .delta_q_tbls
+                        .get_unchecked(*delta_q as usize)
+                        .get_unchecked(n)
+                };
+
+                let dq_shifts_prev = unsafe {
+                    &self
+                        .worker
+                        .shared
+                        .delta_q_tbls
+                        .get_unchecked(prev_delta_q as usize)
+                        .get_unchecked(n)
+                };
+
+                let rp_shifts = unsafe { shared_mut.rp_shifts.get_mut(&w).get_unchecked_mut(n) };
+
+                for i in 0..DCTSIZE2 {
+                    rp_shifts[i] = if d_qrescale_prev > 0 {
+                        dq_shifts_prev[i] - d_qshifts[i]
+                    } else {
+                        d_qshifts[i] - dq_shifts_prev[i]
+                    };
+                }
+            }
+        }
+    }
+
+    #[named]
+    fn compress<const DELTA_CACHE: bool, const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+        &mut self,
+        mcu_col_num: usize,
+        prev: *mut JBlock,
+    ) {
+    }
+
+    #[named]
+    fn compress_dq<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+        &mut self,
+        delta_cache: bool,
+        mcu_col_num: usize,
+        prev: *mut JBlock,
+    ) {
+        if delta_cache {
+            self.compress::<true, RESCALE_PREV, RESCALE_PREV_SHR>(mcu_col_num, prev);
+        } else {
+            self.compress::<false, RESCALE_PREV, RESCALE_PREV_SHR>(mcu_col_num, prev);
+        }
+    }
+    fn encode_mcu(&mut self) {}
+}
+
+unsafe fn forward_dct<
+    const DELTA_Q: bool,
+    const UPDATE_PREV: bool,
+    const RESCALE_PREV: bool,
+    const RESCALE_PREV_SHR: bool,
+>(
+    input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+    output: &mut JBlock,
+    ypos: u16,
+    xpos: u16,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    r_pshifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    unsafe {
+        convsamp(input, ypos, xpos, output);
+    }
+    fdct_ifast(output);
+    quantize::<DELTA_Q, UPDATE_PREV, RESCALE_PREV, RESCALE_PREV_SHR>(
+        output, div_parts, div_shifts, prev, r_pshifts, next,
+    )
+}
+
+unsafe fn convsamp(
+    input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+    ypos: u16,
+    xpos: u16,
+    output: &mut JBlock,
+) {
+    let mut oidx = 0;
+    for yidx in 0..DCTSIZE {
+        let input = unsafe { input.get_unchecked(ypos as usize + yidx) };
+        for xidx in 0..DCTSIZE {
+            output[oidx] =
+                *unsafe { input.get_unchecked(xpos as usize + xidx) } as i16 - CENTERJSAMPLE as i16;
+
+            oidx += 1;
+        }
+    }
+}
+
+fn multiply(v: i16, c: i32) -> i16 {
+    const CONST_BITS: u8 = 8;
+    ((v as i32 * c) >> CONST_BITS) as i16
+}
+
+fn fdct_ifast(inout: &mut JBlock) {
+    const FIX_0_382683433: i32 = 98; /* FIX(0.382683433) */
+    const FIX_0_541196100: i32 = 139; /* FIX(0.541196100) */
+    const FIX_0_707106781: i32 = 181; /* FIX(0.707106781) */
+    const FIX_1_306562965: i32 = 334; /* FIX(1.306562965) */
+
+    /* Pass 1: process rows. */
+
+    for i in (0..DCTSIZE2).step_by(DCTSIZE) {
+        let tmp0 = inout[i + 0] + inout[i + 7];
+        let tmp7 = inout[i + 0] - inout[i + 7];
+        let tmp1 = inout[i + 1] + inout[i + 6];
+        let tmp6 = inout[i + 1] - inout[i + 6];
+        let tmp2 = inout[i + 2] + inout[i + 5];
+        let tmp5 = inout[i + 2] - inout[i + 5];
+        let tmp3 = inout[i + 3] + inout[i + 4];
+        let tmp4 = inout[i + 3] - inout[i + 4];
+
+        /* Even part */
+
+        let tmp10 = tmp0 + tmp3; /* phase 2 */
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        inout[i + 0] = tmp10 + tmp11; /* phase 3 */
+        inout[i + 4] = tmp10 - tmp11;
+
+        let z1 = multiply(tmp12 + tmp13, FIX_0_707106781); /* c4 */
+        inout[i + 2] = tmp13 + z1; /* phase 5 */
+        inout[i + 6] = tmp13 - z1;
+
+        /* Odd part */
+
+        let tmp10 = tmp4 + tmp5; /* phase 2 */
+        let tmp11 = tmp5 + tmp6;
+        let tmp12 = tmp6 + tmp7;
+
+        /* The rotator is modified from fig 4-8 to avoid extra negations. */
+        let z5 = multiply(tmp10 - tmp12, FIX_0_382683433); /* c6 */
+        let z2 = multiply(tmp10, FIX_0_541196100) + z5; /* c2-c6 */
+        let z4 = multiply(tmp12, FIX_1_306562965) + z5; /* c2+c6 */
+        let z3 = multiply(tmp11, FIX_0_707106781); /* c4 */
+
+        let z11 = tmp7 + z3; /* phase 5 */
+        let z13 = tmp7 - z3;
+
+        inout[i + 5] = z13 + z2; /* phase 6 */
+        inout[i + 3] = z13 - z2;
+        inout[i + 1] = z11 + z4;
+        inout[i + 7] = z11 - z4;
+    }
+
+    /* Pass 2: process columns. */
+
+    for i in 0..DCTSIZE {
+        let tmp0 = inout[i + DCTSIZE * 0] + inout[i + DCTSIZE * 7];
+        let tmp7 = inout[i + DCTSIZE * 0] - inout[i + DCTSIZE * 7];
+        let tmp1 = inout[i + DCTSIZE * 1] + inout[i + DCTSIZE * 6];
+        let tmp6 = inout[i + DCTSIZE * 1] - inout[i + DCTSIZE * 6];
+        let tmp2 = inout[i + DCTSIZE * 2] + inout[i + DCTSIZE * 5];
+        let tmp5 = inout[i + DCTSIZE * 2] - inout[i + DCTSIZE * 5];
+        let tmp3 = inout[i + DCTSIZE * 3] + inout[i + DCTSIZE * 4];
+        let tmp4 = inout[i + DCTSIZE * 3] - inout[i + DCTSIZE * 4];
+
+        /* Even part */
+
+        let tmp10 = tmp0 + tmp3; /* phase 2 */
+        let tmp13 = tmp0 - tmp3;
+        let tmp11 = tmp1 + tmp2;
+        let tmp12 = tmp1 - tmp2;
+
+        inout[i + DCTSIZE * 0] = tmp10 + tmp11; /* phase 3 */
+        inout[i + DCTSIZE * 4] = tmp10 - tmp11;
+
+        let z1 = multiply(tmp12 + tmp13, FIX_0_707106781); /* c4 */
+        inout[i + DCTSIZE * 2] = tmp13 + z1; /* phase 5 */
+        inout[i + DCTSIZE * 6] = tmp13 - z1;
+
+        /* Odd part */
+
+        let tmp10 = tmp4 + tmp5; /* phase 2 */
+        let tmp11 = tmp5 + tmp6;
+        let tmp12 = tmp6 + tmp7;
+
+        /* The rotator is modified from fig 4-8 to avoid extra negations. */
+        let z5 = multiply(tmp10 - tmp12, FIX_0_382683433); /* c6 */
+        let z2 = multiply(tmp10, FIX_0_541196100) + z5; /* c2-c6 */
+        let z4 = multiply(tmp12, FIX_1_306562965) + z5; /* c2+c6 */
+        let z3 = multiply(tmp11, FIX_0_707106781); /* c4 */
+
+        let z11 = tmp7 + z3; /* phase 5 */
+        let z13 = tmp7 - z3;
+
+        inout[i + DCTSIZE * 5] = z13 + z2; /* phase 6 */
+        inout[i + DCTSIZE * 3] = z13 - z2;
+        inout[i + DCTSIZE * 1] = z11 + z4;
+        inout[i + DCTSIZE * 7] = z11 - z4;
+    }
+}
+
+fn quantize<
+    const DELTA_Q: bool,
+    const UPDATE_PREV: bool,
+    const RESCALE_PREV: bool,
+    const RESCALE_PREV_SHR: bool,
+>(
+    inout: &mut JBlock,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    rp_shifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    let mut ret = {
+        let count = const_default::<QuantizeCounts>();
+        QuantizeRet {
+            dc: count,
+            ac: count,
+        }
+    };
+    for i in 0..DCTSIZE2 {
+        let mut temp = inout[i];
+        let recip = div_parts[i].recip as u16 as u32;
+        let corr = div_parts[i].corr as u32;
+        let shift = div_shifts[i];
+
+        let sign1 = temp >> (core::mem::size_of_val(&temp) * 8 - 1);
+        let abs = (temp + sign1) ^ sign1;
+
+        let product = (abs as u32 + corr) * recip;
+        let product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
+        temp = (product as i16 ^ sign1) - sign1;
+
+        if DELTA_Q {
+            if UPDATE_PREV {
+                unsafe {
+                    (*prev)[i] =
+                        rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>((*prev)[i], rp_shifts[i]);
+                    let next = temp;
+                    temp -= (*prev)[i];
+                    (*prev)[i] = next;
+                }
+            } else {
+                unsafe {
+                    (*prev)[i] =
+                        rescale_prev::<RESCALE_PREV, RESCALE_PREV_SHR>((*prev)[i], rp_shifts[i]);
+                    (*next)[i] = temp;
+                    temp -= (*prev)[i];
+
+                    let nbits = jpeg_nbits_nonzero(temp.abs() as i32);
+                    let update_counts = |c: &mut QuantizeCounts| {
+                        c.nbits += nbits as u16;
+                    };
+                    if i == 0 {
+                        update_counts(&mut ret.dc)
+                    } else {
+                        update_counts(&mut ret.ac)
+                    }
+                }
+            }
+        }
+
+        inout[i] = temp;
+    }
+    ret
+}
+
+fn jpeg_nbits_nonzero(x: i32) -> u8 {
+    (mem::size_of_val(&x) * 8 - x.leading_zeros() as usize) as u8
+}
+
+fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(c: JCoef, s: u8) -> JCoef {
+    unsafe {
+        if RESCALE_PREV {
+            if RESCALE_PREV_SHR {
+                let mask = core::intrinsics::unchecked_shl(1, s) - 1;
+                let off = (c < 0) as JCoef & ((c & mask) > 0) as JCoef;
+                core::intrinsics::unchecked_shr(c, s) + off
+            } else {
+                core::intrinsics::unchecked_shl(c, s)
+            }
+        } else {
+            c
+        }
+    }
+}
+
+fn dq_cache_gen_unique_indices(
+    rand32: &mut Rand32,
+    indices: &mut [u8; DELTA_Q_CACHE_MAX as usize],
+    n: u8,
+    m: u8,
+) {
+    for i in 0..n {
+        let mut v = rand32.rand_range(0..(m - i) as u32) as u8;
+        for j in 0..i {
+            if v >= indices[j as usize] {
+                v += 1;
+            }
+        }
+        let mut done = false;
+        for j in 0..i {
+            if v < indices[j as usize] {
+                for k in (j..i).rev() {
+                    indices[k as usize + 1] = indices[k as usize];
+                }
+                indices[j as usize] = v;
+                done = true;
+                break;
+            }
+        }
+        if !done {
+            indices[i as usize] = v;
+        }
+    }
 }
 
 pub struct Jpeg {

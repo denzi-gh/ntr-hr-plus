@@ -41,6 +41,10 @@ static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
 static mut LAST_SCREEN_LAST_ROW: u32 = const_default();
 static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
 
+pub fn get_frame_time(s: ScreenIndex) -> &'static mut AtomicU32 {
+    unsafe { FRAME_TIMES.get_mut(&s) }
+}
+
 pub struct WorkReady(Impl);
 
 impl WorkReady {

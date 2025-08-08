@@ -219,10 +219,12 @@ impl<'a> Drop for JoinThread<'a> {
     }
 }
 
+#[must_use]
 pub fn create_event(h: &mut Handle) -> Result {
     unsafe { svcCreateEvent(h, RESET_ONESHOT) }
 }
 
+#[must_use]
 pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> {
     loop {
         if reset_threads() {
@@ -252,8 +254,12 @@ pub unsafe fn release_mutex(cname: CName, h: Handle, syn_name: *const c_char) {
 }
 
 pub unsafe fn release_sem(cname: CName, h: Handle, syn_name: *const c_char) {
+    unsafe { release_sem_count(cname, h, syn_name, 1) }
+}
+
+pub unsafe fn release_sem_count(cname: CName, h: Handle, syn_name: *const c_char, release_count: s32) {
     let mut count = mem::MaybeUninit::<s32>::uninit();
-    let res = unsafe { svcReleaseSemaphore(count.as_mut_ptr(), h, 1) };
+    let res = unsafe { svcReleaseSemaphore(count.as_mut_ptr(), h, release_count) };
     if res != 0 {
         ns_dbg_print_cname!(cname, release_sem_failed, syn_name, res);
     }

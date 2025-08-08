@@ -150,10 +150,10 @@ static mut KCP_CONV: u8 = 0;
 static mut MAX_QOS: u32 = const_default();
 
 #[unsafe(export_name = "rp_current_qos")]
-static mut CURRENT_QOS: u32 = const_default();
+static mut CURRENT_QOS: AtomicU32 = const_default();
 
 pub fn rp_delta_q_qos() -> u32 {
-    unsafe { CURRENT_QOS }
+    unsafe { CURRENT_QOS.load(Ordering::Acquire) }
 }
 
 #[unsafe(no_mangle)]
@@ -230,7 +230,7 @@ static mut MIN_SEND_INTERVAL_NS: u32 = const_default();
 unsafe fn init_min_send_interval(qos: u32) {
     unsafe {
         (*config_consts::OV_STATS).kcp_qos = qos;
-        CURRENT_QOS = qos;
+        CURRENT_QOS.store(qos, Ordering::Release);
         let tick = (SYSCLOCK_ARM11 as u64 * PACKET_SIZE as u64) / qos as u64;
         MIN_SEND_INTERVAL_TICK = tick as u32;
         MIN_SEND_INTERVAL_NS = DurationTick::init(tick as s64).get_ns().get() as u32;
@@ -480,8 +480,8 @@ unsafe fn nwm_cb_unlock() {
 
 static mut RP_FRAME_COMPRESSED_SIZE: [AtomicU32; WORK_COUNT as usize] = const_default();
 
-const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
-const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
+pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
+pub const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
 
 const _JPEG_COMP_COUNT_NBITS_ASSERT: () = {
     assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
