@@ -71,7 +71,7 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
     unsafe {
         let cb = &mut *entries::thread_nwm::RELIABLE_STREAM_CB;
 
-        let m = cb.send_bufs.as_mut_ptr().as_mut_ptr();
+        let m = cb.locked.send_bufs.as_mut_ptr().as_mut_ptr();
         for i in WorkIndex::all() {
             *i.index_into_mut(nwm_bufs.arr()) = m.add(NWM_BUFFER_SIZE * i.get() as usize);
         }

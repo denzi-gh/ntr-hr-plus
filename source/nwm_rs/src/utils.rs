@@ -146,6 +146,7 @@ impl DurationTick {
     }
 }
 
+#[derive(ConstDefault, Clone, Copy)]
 pub struct DurationNs(s64);
 
 impl DurationNs {
@@ -226,11 +227,21 @@ pub fn create_event(h: &mut Handle) -> Result {
 
 #[must_use]
 pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> {
+    wait_syn_ns(cname, h, syn_name, THREAD_WAIT_NS)
+}
+
+#[must_use]
+pub fn wait_syn_ns(
+    cname: CName,
+    h: Handle,
+    syn_name: *const c_char,
+    dur: DurationNs,
+) -> Option<()> {
     loop {
         if reset_threads() {
             return None;
         }
-        let res = unsafe { svcWaitSynchronization(h, THREAD_WAIT_NS.get()) };
+        let res = unsafe { svcWaitSynchronization(h, dur.get()) };
         if res != 0 {
             if res != RES_TIMEOUT as s32 {
                 unsafe {
@@ -257,7 +268,12 @@ pub unsafe fn release_sem(cname: CName, h: Handle, syn_name: *const c_char) {
     unsafe { release_sem_count(cname, h, syn_name, 1) }
 }
 
-pub unsafe fn release_sem_count(cname: CName, h: Handle, syn_name: *const c_char, release_count: s32) {
+pub unsafe fn release_sem_count(
+    cname: CName,
+    h: Handle,
+    syn_name: *const c_char,
+    release_count: s32,
+) {
     let mut count = mem::MaybeUninit::<s32>::uninit();
     let res = unsafe { svcReleaseSemaphore(count.as_mut_ptr(), h, release_count) };
     if res != 0 {

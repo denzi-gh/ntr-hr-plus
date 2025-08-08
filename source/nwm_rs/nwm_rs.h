@@ -11,13 +11,18 @@ void __system_initSyscalls(void);
 #include "../nwm_misc/rp_res.h"
 
 #define RP_RECV_BUF_N (2)
-struct rp_cb {
+
+struct rp_cb_locked {
 	struct IKCPCB ikcp;
 	char send_bufs[SEND_BUFS_COUNT][NWM_PACKET_SIZE] ALIGNED(sizeof(void *));
 	char recv_buf[RP_RECV_BUF_N][RP_RECV_PACKET_SIZE] ALIGNED(sizeof(void *));
 	mp_pool_t send_pool;
 	char cur_send_bufs[SEND_CUR_BUFS_COUNT][NWM_PACKET_SIZE] ALIGNED(sizeof(void *));
 	mp_pool_t cur_send_pool;
+};
+
+struct rp_cb {
+	struct rp_cb_locked locked;
 	struct rp_syn_comp_func_t nwm_syn;
 	void *nwm_syn_data[SEND_BUFS_COUNT];
 };

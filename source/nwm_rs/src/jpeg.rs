@@ -1434,7 +1434,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             ov_screen.qb = (qos_b * 1000f32) as s32;
             ov_screen.qc = (qos_c * 1000f32) as s32;
             ov_screen.nbits = (nbits * 1000f32) as s32;
-            ov_screen.qd = qc.qd as u32_;
+            ov_screen.qd = qc.qd as u32;
             for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                 let f = &mut ov_screen.f[i];
                 f.d = (qc.f[i].d * 1000f32) as s32;

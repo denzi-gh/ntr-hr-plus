@@ -432,7 +432,7 @@ unsafe fn send_term_dsts(w: WorkIndex, jpeg: &jpeg::JpegDqRet) -> bool {
     false
 }
 
-const fn j_max_half_factor(v: u32_) -> u32_ {
+const fn j_max_half_factor(v: u32) -> u32 {
     v / 2
 }
 
@@ -450,7 +450,7 @@ impl WorkAcquire {
         let mcu_size = unsafe { jpeg::get_jpeg_shared().mcu_col_size };
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
-        let i_count_half = j_max_half_factor(i_count as u32_) as usize;
+        let i_count_half = j_max_half_factor(i_count as u32) as usize;
 
         let src = unsafe {
             slice::from_raw_parts(src, bctx.src_len() as usize)
