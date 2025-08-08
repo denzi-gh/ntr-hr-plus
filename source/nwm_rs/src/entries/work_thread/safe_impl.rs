@@ -15,5 +15,12 @@ pub fn send_frame(impl_: Impl) -> Option<()> {
         }
         Err(work_other) => work_other.acquire(),
     }?;
-    None
+
+    if reset_threads() {
+        return None;
+    }
+
+    work.send_frame()?;
+
+    Some(())
 }

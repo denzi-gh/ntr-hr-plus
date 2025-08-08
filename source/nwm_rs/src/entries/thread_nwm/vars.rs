@@ -355,6 +355,10 @@ pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_coun
     }
 }
 
+pub fn nwm_info(work_index: WorkIndex) -> &'static mut NwmWorkInfo {
+    unsafe { NWM_INFOS.get_mut(&work_index) }
+}
+
 #[derive(ConstDefault)]
 struct DataHdr([u8; DATA_HDR_SIZE as usize]);
 static mut DATA_BUF_HDRS: RangedArray<DataHdr, WORK_COUNT> = const_default();
@@ -474,10 +478,10 @@ unsafe fn nwm_cb_unlock() {
     }
 }
 
-pub static mut RP_FRAME_COMPRESSED_SIZE: [AtomicU32; WORK_COUNT as usize] = const_default();
+static mut RP_FRAME_COMPRESSED_SIZE: [AtomicU32; WORK_COUNT as usize] = const_default();
 
-pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
-pub const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
+const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
+const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
 
 const _JPEG_COMP_COUNT_NBITS_ASSERT: () = {
     assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
@@ -502,7 +506,7 @@ pub unsafe fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16)
     }
 }
 
-pub unsafe fn rp_update_size(w: WorkIndex, size: u32) {
+pub fn rp_update_size(w: WorkIndex, size: u32) {
     unsafe {
         RP_FRAME_COMPRESSED_SIZE
             .get_unchecked_mut(w.get() as usize)
@@ -510,6 +514,32 @@ pub unsafe fn rp_update_size(w: WorkIndex, size: u32) {
     }
 }
 
+pub fn rp_get_size(w: WorkIndex) -> u32 {
+    unsafe {
+        RP_FRAME_COMPRESSED_SIZE
+            .get_unchecked_mut(w.get() as usize)
+            .load(Ordering::Acquire)
+    }
+}
+
+pub fn rp_clear_size(w: WorkIndex) {
+    unsafe {
+        RP_FRAME_COMPRESSED_SIZE
+            .get_unchecked_mut(w.get() as usize)
+            .store(0, Ordering::Release)
+    }
+}
+
 pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
     false
+}
+
+pub unsafe fn rp_data_buf_malloc() -> Option<*mut c_char> {
+    None
+}
+
+unsafe fn rp_data_buf_free(dst: *const ::libc::c_char) {}
+
+pub fn rp_data_buf_data(dst: *mut c_char) -> *mut c_char {
+    unsafe { dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE + ARQ_DATA_HDR_SIZE) as usize) }
 }

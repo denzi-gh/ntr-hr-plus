@@ -59,6 +59,14 @@ pub struct Params {
     skip_frames: SkipFrames,
 }
 
+pub unsafe fn work_index_next_wrapped() {
+    unsafe {
+        let mut w = PARAMS.work_index.get_atomic();
+        w.next_wrapped();
+        PARAMS.work_index.set_atomic(w.get());
+    }
+}
+
 static mut PARAMS: Params = const_default();
 
 pub fn close_handles() {}

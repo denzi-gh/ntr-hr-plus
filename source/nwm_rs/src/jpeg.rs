@@ -253,9 +253,9 @@ impl JpegShared {
     }
 
     fn set_comp_infos(&mut self, hq: u32, delta_prog: bool) -> (usize, f32) {
-        let comp_infos = if hq as u8_ == RP_CHROMASS_444 {
+        let comp_infos = if hq as u8 == RP_CHROMASS_444 {
             &self.jpeg_tbls.comp_infos_444
-        } else if hq as u8_ == RP_CHROMASS_422 {
+        } else if hq as u8 == RP_CHROMASS_422 {
             &self.jpeg_tbls.comp_infos_422
         } else {
             &self.jpeg_tbls.comp_infos_420
@@ -368,7 +368,7 @@ impl<const H_SAMP: bool, const V_SAMP: bool> SubSampConst<H_SAMP, V_SAMP> {
 
 #[derive(Copy, Clone, ConstDefault)]
 pub union WorkderDstUser {
-    pub info: *const entries::thread_nwm::NwmInfo,
+    pub info: *const entries::thread_nwm::NwmThreadInfo,
     pub hdr: ArqRpHdr,
 }
 
@@ -489,7 +489,7 @@ pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 #[derive(ConstDefault)]
 pub struct JpegWorker<'a, const REL_STREAM: bool> {
     shared: &'a JpegShared,
-    shared_mut: JpegSharedMutCell<'a>,
+    shared_mut: JpegSharedMutCell,
     bufs: &'a mut WorkerBufs,
     info: &'a CInfo,
     thread_index: ThreadIndex,
@@ -497,13 +497,22 @@ pub struct JpegWorker<'a, const REL_STREAM: bool> {
     last_dc_val: [i16; MAX_COMPONENTS],
 }
 
-pub struct JpegSharedMutCell<'a> {
-    cell: &'a core::cell::UnsafeCell<JpegSharedMut>,
+pub struct JpegSharedMutCell {
+    cell: *mut JpegSharedMut,
 }
 
-pub struct JpegEncode<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> {
+struct JpegEncode<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> {
     worker: &'b mut JpegWorker<'a, REL_STREAM>,
     dst: WorkerDst,
+}
+
+impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+    fn encode<F, G>(&mut self, src: &[u8], mut pre_progress: F, mut progress: G) -> JpegDqRet {
+        JpegDqRet {
+            delta_q: 0,
+            mcus: 0,
+        }
+    }
 }
 
 pub struct Jpeg {
@@ -520,6 +529,53 @@ impl Jpeg {
         let (max_blocks_in_mcu, q_steps) = self.shared.init(quality, delta_prog, core_count, hq);
         self.shared_mut.init(delta_prog, max_blocks_in_mcu, q_steps);
     }
+
+    pub fn set_info(&mut self, info: CInfo) {
+        *info.work_index.index_into_mut(&mut self.info) = info;
+    }
+
+    pub unsafe fn get_worker<'a, const REL_STREAM: bool>(
+        &'a mut self,
+        work_index: WorkIndex,
+        thread_index: ThreadIndex,
+    ) -> JpegWorker<'a, REL_STREAM> {
+        JpegWorker {
+            shared: &self.shared,
+            shared_mut: JpegSharedMutCell {
+                cell: &mut self.shared_mut,
+            },
+            bufs: thread_index.index_into_mut(&mut self.bufs),
+            info: work_index.index_into_mut(&mut self.info),
+            thread_index,
+            huff_state: const_default(),
+            last_dc_val: const_default(),
+        }
+    }
+}
+
+impl<'a, const REL_STREAM: bool> JpegWorker<'a, REL_STREAM> {
+    pub fn encode<F, G>(
+        &'a mut self,
+        dst: WorkerDst,
+        src: &[u8],
+        pre_progress: F,
+        progress: G,
+    ) -> JpegDqRet
+    where
+        F: FnMut(),
+        G: FnMut(),
+    {
+        let delta_prog = REL_STREAM && entries::thread_nwm::get_reliable_stream_delta_prog();
+        if delta_prog {
+            JpegEncode::<_, true> { worker: self, dst }.encode(src, pre_progress, progress)
+        } else {
+            JpegEncode::<_, false> { worker: self, dst }.encode(src, pre_progress, progress)
+        }
+    }
+}
+
+pub unsafe fn get_jpeg_shared() -> &'static JpegShared {
+    unsafe { &(*JPEG).shared }
 }
 
 const DELTA_Q_PREV_COEFFS_TOP_N: usize =

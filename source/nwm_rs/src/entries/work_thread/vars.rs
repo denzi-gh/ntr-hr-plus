@@ -21,7 +21,11 @@ impl Impl {
         }
     }
 
-    fn bctx(&self) -> &mut BlitCtx {
+    fn bctx(&self) -> &BlitCtx {
+        unsafe { BLIT_CTXES.get(&self.w) }
+    }
+
+    fn bctx_mut(&self) -> &mut BlitCtx {
         unsafe { BLIT_CTXES.get_mut(&self.w) }
     }
 
@@ -32,16 +36,16 @@ impl Impl {
 
 static mut CURRENT_FRAME_IDS: RangedArray<u8, SCREEN_COUNT> = const_default();
 static mut LAST_FRAME_TIMINGS: RangedArray<u32, SCREEN_COUNT> = const_default();
-static mut FRAME_TIMES: RangedArray<u32, SCREEN_COUNT> = const_default();
+static mut FRAME_TIMES: RangedArray<AtomicU32, SCREEN_COUNT> = const_default();
 static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
-
+static mut LAST_SCREEN_LAST_ROW: u32 = const_default();
 static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
 
 pub struct WorkReady(Impl);
 
 impl WorkReady {
     pub fn init_bctx(self) -> BlitCtxInit {
-        let bctx = self.0.bctx();
+        let bctx = self.0.bctx_mut();
         let work_ready = unsafe { ptr::read_volatile(&self.0.work_ready_params()) };
 
         unsafe {
@@ -188,7 +192,7 @@ impl WorkFrame {
         unsafe {
             let bctx = self.0.0.bctx();
 
-            let ft = AtomicU32::from_mut(FRAME_TIMES.get_mut(&is_top_index(bctx.is_top)));
+            let ft = FRAME_TIMES.get_mut(&is_top_index(bctx.is_top));
             let mut cur = ft.load(Ordering::Acquire);
 
             let frame_time = self.2;
@@ -222,10 +226,10 @@ impl WorkFrame {
     }
 
     fn init_work(&self) -> bool {
-        let bctx = self.0.0.bctx();
+        let bctx = self.0.0.bctx_mut();
 
         let w = self.0.0.w;
-        let last_s = unsafe { LAST_ENCODED_SCREEN };
+        let last_s = unsafe { &mut LAST_ENCODED_SCREEN };
         let curr_s = is_top_index(bctx.is_top);
 
         let core_count = core_count_in_use();
@@ -233,6 +237,123 @@ impl WorkFrame {
         let thread_index_last = thread_index_last(core_count);
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
+        let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+
+        let mcu_size = jpeg_shared.mcu_col_size as u32;
+        let mcus_per_row = jpeg_shared.mcus_per_row as u32;
+        let mcu_rows = unsafe { core::intrinsics::unchecked_div(bctx.height(), mcu_size) };
+        let mcu_rows_per_thread = unsafe {
+            core::intrinsics::unchecked_div(mcu_rows + core_count.get() - 1, core_count.get())
+        };
+
+        let n = mcu_rows_per_thread;
+        let n_last = mcu_rows - mcu_rows_per_thread * core_count_other;
+
+        let last_row_last_n_range = jpeg_shared.last_restart_range;
+        const LAST_ROW_LAST_N_F: u32 = 4;
+
+        let mut curr = l.load(Ordering::Acquire);
+        let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count.get() > 1 {
+            let next = loop {
+                let next = if self.0.0.t.get() == thread_index_last.get() {
+                    if curr < last_row_last_n_range {
+                        curr + 1
+                    } else {
+                        curr
+                    }
+                } else {
+                    if curr > core_count_other {
+                        curr - if core_count.get() == 2 { 1 } else { 2 }
+                    } else {
+                        curr
+                    }
+                };
+                match l.compare_exchange_weak(curr, next, Ordering::AcqRel, Ordering::Acquire) {
+                    Ok(_) => break next,
+                    Err(temp) => curr = temp,
+                }
+            };
+            let last_rows_last = unsafe { &mut LAST_SCREEN_LAST_ROW };
+            let update_rows_last = *last_rows_last == 0
+                || (next as i32 - *last_rows_last as i32).abs() as u32
+                    >= unsafe {
+                        core::intrinsics::unchecked_div(last_row_last_n_range, LAST_ROW_LAST_N_F)
+                    }
+                || *last_s != curr_s;
+
+            let rows_last = if update_rows_last {
+                cmp::max(
+                    unsafe {
+                        core::intrinsics::unchecked_div(
+                            n_last * next + last_row_last_n_range / 2,
+                            last_row_last_n_range,
+                        )
+                    },
+                    1,
+                )
+            } else {
+                *last_rows_last
+            };
+            let rows = unsafe {
+                core::intrinsics::unchecked_div(
+                    mcu_rows - rows_last + core_count_other - 1,
+                    core_count_other,
+                )
+            };
+
+            if update_rows_last {
+                let rows_last = mcu_rows - rows * core_count_other;
+                *last_rows_last = rows_last;
+                *last_s = curr_s;
+                (rows, rows_last)
+            } else {
+                (rows, rows_last)
+            }
+        } else {
+            l.store(last_row_last_n_range, Ordering::Relaxed);
+            (n, n_last)
+        };
+
+        for j in ThreadIndex::up_to(&thread_index_last) {
+            let restart_in_rows = v_adjusted as s32;
+            let restart_interval = restart_in_rows as u32 * mcus_per_row;
+
+            let cinfo = jpeg::CInfo {
+                is_top: bctx.is_top,
+                color_space: match bctx.format {
+                    0 => jpeg::ColorSpace::XBGR,
+                    1 => jpeg::ColorSpace::BGR,
+                    2 => jpeg::ColorSpace::RGB565,
+                    3 => jpeg::ColorSpace::RGB5A1,
+                    _ => jpeg::ColorSpace::RGB4,
+                },
+                restart_interval: restart_interval as u16,
+                work_index: w,
+                core_count,
+            };
+
+            unsafe {
+                (*jpeg::JPEG).set_info(cinfo);
+            }
+
+            *bctx.i_start.get_mut(&j) = restart_in_rows as u32 * j.get();
+            *bctx.i_count.get_mut(&j) = if j == thread_index_last {
+                v_last_adjusted
+            } else {
+                v_adjusted
+            };
+        }
+
+        unsafe {
+            *TERM_INFOS.get_mut(&w) = TermInfo {
+                is_top: bctx.is_top,
+                core_count,
+                v_adjusted,
+                v_last_adjusted,
+            };
+        }
+
+        entries::thread_nwm::rp_clear_size(w);
 
         true
     }
@@ -255,6 +376,165 @@ impl WorkOtherReady {
 }
 
 pub struct WorkAcquire(Impl);
+
+pub struct JpegRet(Impl, jpeg::JpegDqRet);
+
+impl Drop for JpegRet {
+    #[named]
+    fn drop(&mut self) {
+        let w = self.0.w;
+        let bctx = self.0.bctx();
+        let syn = unsafe { SYN_HANDLES.works.get(&w) };
+
+        let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
+        let core_count = core_count_in_use();
+        if f == core_count.get() - 1 {
+            entries::thread_screen::reset_no_skip_frame(bctx.is_top);
+
+            if !unsafe { send_term_dsts(w, &self.1) } {
+                set_reset_threads();
+            }
+
+            let s = is_top_index(bctx.is_top);
+            if !entries::thread_nwm::get_reliable_stream_delta_prog() {
+                let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
+                    / self.1.mcus as f32;
+                unsafe {
+                    (*config_consts::OV_STATS).s[s.get() as usize].comp_size =
+                        (comp_size * 1000f32) as s32
+                };
+            }
+            unsafe {
+                (*config_consts::OV_STATS).s[s.get() as usize].frame_time =
+                    FRAME_TIMES.get(&s).load(Ordering::Acquire);
+            }
+
+            syn.work_done_count.store(0, Ordering::Release);
+            syn.work_ready_flag.store(false, Ordering::Release);
+
+            unsafe {
+                release_sem(
+                    cname!(),
+                    SYN_HANDLES.works.get(&w).work_done,
+                    c_str!("work_done"),
+                );
+            }
+        }
+    }
+}
+
+#[named]
+unsafe fn send_term_dsts(w: WorkIndex, jpeg: &jpeg::JpegDqRet) -> bool {
+    false
+}
+
+const fn j_max_half_factor(v: u32_) -> u32_ {
+    v / 2
+}
+
+impl WorkAcquire {
+    pub fn send_frame(self) -> Option<JpegRet> {
+        let bctx = self.0.bctx_mut();
+        let w = self.0.w;
+        let t = self.0.t;
+
+        let src = bctx.src;
+        let i_start = *bctx.i_start.get(&t);
+        let i_count = *bctx.i_start.get(&t);
+        let pitch = bctx.pitch();
+
+        let mcu_size = unsafe { jpeg::get_jpeg_shared().mcu_col_size };
+        let j_start = mcu_size * pitch as usize * i_start as usize;
+        let j_count = mcu_size * pitch as usize * i_count as usize;
+        let i_count_half = j_max_half_factor(i_count as u32_) as usize;
+
+        let src = unsafe {
+            slice::from_raw_parts(src, bctx.src_len() as usize)
+                .get_unchecked(j_start..(j_start + j_count))
+        };
+
+        let mut pre_progress_count = 0;
+        let pre_progress = || {
+            if pre_progress_count >= i_count_half {
+                capture_screen(&mut bctx.should_capture);
+            }
+            pre_progress_count += 1;
+        };
+
+        let progress = || {};
+
+        let s = is_top_index(bctx.is_top);
+        let jpeg_ret = match entries::thread_nwm::get_reliable_stream() {
+            entries::thread_nwm::ReliableStream::None => {
+                let mut worker = unsafe { (*jpeg::JPEG).get_worker::<false>(w, t) };
+
+                let (user, dst) = (|| {
+                    let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
+                    (
+                        jpeg::WorkderDstUser {
+                            info: ninfo as *const _,
+                        },
+                        ninfo.info.pos.load(Ordering::Acquire),
+                    )
+                })();
+
+                let dst = crate::jpeg::WorkerDst {
+                    blkn: 0,
+                    s,
+                    w,
+                    dst: dst as *mut u8,
+                    free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
+                    user,
+                };
+                worker.encode(dst, src, pre_progress, progress)
+            }
+            entries::thread_nwm::ReliableStream::KCP => {
+                let mut worker = unsafe { (*jpeg::JPEG).get_worker::<true>(w, t) };
+
+                if let Some((user, dst)) = (|| {
+                    let dst =
+                        if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
+                            entries::thread_nwm::rp_data_buf_data(dst)
+                        } else {
+                            return None;
+                        };
+                    let hdr = jpeg::ArqRpHdr { w, t };
+
+                    Some((jpeg::WorkderDstUser { hdr }, dst))
+                })() {
+                    let dst = crate::jpeg::WorkerDst {
+                        blkn: 0,
+                        s,
+                        w,
+                        dst: dst as *mut u8,
+                        free_in_bytes: crate::entries::thread_nwm::get_packet_data_size() as u16,
+                        user,
+                    };
+                    worker.encode(dst, src, pre_progress, progress)
+                } else {
+                    return None;
+                }
+            }
+        };
+
+        if reset_threads() {
+            return None;
+        }
+
+        Some(JpegRet(self.0, jpeg_ret))
+    }
+}
+
+#[named]
+fn capture_screen(should_capture: &mut AtomicBool) {
+    if should_capture.swap(true, Ordering::AcqRel) == false {
+        unsafe {
+            entries::thread_screen::work_index_next_wrapped();
+
+            entries::thread_screen::screen_ready_release();
+        }
+    }
+}
 
 pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
     let mut work_index = WorkIndex::init(0);
@@ -316,3 +596,13 @@ impl BlitCtx {
 
 static mut BLIT_CTXES: RangedArray<BlitCtx, WORK_COUNT> = const_default();
 static mut BLIT_FORMATS: RangedArray<u32, SCREEN_COUNT> = const_default();
+
+#[derive(ConstDefault, Clone, Copy)]
+pub struct TermInfo {
+    pub is_top: bool,
+    pub core_count: CoreCount,
+    pub v_adjusted: u32,
+    pub v_last_adjusted: u32,
+}
+
+static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
