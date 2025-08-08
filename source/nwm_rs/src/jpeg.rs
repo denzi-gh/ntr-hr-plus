@@ -6,4 +6,6 @@
 mod vars;
 
 use crate::*;
-use vars::*;
+pub use vars::*;
+
+pub struct Jpeg {}

@@ -1,5 +1,21 @@
 use crate::*;
 
+pub struct CName {
+    pub mod_path: *const c_char,
+    pub line: c_int,
+    pub function_name: *const c_char,
+}
+
+macro_rules! cname {
+    () => {
+        CName {
+            mod_path: c_str!(module_path!()),
+            line: line!() as c_int,
+            function_name: c_str!(function_name!()),
+        }
+    };
+}
+
 // From c_str_macro crate
 macro_rules! c_str {
     ($lit:expr) => {
@@ -9,10 +25,21 @@ macro_rules! c_str {
 
 macro_rules! ns_dbg_print {
     ($fn:ident $(, $es:expr)*) => {
-        nsDbgPrint_t::$fn(
+        NsDbgPrint::$fn(
             c_str!(module_path!()),
             line!() as c_int,
             c_str!(function_name!())
+            $(, $es)*
+        )
+    };
+}
+
+macro_rules! ns_dbg_print_cname {
+    ($e:expr, $fn:ident $(, $es:expr)*) => {
+        NsDbgPrint::$fn(
+            $e.mod_path,
+            $e.line,
+            $e.function_name
             $(, $es)*
         )
     };
@@ -33,7 +60,7 @@ macro_rules! ns_dbg_print_fn {
                     func_name,
                     c_str!($fmt)
                     $(, $vn)*
-                );
+                )
             }
         }
     };
@@ -42,4 +69,17 @@ macro_rules! ns_dbg_print_fn {
 pub struct NsDbgPrint(());
 
 #[allow(dead_code)]
-impl NsDbgPrint {}
+impl NsDbgPrint {
+    ns_dbg_print_fn!(create_mutex_failed, "Create %s mutex failed %08x\n", name: *const c_char, ret: s32);
+    ns_dbg_print_fn!(create_semaphore_failed, "Create %s semaphore failed: %08x\n", name: *const c_char, res: s32);
+    ns_dbg_print_fn!(create_event_failed, "Create %s event failed: %08x\n", name: *const c_char, res: s32);
+    ns_dbg_print_fn!(mp_init_failed, "Mem pool %s init failed\n", name: *const c_char);
+
+    ns_dbg_print_fn!(wait_syn_failed, "Wait syn %s failed: %08x\n", what: *const c_char, ret: s32);
+    ns_dbg_print_fn!(release_mutex_failed, "Release mutex %s failed: %08x\n", what: *const c_char, ret: s32);
+    ns_dbg_print_fn!(release_sem_failed, "Release sem %s failed: %08x\n", what: *const c_char, ret: s32);
+
+    ns_dbg_print_fn!(failed, "%s failed: %08x\n", what: *const c_char, ret: s32);
+    ns_dbg_print_fn!(msg, "%s\n", msg: *const c_char);
+    ns_dbg_print_fn!(mem_usage, "Mem usage: %08x\n", size: u32);
+}

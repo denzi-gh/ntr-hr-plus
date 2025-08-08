@@ -29,9 +29,7 @@ impl Callback {
 
 impl ParseCallbacks for Callback {
     fn add_derives(&self, info: &bindgen::callbacks::DeriveInfo<'_>) -> Vec<String> {
-        if self.names.contains(info.name) {
-            vec!["ConstDefault".into()]
-        } else if self.union_names.contains(info.name) {
+        if self.names.contains(info.name) || self.union_names.contains(info.name) {
             vec!["ConstDefault".into()]
         } else {
             vec![]
@@ -89,7 +87,7 @@ fn main() {
 
     let bindings = Builder::default()
         .header(nwm_header.to_str().unwrap())
-        .rust_target(RustTarget::Nightly)
+        .rust_target(RustTarget::nightly())
         .use_core()
         .trust_clang_mangling(false)
         .must_use_type("Result")
@@ -105,7 +103,6 @@ fn main() {
         .blocklist_var("nsConfig")
         .blocklist_var("ntrConfig")
         .blocklist_var("rpConfig")
-        .opaque_type("MiiData")
         .derive_default(true)
         .clang_args([
             "--target=arm-none-eabi",

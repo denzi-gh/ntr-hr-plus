@@ -1,3 +1,594 @@
+use core::{mem::MaybeUninit, sync};
+
 use super::*;
 
-pub extern "C" fn thread_screen(_: *mut c_void) {}
+pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
+pub type ImgBufs = RangedArray<*mut u8, IMG_WORK_COUNT>;
+pub const IMG_WORK_COUNT: u32 = 2;
+
+#[derive(ConstDefault)]
+pub struct ImgInfo {
+    pub bufs: ImgBufs,
+    pub index: ImgWorkIndex,
+}
+
+pub type ImgInfos = RangedArray<ImgInfo, SCREEN_COUNT>;
+pub static mut IMG_INFOS: ImgInfos = const_default();
+
+pub unsafe fn once_img_infos() -> Option<()> {
+    for i in ScreenIndex::all() {
+        let is_top = if i.get() == 0 { true } else { false };
+        for j in ImgWorkIndex::all() {
+            if let Some(m) = request_mem_from_pool_vsize(img_buffer_size(is_top)) {
+                unsafe {
+                    *IMG_INFOS.get_mut(&i).bufs.get_mut(&j) = m.as_mut_ptr();
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    Some(())
+}
+
+#[derive(ConstDefault)]
+pub struct Config {
+    pub priority_is_top: bool,
+    pub priority_factor: u32,
+    pub priority_factor_scaled: u32,
+    pub frame_counts: FrameCounts,
+    pub frame_queues: FrameQueues,
+    pub frame_timing_allowance: u32,
+}
+
+type FrameCounts = RangedArray<u32, SCREEN_COUNT>;
+type FrameQueues = RangedArray<u32, SCREEN_COUNT>;
+
+static mut CONFIG: Config = const_default();
+
+pub fn frame_timing_allowance() -> u32 {
+    unsafe { CONFIG.frame_timing_allowance }
+}
+
+#[derive(ConstDefault)]
+pub struct Params {
+    work_index: WorkIndex,
+    thread_index: ThreadIndex,
+
+    work_ready: WorkReady,
+    skip_frames: SkipFrames,
+}
+
+static mut PARAMS: Params = const_default();
+
+pub fn close_handles() {}
+
+static mut PORT_GAME_PID: AtomicU32 = const_default();
+
+pub fn set_port_game_pid(v: u32) {
+    unsafe { PORT_GAME_PID.store(v, Ordering::Release) }
+}
+
+pub fn port_game_pid() -> u32 {
+    unsafe { PORT_GAME_PID.load(Ordering::Acquire) }
+}
+
+static mut NO_SKIP_FRAMES: RangedArray<AtomicBool, SCREEN_COUNT> = const_default();
+
+pub fn reset_no_skip_frame(is_top: bool) {
+    unsafe {
+        NO_SKIP_FRAMES
+            .get_mut(&is_top_index(is_top))
+            .store(false, Ordering::Release);
+    }
+}
+
+pub fn set_no_skip_frame(is_top: bool) {
+    unsafe {
+        NO_SKIP_FRAMES
+            .get_mut(&is_top_index(is_top))
+            .store(true, Ordering::Release);
+    }
+}
+
+pub fn no_skip_frame(is_top: bool) -> bool {
+    unsafe {
+        NO_SKIP_FRAMES
+            .get(&is_top_index(is_top))
+            .load(Ordering::Acquire)
+    }
+}
+
+pub static mut SCREEN_HANDLES_LOCK: Handle = const_default();
+pub static mut SCREEN_HANDLES_INITED: AtomicBool = const_default();
+
+#[named]
+pub unsafe fn once_screen_handles() -> Option<()> {
+    unsafe {
+        let res = svcCreateMutex(&mut SCREEN_HANDLES_LOCK, false);
+        if res != 0 {
+            ns_dbg_print!(failed, c_str!("Create screen handles mutex"), res);
+            return None;
+        }
+        SCREEN_HANDLES_INITED.store(true, Ordering::Release);
+    }
+    Some(())
+}
+
+pub fn thread_screen_loop() -> Option<()> {
+    loop {
+        safe_impl::thread_screen(Impl(()))?
+    }
+}
+
+pub extern "C" fn thread_screen(_: *mut c_void) {
+    unsafe {
+        __system_initSyscalls();
+        thread_screen_loop();
+        svcExitThread()
+    }
+}
+
+pub unsafe fn init(mode: u32) {}
+
+pub struct Impl(());
+
+impl Impl {
+    #[named]
+    pub fn screen_ready_acquire(self) -> Option<ScreenReady> {
+        wait_syn(
+            cname!(),
+            unsafe { SYN_HANDLES.screen_ready },
+            c_str!("screen_ready"),
+        )?;
+
+        Some(ScreenReady(()))
+    }
+}
+
+pub struct ScreenReady(());
+
+impl ScreenReady {
+    #[named]
+    pub fn work_done_acquire(self) -> Option<WorkDone> {
+        unsafe {
+            let w = PARAMS.work_index.get_atomic();
+            let w = SYN_HANDLES.works.get_mut(&w);
+            let synced = &mut w.work_done_flag;
+
+            if !synced.load(Ordering::Acquire) {
+                wait_syn(cname!(), w.work_done, c_str!("work_done"))?;
+                synced.store(true, Ordering::Release);
+            }
+        }
+
+        Some(WorkDone(()))
+    }
+}
+
+pub struct WorkDone(());
+
+impl WorkDone {
+    pub fn do_screen<'a>(&'a self) -> Screen<'a> {
+        return Screen(PhantomData);
+    }
+}
+
+#[derive(ConstDefault, Clone, Copy)]
+pub struct WorkReadyParams {
+    pub is_top: bool,
+    pub format: u32,
+    pub dma: Handle,
+}
+
+type WorkReady = RangedArray<WorkReadyParams, WORK_COUNT>;
+type SkipFrames = RangedArray<bool, WORK_COUNT>;
+
+#[named]
+fn thread_ready_release(is_top: bool, format: u32, work_index: WorkIndex, dma: Handle) {
+    unsafe {
+        *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
+            is_top,
+            format,
+            dma,
+        };
+
+        if *PARAMS.skip_frames.get(&work_index) {
+            release_sem(
+                cname!(),
+                SYN_HANDLES.threads.get(&PARAMS.thread_index).thread_ready,
+                c_str!("thread_ready"),
+            );
+        } else {
+            for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
+                release_sem(
+                    cname!(),
+                    SYN_HANDLES.threads.get(&j).thread_ready,
+                    c_str!("thread_ready"),
+                );
+            }
+        }
+    }
+}
+
+#[named]
+pub fn thread_ready_acquire(t: &ThreadIndex) -> Option<()> {
+    unsafe {
+        wait_syn(
+            cname!(),
+            SYN_HANDLES.threads.get(t).thread_ready,
+            c_str!("thread_ready"),
+        )?;
+
+        Some(())
+    }
+}
+
+#[named]
+pub unsafe fn screen_ready_release() {
+    unsafe { release_sem(cname!(), SYN_HANDLES.screen_ready, c_str!("screen_ready")) }
+}
+
+pub enum SkipFrameParams {
+    Frame(),
+    SkipFrame(ThreadIndex),
+}
+
+pub unsafe fn skip_frame_release(work_index: WorkIndex, skip_frame: SkipFrameParams) {
+    match skip_frame {
+        SkipFrameParams::Frame() => todo!(),
+        SkipFrameParams::SkipFrame(t) => unsafe {
+            *PARAMS.skip_frames.get_mut(&work_index) = true;
+            PARAMS.thread_index = t;
+            screen_ready_release()
+        },
+    }
+}
+
+pub unsafe fn work_ready_params(w: &WorkIndex) -> &mut WorkReadyParams {
+    unsafe { PARAMS.work_ready.get_mut(w) }
+}
+
+pub struct Screen<'a>(PhantomData<&'a ()>);
+
+impl Screen<'_> {
+    pub fn config<'a>(&'a self) -> &'a mut Config {
+        unsafe { &mut CONFIG }
+    }
+
+    #[named]
+    pub fn screen_port_sync(&self, is_top: bool, wait: bool) -> bool {
+        unsafe {
+            let res = svcWaitSynchronization(
+                *SYN_HANDLES.screens_port_ready.get(&is_top_index(is_top)),
+                if wait { THREAD_WAIT_NS.get() } else { 0 },
+            );
+            if res == 0 {
+                return true;
+            }
+            if res != RES_TIMEOUT as s32 {
+                ns_dbg_print!(failed, c_str!("Wait screens_port_ready"), res);
+                if wait {
+                    sleep_thread(THREAD_WAIT_NS);
+                }
+            }
+            false
+        }
+    }
+
+    #[named]
+    pub fn screens_ports_sync(&self) -> Option<bool> {
+        unsafe {
+            let mut out = mem::MaybeUninit::uninit();
+            let res = svcWaitSynchronizationN(
+                out.as_mut_ptr(),
+                SYN_HANDLES.screens_port_ready.as_mut_ptr(),
+                SCREEN_COUNT as s32,
+                false,
+                THREAD_WAIT_NS.get(),
+            );
+            if res != 0 {
+                if res != RES_TIMEOUT as s32 {
+                    ns_dbg_print!(failed, c_str!("Wait all screens_port_ready"), res);
+                    sleep_thread(THREAD_WAIT_NS);
+                    return None;
+                }
+                return None;
+            }
+            Some(out.assume_init() > 0)
+        }
+    }
+}
+
+pub fn wait_for_vblank(is_top: bool) {
+    unsafe {
+        gspWaitForEvent(
+            if is_top {
+                GSPGPU_EVENT_VBlank0
+            } else {
+                GSPGPU_EVENT_VBlank1
+            },
+            false,
+        );
+    }
+}
+
+#[derive(ConstDefault)]
+pub struct ScreenInfo {
+    pub fill: u32,
+    pub src: *mut u8,
+    pub pitch: u32,
+    pub format: u32,
+}
+
+pub fn update_gpu_regs(is_top: bool) -> ScreenInfo {
+    unsafe {
+        let mut screen_info: ScreenInfo = const_default();
+        if is_top {
+            screen_info.format = ptr::read_volatile(GPU_FB_TOP_FMT as *const u32);
+            screen_info.pitch = ptr::read_volatile(GPU_FB_TOP_STRIDE as *const u32);
+
+            let fb = ptr::read_volatile(GPU_FB_TOP_SEL as *const u32);
+            if fb & 1 == 0 {
+                screen_info.src =
+                    ptr::read_volatile(GPU_FB_TOP_LEFT_ADDR_1 as *const u32) as *mut u8;
+            } else {
+                screen_info.src =
+                    ptr::read_volatile(GPU_FB_TOP_LEFT_ADDR_2 as *const u32) as *mut u8;
+            }
+
+            let full_width = (screen_info.format & (7 << 4)) == 0;
+            if full_width {
+                screen_info.pitch *= 2;
+            }
+            screen_info.fill = ptr::read_volatile(LCD_TOP_FILLCOLOR as *const u32);
+        } else {
+            screen_info.format = ptr::read_volatile(GPU_FB_BOTTOM_FMT as *const u32);
+            screen_info.pitch = ptr::read_volatile(GPU_FB_BOTTOM_STRIDE as *const u32);
+
+            let fb = ptr::read_volatile(GPU_FB_BOTTOM_SEL as *const u32);
+            if fb & 1 == 0 {
+                screen_info.src = ptr::read_volatile(GPU_FB_BOTTOM_ADDR_1 as *const u32) as *mut u8;
+            } else {
+                screen_info.src = ptr::read_volatile(GPU_FB_BOTTOM_ADDR_2 as *const u32) as *mut u8;
+            }
+            screen_info.fill = ptr::read_volatile(LCD_BOTTOM_FILLCOLOR as *const u32);
+        }
+        screen_info
+    }
+}
+
+type DmaHandles = RangedArray<Handle, WORK_COUNT>;
+
+#[derive(ConstDefault)]
+pub struct ScreenParams {
+    pub dmas: DmaHandles,
+    pub game: Handle,
+    pub game_pid: u32,
+    pub game_fcram_base: u32,
+    pub pid: u32,
+}
+
+pub static mut SCREEN_PARAMS: ScreenParams = const_default();
+
+#[named]
+pub fn screen_params_lock() -> Option<ScreenParamsLock> {
+    wait_syn(
+        cname!(),
+        unsafe { SCREEN_HANDLES_LOCK },
+        c_str!("SCREEN_HANDLES_LOCK"),
+    )?;
+    Some(ScreenParamsLock(()))
+}
+
+pub struct ScreenParamsLock(());
+
+impl ScreenParamsLock {
+    pub fn param(&self) -> &mut ScreenParams {
+        unsafe { &mut SCREEN_PARAMS }
+    }
+}
+
+impl Drop for ScreenParamsLock {
+    #[named]
+    fn drop(&mut self) {
+        unsafe { release_mutex(cname!(), SCREEN_HANDLES_LOCK, c_str!("SCREEN_HANDLES_LOCK")) }
+    }
+}
+
+pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
+    if let Some(lock) = screen_params_lock() {
+        let w = unsafe { PARAMS.work_index };
+
+        let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
+        let img = *iinfo.bufs.get(&iinfo.index.get_atomic()) as u32;
+
+        if capture_screen(lock.param(), is_top, screen_info, img, w) {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+pub unsafe fn img_info_next(is_top: bool) {
+    let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
+    iinfo.index.next_wrapped();
+}
+
+pub unsafe fn img_info(is_top: bool) -> *mut u8 {
+    let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
+    *iinfo.bufs.get(&iinfo.index)
+}
+
+pub fn img_info_prev(is_top: bool) -> *const u8 {
+    let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
+    let mut index = iinfo.index;
+    index.prev_wrapped();
+    *iinfo.bufs.get(&index)
+}
+
+fn capture_screen(
+    params: &mut ScreenParams,
+    is_top: bool,
+    screen_info: &ScreenInfo,
+    dst: u32,
+    w: WorkIndex,
+) -> bool {
+    unsafe {
+        let phys = screen_info.src as u32;
+
+        let format = screen_info.format & 0xf;
+
+        // Skip if handling of format unimplemented
+        if format > 3 {
+            sleep_thread(THREAD_WAIT_NS);
+            return false;
+        }
+
+        let bpp: u32;
+        let mut burst_size: u32 = 16;
+
+        if format == 0 {
+            bpp = 4;
+            burst_size *= 4;
+        } else if format == 1 {
+            bpp = 3;
+        } else {
+            bpp = 2;
+            burst_size *= 2;
+        }
+        let mut transfer_size = GSP_SCREEN_WIDTH * bpp;
+        let mut pitch = screen_info.pitch;
+        let buf_size = transfer_size
+            * if is_top {
+                GSP_SCREEN_HEIGHT_TOP
+            } else {
+                GSP_SCREEN_HEIGHT_BOTTOM
+            };
+
+        if transfer_size == pitch {
+            let mut mul = if is_top { 16 } else { 64 };
+            transfer_size *= mul;
+            while transfer_size >= (1 << 15) {
+                transfer_size /= 2;
+                mul /= 2;
+            }
+
+            burst_size *= mul;
+            pitch = transfer_size;
+        }
+
+        let dma_conf = DmaConfig {
+            channelId: -1,
+            flags: (DMACFG_WAIT_AVAILABLE | DMACFG_DST_MEMORY_CONFIG | DMACFG_SRC_MEMORY_CONFIG)
+                as u8,
+            endianSwapSize: 0,
+            _padding: 0,
+            srcDev: DmaDeviceConfig {
+                deviceId: -1,
+                allowedAlignments: 15,
+            },
+            dstMem: DmaMemoryConfig {
+                burstSize: burst_size as s16,
+                burstStride: burst_size as s16,
+                transferSize: transfer_size as s16,
+                transferStride: transfer_size as s16,
+            },
+            dstDev: DmaDeviceConfig {
+                deviceId: -1,
+                allowedAlignments: 15,
+            },
+            srcMem: DmaMemoryConfig {
+                burstSize: burst_size as s16,
+                burstStride: burst_size as s16,
+                transferSize: transfer_size as s16,
+                transferStride: pitch as s16,
+            },
+        };
+
+        if buf_size > img_buffer_size(is_top) as u32 {
+            sleep_thread(THREAD_WAIT_NS);
+            return false;
+        }
+
+        {
+            let dma = params.dmas.get_mut(&w);
+            if *dma != 0 {
+                let _ = svcCloseHandle(*dma);
+                *dma = 0;
+            }
+        }
+
+        let (process, addr) = if is_in_vram(phys) {
+            close_game_handle(params);
+            (
+                entries::start_up::HOME_PROCESS_HANDLE,
+                0x1f000000 + (phys - 0x18000000),
+            )
+        } else if is_in_fcram(phys) {
+            let process = get_game_handle(params);
+            if process == 0 {
+                sleep_thread(THREAD_WAIT_NS);
+                return false;
+            }
+            (process, SCREEN_PARAMS.game_fcram_base + (phys - 0x20000000))
+        } else {
+            sleep_thread(THREAD_WAIT_NS);
+            return false;
+        };
+
+        let mut dma = MaybeUninit::uninit();
+        let res = svcStartInterProcessDma(
+            dma.as_mut_ptr(),
+            CUR_PROCESS_HANDLE,
+            dst,
+            process,
+            addr,
+            buf_size,
+            &dma_conf,
+        );
+        if res != 0 {
+            close_game_handle(params);
+            sleep_thread(THREAD_WAIT_NS);
+            return false;
+        }
+
+        send_overlay_stats(params);
+
+        let dma = dma.assume_init();
+        *params.dmas.get_mut(&w) = dma;
+
+        thread_ready_release(is_top, screen_info.format, w, dma);
+
+        true
+    }
+}
+
+fn close_game_handle(params: &mut ScreenParams) {}
+
+fn get_game_handle(params: &mut ScreenParams) -> Handle {
+    0
+}
+
+fn send_overlay_stats(params: &mut ScreenParams) {}
+
+fn is_in_vram(phys: u32) -> bool {
+    if phys >= 0x18000000 {
+        if phys < 0x18000000 + 0x00600000 {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_in_fcram(phys: u32) -> bool {
+    if phys >= 0x20000000 {
+        if phys < 0x20000000 + 0x10000000 {
+            return true;
+        }
+    }
+    false
+}

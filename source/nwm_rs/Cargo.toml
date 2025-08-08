@@ -1,14 +1,14 @@
 [package]
 name = "nwm_rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["staticlib"]
 
 [dependencies]
-libc = { version = "0.2.170", default-features = false }
-oorandom = "11.1.4"
+libc = { version = "0.2.174", default-features = false }
+oorandom = "11.1.5"
 function_name = "0.3.0"
 # Modified to work with union types
 const-default = { path = "../../const_default", version = "1.0.0", features = [
@@ -17,7 +17,7 @@ const-default = { path = "../../const_default", version = "1.0.0", features = [
 ] }
 
 [build-dependencies]
-bindgen = "0.69.5"
+bindgen = "0.72.0"
 
 [features]
 img_diff_dbg = []

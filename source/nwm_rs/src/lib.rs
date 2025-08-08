@@ -26,7 +26,7 @@ use crate::fix::*;
 use crate::utils::*;
 use crate::vars::*;
 use ::libc::*;
-use const_default::{const_default, ConstDefault};
+use const_default::{ConstDefault, const_default};
 use core::ops::*;
 use core::panic::PanicInfo;
 use core::sync::atomic::*;
@@ -40,6 +40,10 @@ use function_name::named;
 use oorandom::Rand32;
 
 #[allow(unused)]
+#[allow(clippy::all)]
+#[allow(non_upper_case_globals)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
 mod ctru {
     use crate::ConstDefault;
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -68,7 +72,7 @@ fn panic(panic_info: &PanicInfo) -> ! {
         }
 
         loop {
-            svcSleepThread(THREAD_WAIT_NS);
+            sleep_thread(THREAD_WAIT_NS);
         }
     }
 }
