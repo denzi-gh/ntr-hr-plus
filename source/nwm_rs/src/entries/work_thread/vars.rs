@@ -752,13 +752,13 @@ impl WorkAcquire {
             entries::thread_nwm::ReliableStream::None => {
                 let mut worker = unsafe { (*jpeg::JPEG).get_worker::<false>(w, t) };
 
-                let (user, dst) = (|| {
+                let (user, dst) = {
                     let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
                     (
                         jpeg::WorkderDstUser::NoneInfo(ninfo as *const _),
                         ninfo.info.pos.load(Ordering::Acquire),
                     )
-                })();
+                };
 
                 let dst = jpeg::WorkerDst {
                     blkn: 0,
@@ -773,7 +773,7 @@ impl WorkAcquire {
             entries::thread_nwm::ReliableStream::KCP => {
                 let mut worker = unsafe { (*jpeg::JPEG).get_worker::<true>(w, t) };
 
-                if let Some((user, dst)) = (|| {
+                let (user, dst) = {
                     let dst =
                         if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
                             entries::thread_nwm::rp_data_buf_data(dst)
@@ -782,20 +782,18 @@ impl WorkAcquire {
                         };
                     let hdr = jpeg::ArqRpHdr { w, t };
 
-                    Some((jpeg::WorkderDstUser::KcpHdr(hdr), dst))
-                })() {
-                    let dst = jpeg::WorkerDst {
-                        blkn: 0,
-                        s,
-                        w,
-                        dst: dst as *mut u8,
-                        free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
-                        user,
-                    };
-                    worker.encode(dst, src, pre_progress, progress)?
-                } else {
-                    return None;
-                }
+                    (jpeg::WorkderDstUser::KcpHdr(hdr), dst)
+                };
+
+                let dst = jpeg::WorkerDst {
+                    blkn: 0,
+                    s,
+                    w,
+                    dst: dst as *mut u8,
+                    free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
+                    user,
+                };
+                worker.encode(dst, src, pre_progress, progress)?
             }
         };
 
