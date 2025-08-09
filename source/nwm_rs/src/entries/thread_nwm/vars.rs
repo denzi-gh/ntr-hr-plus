@@ -1002,7 +1002,7 @@ pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_coun
         let packet_data_size = PACKET_DATA_SIZE;
         for i in WorkIndex::all() {
             for j in ThreadIndex::up_to(&thread_index_last(core_count)) {
-                let info = NWM_INFOS.get_mut(&i).get_mut(&j);
+                let ninfo = NWM_INFOS.get_mut(&i).get_mut(&j);
                 let buf_size = (entries::thread_main::NWM_BUFFER_SIZE / core_count.get() as usize
                     - hdr_size)
                     / packet_data_size
@@ -1010,16 +1010,8 @@ pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_coun
                     + hdr_size;
                 let buf = nwm_bufs.get(&i).add(j.get() as usize * buf_size);
 
-                info.buf = buf.add(hdr_size);
-                info.buf_packet_last = buf.add(buf_size as usize - packet_data_size);
-
-                let buf = info.buf;
-                let info = &mut info.info;
-                *info = DataInfo {
-                    send_pos: buf,
-                    pos: AtomicPtr::new(buf),
-                    flag: AtomicU32::new(0),
-                };
+                ninfo.buf = buf.add(hdr_size);
+                ninfo.buf_packet_last = buf.add(buf_size as usize - packet_data_size);
             }
         }
     }
