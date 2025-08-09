@@ -261,8 +261,9 @@ impl WorkFrame {
         let curr_s = is_top_index(bctx.is_top);
 
         let core_count = core_count_in_use();
-        let core_count_other = core_count.get() - 1;
         let thread_index_last = thread_index_last(core_count);
+        let core_count_all = core_count.get();
+        let core_count_other = core_count_all - 1;
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
         let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
@@ -271,7 +272,7 @@ impl WorkFrame {
         let mcus_per_row = jpeg_shared.mcus_per_row as u32;
         let mcu_rows = unsafe { core::intrinsics::unchecked_div(bctx.height(), mcu_size) };
         let mcu_rows_per_thread = unsafe {
-            core::intrinsics::unchecked_div(mcu_rows + core_count.get() - 1, core_count.get())
+            core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
         };
 
         let n = mcu_rows_per_thread;
@@ -281,9 +282,9 @@ impl WorkFrame {
         const LAST_ROW_LAST_N_F: u32 = 4;
 
         let mut curr = l.load(Ordering::Acquire);
-        let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count.get() > 1 {
+        let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count_all > 1 {
             let next = loop {
-                let next = if self.0.0.t.get() == thread_index_last.get() {
+                let next = if self.0.0.t == thread_index_last {
                     if curr < last_row_last_n_range {
                         curr + 1
                     } else {
@@ -291,7 +292,7 @@ impl WorkFrame {
                     }
                 } else {
                     if curr > core_count_other {
-                        curr - if core_count.get() == 2 { 1 } else { 2 }
+                        curr - core_count_other
                     } else {
                         curr
                     }
@@ -561,7 +562,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
         let size = *sizes.get(&i) as u16;
 
         let hdr = size
-            | ((if i.get() == core_count.get() - 1 {
+            | ((if i == thread_index_last(core_count) {
                 info.v_last_adjusted
             } else {
                 info.v_adjusted

@@ -872,9 +872,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let mut delta_q = 0;
         if !REL_STREAM {
-            if self.worker.thread_index.get()
-                == thread_index_last(self.worker.shared.core_count).get()
-            {
+            if self.worker.thread_index == thread_index_last(self.worker.shared.core_count) {
                 self.write_trailer();
             } else {
                 self.write_rst();

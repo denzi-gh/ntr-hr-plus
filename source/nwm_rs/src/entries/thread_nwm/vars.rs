@@ -1035,7 +1035,7 @@ static mut DATA_BUF_HDRS: RangedArray<DataHdr, WORK_COUNT> = const_default();
 
 impl DataHdr {
     fn init(frame_id: u8, is_top: bool) -> Self {
-        Self([frame_id, is_top as u8, 0, 0])
+        Self([frame_id, is_top as u8, 2, 0])
     }
 }
 
