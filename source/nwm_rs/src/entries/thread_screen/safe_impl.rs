@@ -48,7 +48,7 @@ fn do_screen(screen: Screen) -> Option<bool> {
             }
         };
 
-        let prio = [get_prio_scaled(false), get_prio_scaled(true)];
+        let prio = [get_prio_scaled(true), get_prio_scaled(false)];
 
         let get_factor = |b| -> u32 {
             unchecked_div(
@@ -56,7 +56,12 @@ fn do_screen(screen: Screen) -> Option<bool> {
                 prio[b as usize] as u64,
             ) as u32
         };
-        let factor = [get_factor(false), get_factor(true)];
+        let factor = [get_factor(true), get_factor(false)];
+
+        if factor[true as usize] < (1 << SCALE_BITS) && factor[false as usize] < (1 << SCALE_BITS) {
+            *conf.frame_queues.get_mut(&is_top_index(true)) += conf.priority_factor_scaled;
+            *conf.frame_queues.get_mut(&is_top_index(false)) += conf.priority_factor_scaled;
+        }
 
         is_top = if factor[is_top as usize] >= factor[!is_top as usize] {
             is_top
