@@ -755,9 +755,7 @@ impl WorkAcquire {
                 let (user, dst) = (|| {
                     let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
                     (
-                        jpeg::WorkderDstUser {
-                            info: ninfo as *const _,
-                        },
+                        jpeg::WorkderDstUser::NoneInfo(ninfo as *const _),
                         ninfo.info.pos.load(Ordering::Acquire),
                     )
                 })();
@@ -784,7 +782,7 @@ impl WorkAcquire {
                         };
                     let hdr = jpeg::ArqRpHdr { w, t };
 
-                    Some((jpeg::WorkderDstUser { hdr }, dst))
+                    Some((jpeg::WorkderDstUser::KcpHdr(hdr), dst))
                 })() {
                     let dst = jpeg::WorkerDst {
                         blkn: 0,

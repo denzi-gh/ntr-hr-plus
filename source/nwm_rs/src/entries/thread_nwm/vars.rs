@@ -1192,71 +1192,78 @@ pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut jpeg::WorkerDst, term: bo
     }
 
     dst.dst = if !RS {
-        let ninfo = unsafe { &*dst.user.info };
-        let dinfo = &ninfo.info;
+        if let jpeg::WorkderDstUser::NoneInfo(ninfo) = dst.user {
+            let ninfo = unsafe { &*ninfo };
+            let dinfo = &ninfo.info;
 
-        let pos = dinfo.pos.fetch_ptr_add(size, Ordering::AcqRel);
-        let mut pos_next = unsafe { pos.add(size) };
-        if term {
-            dinfo.flag.store(TERM_FLAG as u32, Ordering::Release);
+            let pos = dinfo.pos.fetch_ptr_add(size, Ordering::AcqRel);
+            let mut pos_next = unsafe { pos.add(size) };
+            if term {
+                dinfo.flag.store(TERM_FLAG as u32, Ordering::Release);
+            }
+
+            if !term && pos_next > ninfo.buf_packet_last {
+                pos_next = ninfo.buf_packet_last;
+                ns_dbg_print!(msg, c_str!("Send buffer overflow"));
+            }
+
+            let res = unsafe { svcSignalEvent(SYN_HANDLES.nwm_ready) };
+            if res != 0 {
+                ns_dbg_print!(failed, c_str!("Signal nwm ready"), res);
+            }
+
+            pos_next
+        } else {
+            return false;
         }
-
-        if !term && pos_next > ninfo.buf_packet_last {
-            pos_next = ninfo.buf_packet_last;
-            ns_dbg_print!(msg, c_str!("Send buffer overflow"));
-        }
-
-        let res = unsafe { svcSignalEvent(SYN_HANDLES.nwm_ready) };
-        if res != 0 {
-            ns_dbg_print!(failed, c_str!("Signal nwm ready"), res);
-        }
-
-        pos_next
     } else {
-        let hdr = unsafe { &dst.user.hdr };
-        let mut dst = if term {
-            unsafe {
-                dst.dst
-                    .sub(rp_packet_data_size - dst.free_in_bytes as usize)
-            }
-        } else {
-            unsafe { dst.dst.sub(rp_packet_data_size) }
-        };
-
-        let mut size = size as u32;
-        if !term {
-            dst = unsafe { dst.sub(ARQ_DATA_HDR_SIZE as usize) };
-            size += ARQ_DATA_HDR_SIZE;
-            unsafe {
-                hdr.write_hdr(dst);
-            }
-        }
-
-        unsafe {
-            ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1);
-        }
-
-        if term {
-            return unsafe { entries::work_thread::set_term_dst(dst, hdr.w, hdr.t) };
-        } else {
-            let cb = unsafe { &mut *RELIABLE_STREAM_CB };
-            while !reset_threads() {
-                let res = unsafe { rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _) };
-                if res == 0 {
-                    break;
+        if let jpeg::WorkderDstUser::KcpHdr(hdr) = dst.user {
+            let mut dst = if term {
+                unsafe {
+                    dst.dst
+                        .sub(rp_packet_data_size - dst.free_in_bytes as usize)
                 }
-                if res != RES_TIMEOUT as s32 {
-                    ns_dbg_print!(failed, c_str!("Release nwm_syn"), res);
-                    set_reset_threads();
+            } else {
+                unsafe { dst.dst.sub(rp_packet_data_size) }
+            };
+
+            let mut size = size as u32;
+            if !term {
+                dst = unsafe { dst.sub(ARQ_DATA_HDR_SIZE as usize) };
+                size += ARQ_DATA_HDR_SIZE;
+                unsafe {
+                    hdr.write_hdr(dst);
+                }
+            }
+
+            unsafe {
+                ptr::copy_nonoverlapping(&size, dst.sub(mem::size_of::<u32>()) as *mut _, 1);
+            }
+
+            if term {
+                return unsafe { entries::work_thread::set_term_dst(dst, hdr.w, hdr.t) };
+            } else {
+                let cb = unsafe { &mut *RELIABLE_STREAM_CB };
+                while !reset_threads() {
+                    let res = unsafe { rp_syn_rel1(&mut cb.nwm_syn, dst as *mut _) };
+                    if res == 0 {
+                        break;
+                    }
+                    if res != RES_TIMEOUT as s32 {
+                        ns_dbg_print!(failed, c_str!("Release nwm_syn"), res);
+                        set_reset_threads();
+                        return false;
+                    }
+                }
+
+                if let Some(dst) = unsafe { rp_data_buf_malloc() } {
+                    rp_data_buf_data(dst)
+                } else {
                     return false;
                 }
             }
-
-            if let Some(dst) = unsafe { rp_data_buf_malloc() } {
-                rp_data_buf_data(dst)
-            } else {
-                return false;
-            }
+        } else {
+            return false;
         }
     };
     dst.free_in_bytes = rp_packet_data_size as u16;

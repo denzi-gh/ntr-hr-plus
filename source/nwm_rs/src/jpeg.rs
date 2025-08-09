@@ -369,10 +369,10 @@ impl<const H_SAMP: bool, const V_SAMP: bool> SubSampConst<H_SAMP, V_SAMP> {
     const ASSERT: () = subsamp_constraint::<H_SAMP, V_SAMP>();
 }
 
-#[derive(Copy, Clone, ConstDefault)]
-pub union WorkderDstUser {
-    pub info: *const entries::thread_nwm::NwmThreadInfo,
-    pub hdr: ArqRpHdr,
+#[derive(Copy, Clone)]
+pub enum WorkderDstUser {
+    NoneInfo(*const entries::thread_nwm::NwmThreadInfo),
+    KcpHdr(ArqRpHdr),
 }
 
 #[derive(Clone, ConstDefault)]
