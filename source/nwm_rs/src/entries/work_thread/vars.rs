@@ -106,7 +106,7 @@ pub struct BlitCtxInit(WorkReady, bool);
 impl BlitCtxInit {
     #[named]
     fn dma_sync(&self) {
-        if wait_syn(cname!(), self.0.0.work_ready_params().dma, c_str!("dma")).is_none() {
+        if wait_syn_once(cname!(), self.0.0.work_ready_params().dma, c_str!("dma")).is_none() {
             return;
         }
 

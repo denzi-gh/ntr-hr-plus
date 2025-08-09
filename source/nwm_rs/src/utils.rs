@@ -213,6 +213,17 @@ pub fn create_event(h: &mut Handle) -> Result {
 
 #[must_use]
 pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> {
+    while !reset_threads() {
+        if wait_syn_ns(cname, h, syn_name, THREAD_WAIT_NS).is_none() {
+            continue;
+        }
+        return Some(());
+    }
+    None
+}
+
+#[must_use]
+pub fn wait_syn_once(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> {
     wait_syn_ns(cname, h, syn_name, THREAD_WAIT_NS)
 }
 
@@ -223,24 +234,18 @@ pub fn wait_syn_ns(
     syn_name: *const c_char,
     dur: DurationNs,
 ) -> Option<()> {
-    loop {
-        if reset_threads() {
-            return None;
-        }
-        let res = unsafe { svcWaitSynchronization(h, dur.get()) };
-        if res != 0 {
-            if res != RES_TIMEOUT as s32 {
-                unsafe {
-                    ns_dbg_print_cname!(cname, wait_syn_failed, syn_name, res);
-                    set_reset_threads();
-                    svcSleepThread(THREAD_WAIT_NS.get());
-                    return None;
-                }
+    let res = unsafe { svcWaitSynchronization(h, dur.get()) };
+    if res != 0 {
+        if res != RES_TIMEOUT as s32 {
+            unsafe {
+                ns_dbg_print_cname!(cname, wait_syn_failed, syn_name, res);
+                set_reset_threads();
+                svcSleepThread(THREAD_WAIT_NS.get());
             }
-            continue;
         }
-        return Some(());
+        return None;
     }
+    Some(())
 }
 
 pub unsafe fn release_mutex(cname: CName, h: Handle, syn_name: *const c_char) {

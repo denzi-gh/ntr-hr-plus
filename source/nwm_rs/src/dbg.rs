@@ -1,5 +1,6 @@
 use crate::*;
 
+#[derive(Clone, Copy)]
 pub struct CName {
     pub mod_path: *const c_char,
     pub line: c_int,

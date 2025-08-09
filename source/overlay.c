@@ -4,7 +4,7 @@
 
 // MIT License
 
-// Copyright (c) 2017 
+// Copyright (c) 2017
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -402,15 +402,21 @@ static RT_HOOK SetBufferSwapHook;
 
 static int rpPortSend(u32 isTop);
 static void plgSetBufferSwapCommon(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, u32 format) {
-	if (plgLoaderEx->remotePlayBoost && plgOverlayEvent && *plgOverlayEvent) {
-		ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
-		s32 ret;
-		ret = svcSignalEvent(*plgOverlayEvent);
-		if (ret != 0) {
-			nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
+	if (plgLoaderEx->remotePlayBoost) {
+		int send_directly = true;
+		if (plgOverlayEvent && *plgOverlayEvent) {
+			ASR(&rpPortIsTop, isDisplay1 ? 0 : 1);
+			s32 ret;
+			ret = svcSignalEvent(*plgOverlayEvent);
+			if (ret != 0) {
+				nsDbgPrint("plgOverlayEvent signal failed: %08"PRIx32"\n", ret);
+			} else {
+				send_directly = false;
+			}
 		}
-	} else {
-		rpPortSend(isDisplay1 ? 0 : 1);
+		if (send_directly) {
+			rpPortSend(isDisplay1 ? 0 : 1);
+		}
 	}
 
 	int isDirty = 0;

@@ -369,7 +369,7 @@ enum {
 	PLUGIN_MENU_COUNT,
 };
 
-static void pluginLoaderCOnfigPropogateProcess(int pid) {
+static void pluginLoaderConfigPropagateProcess(int pid) {
 	void *addr = plgLoaderEx;
 	u32 len = sizeof(*plgLoaderEx);
 
@@ -384,11 +384,11 @@ static void pluginLoaderCOnfigPropogateProcess(int pid) {
 	}
 }
 
-static void pluginLoaderConfigPropogate(void) {
+static void pluginLoaderConfigPropagate(void) {
 	if (plgLoader->gamePluginPid)
-		pluginLoaderCOnfigPropogateProcess(plgLoader->gamePluginPid);
+		pluginLoaderConfigPropagateProcess(plgLoader->gamePluginPid);
 
-	pluginLoaderCOnfigPropogateProcess(0x1a); // nwm process
+	pluginLoaderConfigPropagateProcess(0x1a); // nwm process
 }
 
 static int pluginLoaderMenu(void) {
@@ -422,7 +422,7 @@ static int pluginLoaderMenu(void) {
 		r = showMenuEx("Plugin Loader", PLUGIN_MENU_COUNT, entries, descs, r);
 		switch (r) {
 			default:
-				pluginLoaderConfigPropogate();
+				pluginLoaderConfigPropagate();
 				return 0;
 
 			case PLUGIN_MENU_ENABLE_PLUGINS:
