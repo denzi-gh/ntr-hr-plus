@@ -419,7 +419,7 @@ impl Drop for JpegRet {
         if f == core_count.get() - 1 {
             entries::thread_screen::reset_no_skip_frame(bctx.is_top);
 
-            if !unsafe { send_term_dsts(w, &self.1) } {
+            if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
                 set_reset_threads();
             }
 
@@ -464,7 +464,7 @@ pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
 }
 
 #[named]
-unsafe fn send_term_dsts(w: WorkIndex, jpeg: &jpeg::JpegDqRet) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
         return true;
     }
@@ -535,7 +535,7 @@ unsafe fn send_term_dsts(w: WorkIndex, jpeg: &jpeg::JpegDqRet) -> bool {
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
         | (info.core_count.get() as u16) << RP_KCP_HDR_QUALITY_NBITS
         | (if delta_prog {
-            jpeg.delta_q as u16
+            delta_q
         } else {
             unsafe { JPEG_QUALITY as u16 }
         });
@@ -678,13 +678,7 @@ pub unsafe fn rp_term_data_buf_free_base(dst: *const ::libc::c_char) -> bool {
     }
 
     let cb = unsafe { &mut *entries::thread_nwm::RELIABLE_STREAM_CB };
-    let ret = if unsafe {
-        mp_free(
-            &mut cb.locked.send_pool,
-            dst.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) as *mut _,
-        )
-    } < 0
-    {
+    let ret = if unsafe { mp_free(&mut cb.locked.send_pool, dst as *mut _) } < 0 {
         ns_dbg_print!(msg, c_str!("Mem pool send free failed"));
         false
     } else {

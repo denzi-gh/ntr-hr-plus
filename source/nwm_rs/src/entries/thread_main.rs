@@ -215,7 +215,7 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
             core_count,
             chroma_ss,
             entries::thread_nwm::get_reliable_stream_delta_prog(),
-        );
+        )?;
         entries::work_thread::init(quality, chroma_ss);
 
         entries::thread_nwm::init_nwm_infos(nwm_bufs, core_count);

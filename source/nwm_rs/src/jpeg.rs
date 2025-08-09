@@ -2195,9 +2195,77 @@ impl Jpeg {
         self.shared_mut.once();
     }
 
-    pub fn init(&mut self, quality: u32, core_count: CoreCount, hq: u32, delta_prog: bool) {
+    #[named]
+    pub fn init(
+        &mut self,
+        quality: u32,
+        core_count: CoreCount,
+        hq: u32,
+        delta_prog: bool,
+    ) -> Option<()> {
         let (max_blocks_in_mcu, q_steps) = self.shared.init(quality, delta_prog, core_count, hq);
         self.shared_mut.init(delta_prog, max_blocks_in_mcu, q_steps);
+
+        for w in WorkIndex::all() {
+            let sem = self.shared.work_sem.get_mut(&w);
+            if *sem > 0 {
+                unsafe {
+                    let _ = svcCloseHandle(*sem);
+                }
+                *sem = 0;
+            }
+
+            let res = unsafe { svcCreateSemaphore(sem, 0, core_count.get() as i32 - 1) };
+            if res != 0 {
+                ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
+                return None;
+            }
+            self.shared_mut
+                .work_inited
+                .get_mut(&w)
+                .store(false, Ordering::Release);
+            self.shared_mut
+                .work_sem_count
+                .get_mut(&w)
+                .store(core_count.get() as u8, Ordering::Release);
+        }
+        for s in ScreenIndex::all() {
+            let sem = self.shared.screen_sem.get_mut(&s);
+            if *sem > 0 {
+                unsafe {
+                    let _ = svcCloseHandle(*sem);
+                }
+                *sem = 0;
+            }
+
+            let res = unsafe { svcCreateSemaphore(sem, 1, 1) };
+            if res != 0 {
+                ns_dbg_print!(create_semaphore_failed, c_str!("jpeg screen_sem"), res);
+                return None;
+            }
+
+            self.shared_mut
+                .screen_bool
+                .get_mut(&s)
+                .store(false, Ordering::Release);
+            *self.shared_mut.last_restart_interval.get_mut(&s) = 0;
+        }
+
+        unsafe {
+            ptr::write_bytes(
+                self.shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
+                0,
+                self.shared_mut.dq_prev_coeffs_top.len(),
+            );
+
+            ptr::write_bytes(
+                self.shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
+                0,
+                self.shared_mut.dq_prev_coeffs_bot.len(),
+            );
+        }
+
+        Some(())
     }
 
     pub fn set_info(&mut self, info: CInfo) {
