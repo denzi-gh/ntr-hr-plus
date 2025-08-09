@@ -128,7 +128,6 @@ pub struct SynHandles {
 pub static mut SYN_HANDLES: SynHandles = const_default();
 
 pub fn thread_index_last(core_count: CoreCount) -> ThreadIndex {
-    assert!(core_count.get() >= 1);
     ThreadIndex::init(core_count.get() - 1)
 }
 
@@ -176,9 +175,9 @@ pub unsafe fn init_syn_handles(core_count: CoreCount) -> Option<()> {
                 return None;
             }
 
-            *work.work_ready_flag.as_ptr() = false;
-            *work.work_done_count.as_ptr() = 0;
-            *work.work_done_flag.as_ptr() = false;
+            work.work_ready_flag.store(false, Ordering::Release);
+            work.work_done_count.store(0, Ordering::Release);
+            work.work_done_flag.store(false, Ordering::Release);
         }
 
         for j in ThreadIndex::up_to(&thread_index_last(core_count)) {

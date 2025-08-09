@@ -1203,9 +1203,8 @@ pub unsafe fn rp_send_buffer<const RS: bool>(dst: &mut jpeg::WorkerDst, term: bo
         let ninfo = unsafe { &*dst.user.info };
         let dinfo = &ninfo.info;
 
-        let mut pos_next = unsafe { (*dinfo.pos.as_ptr()).add(size) };
-
-        dinfo.pos.store(pos_next, Ordering::Release);
+        let pos = dinfo.pos.fetch_ptr_add(size, Ordering::AcqRel);
+        let mut pos_next = unsafe { pos.add(size) };
         if term {
             dinfo.flag.store(TERM_FLAG as u32, Ordering::Release);
         }

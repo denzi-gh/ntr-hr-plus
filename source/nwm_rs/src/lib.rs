@@ -14,6 +14,7 @@
 #![feature(iter_array_chunks)]
 #![feature(array_ptr_get)]
 #![feature(more_float_constants)]
+#![feature(strict_provenance_atomic_ptr)]
 #![allow(static_mut_refs)]
 
 use dbg::*;
