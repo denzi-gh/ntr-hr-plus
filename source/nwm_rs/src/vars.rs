@@ -197,7 +197,7 @@ pub unsafe fn init_syn_handles(core_count: CoreCount) -> Option<()> {
             }
         }
     }
-    None
+    Some(())
 }
 
 pub unsafe fn cleanup_syn_handles(core_count: CoreCount) {
