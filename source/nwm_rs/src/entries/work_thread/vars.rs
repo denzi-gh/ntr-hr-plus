@@ -724,7 +724,7 @@ impl WorkAcquire {
 
         let src = bctx.src;
         let i_start = *bctx.i_start.get(&t);
-        let i_count = *bctx.i_start.get(&t);
+        let i_count = *bctx.i_count.get(&t);
         let pitch = bctx.pitch();
 
         let mcu_size = unsafe { jpeg::get_jpeg_shared().mcu_col_size };

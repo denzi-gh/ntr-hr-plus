@@ -1,6 +1,6 @@
 use crate::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CName {
     pub mod_path: *const c_char,
     pub line: c_int,

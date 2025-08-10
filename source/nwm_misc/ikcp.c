@@ -1040,6 +1040,9 @@ static int ikcp_send_cur(ikcpcb *kcp)
 	if (ret == 0) {
 		return 1;
 	}
+	if (ret < 0) {
+		return ret * 0x10;
+	}
 	if (ret != len) {
 		return -5;
 	}
@@ -1104,8 +1107,11 @@ int ikcp_send_next(ikcpcb *kcp)
 			if (ret == 0) {
 				continue;
 			}
+			if (ret < 0) {
+				return ret * 0x10 * 0x10 - 1;
+			}
 			if (ret != len) {
-				return -5;
+				return -5 * 0x10 - 1;
 			}
 			break;
 		}

@@ -180,12 +180,12 @@ extern "C" fn rp_udp_output(buf: *mut u8, len: s32, tick: *mut u32, kcp: *mut ik
     };
     if duration_ns.get() > 0 {
         unsafe {
-            nwm_cb_unlock();
+            nwm_cb_unlock(cname!());
         }
         sleep_thread(duration_ns);
         if nwm_cb_lock() == None {
             set_reset_threads();
-            return -5;
+            return -0x10 - 5;
         }
 
         if unsafe { (*kcp).rp_output_retry } {
@@ -263,7 +263,7 @@ extern "C" fn nsControlRecv(fd: c_int) -> c_int {
         return 0;
     }
 
-    let nwm_lock = if let Some(l) = NwmCbLock::lock() {
+    let nwm_lock = if let Some(l) = NwmCbLock::lock(cname!()) {
         l
     } else {
         return -1;
@@ -346,7 +346,7 @@ const RP_KCP_TIMEOUT_TICK: s32 = 2 * SYSCLOCK_ARM11 as s32;
 
 #[named]
 unsafe fn do_kcp_thread_nwm() -> bool {
-    if let Some(mut lock) = NwmCbLock::lock() {
+    if let Some(mut lock) = NwmCbLock::lock(cname!()) {
         let mut dst = mem::MaybeUninit::uninit();
         let mut has_dst = false;
 
@@ -397,7 +397,7 @@ unsafe fn do_kcp_thread_nwm() -> bool {
                 let relock = |lock: Option<NwmCbLock>| -> Option<NwmCbLock> {
                     if let Some(lock) = lock {
                         Some(lock)
-                    } else if let Some(lock) = NwmCbLock::lock() {
+                    } else if let Some(lock) = NwmCbLock::lock(cname!()) {
                         Some(lock)
                     } else {
                         None
@@ -522,7 +522,10 @@ unsafe fn do_kcp_thread_nwm() -> bool {
                 let ret = unsafe { ikcp_send_next(kcp) };
                 if ret < 0 {
                     // Reset KCP
-                    if !reset_threads() {
+                    // rp_udp_output 0x10 * ikcp_send_cur 0x10 * ikcp_send_next 0x10
+                    if ret < -0x1000 {
+                        mem::forget(lock);
+                    } else {
                         ns_dbg_print!(failed, c_str!("KCP send next"), ret);
                     }
                     set_reset_threads();
@@ -845,8 +848,9 @@ unsafe fn ip_checksum(data: *mut u8, mut length: usize) -> u16 {
     utils::htons(!acc as u16)
 }
 
+#[named]
 unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
-    let mut nwm_lock = if let Some(l) = NwmCbLock::lock() {
+    let mut nwm_lock = if let Some(l) = NwmCbLock::lock(cname!()) {
         l
     } else {
         return None;
@@ -1090,12 +1094,12 @@ pub unsafe fn nwm_ready_release(w: &WorkIndex) {
 }
 
 #[derive(PartialEq, Eq)]
-pub struct NwmCbLock();
+pub struct NwmCbLock(CName);
 
 impl NwmCbLock {
-    pub fn lock() -> Option<Self> {
+    pub fn lock(cname: CName) -> Option<Self> {
         nwm_cb_lock()?;
-        Some(Self())
+        Some(Self(cname))
     }
 
     pub fn get(&mut self) -> &mut rp_cb_locked {
@@ -1105,7 +1109,7 @@ impl NwmCbLock {
 
 impl Drop for NwmCbLock {
     fn drop(&mut self) {
-        unsafe { nwm_cb_unlock() };
+        unsafe { nwm_cb_unlock(self.0) };
     }
 }
 
@@ -1119,11 +1123,10 @@ fn nwm_cb_lock() -> Option<()> {
     Some(())
 }
 
-#[named]
-unsafe fn nwm_cb_unlock() {
+unsafe fn nwm_cb_unlock(cname: CName) {
     unsafe {
         release_mutex(
-            cname!(),
+            cname,
             RELIABLE_STREAM_CB_LOCK,
             c_str!("RELIABLE_STREAM_CB_LOCK"),
         );
