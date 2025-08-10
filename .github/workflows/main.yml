@@ -8,6 +8,9 @@ jobs:
     container:
       image: xzn92/ntr-hr-build-environment:2025-08-10
     steps:
+      - name: Rust env
+        run: |
+          ln -s /root/.rustup ~/.rustup
       - name: Clone repos
         run: |
           git clone --recurse-submodules --depth=1 https://github.com/${{ github.repository }}
