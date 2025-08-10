@@ -1,0 +1,34 @@
+name: main
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: xzn92/ntr-hr-build-environment:2025-08-10
+    steps:
+      - name: Clone repos
+        run: |
+          git clone --recurse-submodules --depth=1 https://github.com/${{ github.repository }}
+          git clone --recurse-submodules --depth=1 https://github.com/xzn/BootNTR.git
+          ln -s BootNTR BootNTR-Bins
+      - name: Compile NTR-HR
+        run: |
+          pushd ntr-hr
+          MAKEFLAGS="USE_CLANG=1 USE_LTO=1" ./make.sh install
+          popd
+      - name: Compile BootNTR-HR
+        run: |
+          pushd BootNTR-Bins
+          ./make.sh
+          popd
+      - name: Prepare node
+        run: |
+          pacman -Sy nvm --noconfirm
+          source /usr/share/nvm/init-nvm.sh
+          nvm install node
+          echo "$(dirname $(which node))" >> "$GITHUB_PATH"
+      - uses: actions/upload-artifact@v4
+        with:
+          path: BootNTR-Bins/output/3ds-arm/BootNTRSelector-PabloMK7-Banner.cia
