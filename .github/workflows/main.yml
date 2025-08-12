@@ -36,4 +36,4 @@ jobs:
         with:
           name: BootNTRSelector-PabloMK7-Banner.cia
           path: BootNTR-Bins/output/3ds-arm/BootNTRSelector-PabloMK7-Banner.cia
-          compression: 0
+          compression-level: 0
