@@ -34,4 +34,6 @@ jobs:
           echo "$(dirname $(which node))" >> "$GITHUB_PATH"
       - uses: actions/upload-artifact@v4
         with:
+          name: BootNTRSelector-PabloMK7-Banner.cia
           path: BootNTR-Bins/output/3ds-arm/BootNTRSelector-PabloMK7-Banner.cia
+          compression: 0

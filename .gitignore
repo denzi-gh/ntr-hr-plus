@@ -4,6 +4,7 @@ rustc-ice*
 
 *.bin
 lib*.a
+_*
 
 # Prerequisites
 *.d
