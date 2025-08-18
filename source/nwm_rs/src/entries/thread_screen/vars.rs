@@ -68,7 +68,11 @@ pub unsafe fn work_index_next_wrapped() {
 
 static mut PARAMS: Params = const_default();
 
-pub fn close_handles() {}
+pub fn close_handles() {
+    if let Some(lock) = screen_params_lock() {
+        close_game_handle(lock.param())
+    }
+}
 
 static mut PORT_GAME_PID: AtomicU32 = const_default();
 
@@ -350,7 +354,7 @@ impl Screen<'_> {
             );
             if res != 0 {
                 if res != RES_TIMEOUT as s32 {
-                    ns_dbg_print!(failed, c_str!("Wait all screens_port_ready"), res);
+                    ns_dbg_print!(failed, c_str!("Wait any screens_port_ready"), res);
                     sleep_thread(THREAD_WAIT_NS);
                     return None;
                 }
