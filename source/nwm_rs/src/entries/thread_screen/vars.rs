@@ -360,7 +360,7 @@ impl Screen<'_> {
                 }
                 return None;
             }
-            Some(out.assume_init() > 0)
+            Some(out.assume_init() == RP_SCREEN_TOP as s32)
         }
     }
 }
