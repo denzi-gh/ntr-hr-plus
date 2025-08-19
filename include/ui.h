@@ -36,7 +36,6 @@ void updateScreen(void);
 const char *plgTranslate(const char *msg);
 
 Handle menuGetPortHandle(void);
-s32 showMenu(const char *title, u32 entriesCount, const char *captions[]);
 s32 showMenuEx(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn);
 s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn, u32 *keysPressed);
 

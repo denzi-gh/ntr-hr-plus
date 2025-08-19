@@ -330,10 +330,6 @@ int showMsgVAPre(void) {
 	return 0;
 }
 
-s32 showMenu(const char *title, u32 entriesCount, const char *captions[]) {
-	return showMenuEx(title, entriesCount, captions, 0, 0);
-}
-
 s32 showMenuEx(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn) {
 	return showMenuEx2(title, entriesCount, captions, descriptions, selectOn, NULL);
 }
@@ -346,6 +342,7 @@ s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], con
 	char buf[LOCAL_TITLE_BUF_SIZE];
 	u32 pos;
 	u32 x = 10, keys = 0;
+	u32 scrollX = x + CHAR_WIDTH * 4;
 	u32 drawStart, drawEnd;
 
 	if (selectOn < entriesCount) {
@@ -362,16 +359,24 @@ s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], con
 		blank();
 		pos = 10;
 		print(title, x, pos, 255, 0, 0);
-		print("http://44670.org/ntr", 10, 220, 0, 0, 255);
+		// print("http://44670.org/ntr", 10, 220, 0, 0, 255);
 		pos += 20;
 		drawStart = (select / MENU_ITEMS_MAX) * MENU_ITEMS_MAX;
 		drawEnd = drawStart + MENU_ITEMS_MAX;
 		if (drawEnd > entriesCount) {
 			drawEnd = entriesCount;
 		}
+		if (drawStart > 0) {
+			print("---", scrollX, pos, 127, 255, 127);
+			pos += MENU_ITEM_HEIGHT;
+		}
 		for (i = drawStart; i < drawEnd; i++) {
-			strnjoin(buf, LOCAL_TITLE_BUF_SIZE, i == (u32)select ? " * " : "   ", captions[i]);
+			strnjoin(buf, LOCAL_TITLE_BUF_SIZE, i == (u32)select ? "* " : "  ", captions[i]);
 			print(buf, x, pos, 0, 0, 0);
+			pos += MENU_ITEM_HEIGHT;
+		}
+		if (drawEnd < entriesCount) {
+			print("---", scrollX, pos, 127, 255, 127);
 			pos += MENU_ITEM_HEIGHT;
 		}
 		if (descriptions) {
