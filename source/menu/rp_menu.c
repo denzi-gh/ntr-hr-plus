@@ -365,7 +365,7 @@ static const char *getScreenName(int screen_index) {
 #define REMOTE_PLAY_ADVMENU_COUNT_MAX (REMOTE_PLAY_ADVMENU_COUNT + (1 + REMOTE_PLAY_ADVMENU_SCREEN_COUNT) * RP_SCREEN_COUNT + 1)
 
 static int remotePlayAdvMenu(RP_CONFIG *config) {
-	u32 select = 0;
+	s32 select = 0;
 
 	while (1) {
 		u32 count = REMOTE_PLAY_ADVMENU_COUNT;
@@ -489,7 +489,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 				screen_select %= screen_config_count;
 
 				if (screen_index >= screen_count) {
-					if (select == REMOTE_PLAY_ADVMENU_BACK) {
+					if (select == (int)REMOTE_PLAY_ADVMENU_BACK) {
 						if (keys == KEY_A) { /* back */
 							if (!config->separateScreenConfig) {
 								for (int i = 1; i < RP_SCREEN_COUNT; ++i) {
@@ -504,7 +504,23 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 					}
 				} else {
 					if (config->separateScreenConfig) {
-						--screen_select;
+						if (screen_select == 0) {
+							if (keys & KEY_DOWN) {
+								select += 1;
+								if (select >= (int)count) {
+									select = 0;
+								}
+							}
+							if (keys & KEY_UP) {
+								select -= 1;
+								if (select < 0) {
+									select = count - 1;
+								}
+							}
+							continue;
+						} else {
+							--screen_select;
+						}
 					}
 					switch (screen_select) {
 						case REMOTE_PLAY_ADVMENU_SCREEN_CHROMASS: { /* chroma subsample */
