@@ -71,6 +71,7 @@ pub struct JpegScreenShared {
 pub struct JpegShared {
     quality: u32,
     chroma_ss: [u8; RP_SCREEN_COUNT as usize],
+    downsample: [u8; RP_SCREEN_COUNT as usize],
     quant_tbls: QuantTbls,
     divisors: Divisors,
     div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
@@ -184,6 +185,7 @@ impl JpegShared {
         delta_prog: bool,
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         self.quality = quality;
         self.quant_tbls
@@ -221,6 +223,7 @@ impl JpegShared {
 
         self.core_count = core_count;
         self.chroma_ss = hq.map(|hq| hq as u8);
+        self.downsample = downsample.map(|downsample| downsample as u8);
         self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(hq, delta_prog)
     }
@@ -2214,9 +2217,12 @@ impl Jpeg {
         quality: u32,
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
         delta_prog: bool,
     ) -> Option<()> {
-        let shared_mut_params = self.shared.init(quality, delta_prog, core_count, hq);
+        let shared_mut_params = self
+            .shared
+            .init(quality, delta_prog, core_count, hq, downsample);
         self.shared_mut.init(delta_prog, shared_mut_params);
 
         for w in WorkIndex::all() {

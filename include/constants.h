@@ -226,5 +226,6 @@ _Static_assert(RP_DATA_SIZE % sizeof(void *) == 0, "Need adjusting packet size f
 
 #define RP_KCP_HDR_QUALITY_NBITS (7)
 #define RP_KCP_HDR_CHROMASS_NBITS (2)
+#define RP_KCP_HDR_DOWNSAMPLE_NBITS (2)
 
 #endif

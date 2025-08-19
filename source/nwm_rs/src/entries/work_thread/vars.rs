@@ -34,7 +34,11 @@ impl Impl {
     }
 }
 
-pub unsafe fn init(quality: u32, chroma_ss: [u32; RP_SCREEN_COUNT as usize]) {
+pub unsafe fn init(
+    quality: u32,
+    chroma_ss: [u32; RP_SCREEN_COUNT as usize],
+    downsample: [u32; RP_SCREEN_COUNT as usize],
+) {
     unsafe {
         LAST_ROW_LAST_N.store(0, Ordering::Release);
         LAST_ENCODED_SCREEN = ScreenIndex::init(0);
@@ -53,6 +57,7 @@ pub unsafe fn init(quality: u32, chroma_ss: [u32; RP_SCREEN_COUNT as usize]) {
         TERM_INFOS = const_default();
         JPEG_QUALITY = quality;
         JPEG_CHROMA_SS = chroma_ss;
+        JPEG_DOWNSAMPLE = downsample;
     }
 }
 
@@ -564,8 +569,10 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
 
     let info = unsafe { TERM_INFOS.get(&w) };
     let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
-    let hdr = (delta_prog as u16)
-        << (RP_KCP_HDR_CHROMASS_NBITS + RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
+    let hdr = (unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) as u16 })
+        << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
+        | (delta_prog as u16)
+            << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS)
         | (unsafe { *is_top_index(info.is_top).index_into(&JPEG_CHROMA_SS) as u16 })
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
         | (is_top_index(info.is_top).get() as u16)
@@ -927,3 +934,4 @@ pub struct TermInfo {
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut JPEG_QUALITY: u32 = const_default();
 static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
+static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
