@@ -613,6 +613,42 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 	}
 }
 
+static int remotePlayMenuConfirm(void) {
+	u32 keys = 0;
+	acquireVideo();
+	while(1) {
+		if (waitKeysOverride & KEY_B)
+			break;
+		blank();
+		print("Remote Play Confirm", 10, 10, 255, 0, 255);
+		print("You made changes to remote play\nsettings. Do you wish to apply them?", 10, 44, 255, 0, 0);
+		print(plgTranslate("[A] Yes  [B] Cancel  [X] No"), 10, 220, 0, 0, 255);
+		updateScreen();
+		keys = waitKeys();
+		if (keys & (KEY_B | KEY_A | KEY_X)) {
+			break;
+		}
+	}
+	releaseVideo();
+
+	return keys & KEY_A ? 1 : keys & KEY_X ? -1 : 0;
+}
+
+static int remotePlayApply(RP_CONFIG *config) {
+	u32 daddr = config->dstAddr;
+	if (daddr == 0) {
+		showMsg("IP address cannot be empty.");
+		return 0;
+	}
+
+	releaseVideo();
+	rpStartupFromMenu(config);
+	tryInitRemotePlay(daddr);
+	acquireVideo();
+
+	return 1;
+}
+
 int remotePlayMenu(u32 localaddr) {
 	if (!ntrConfig->isNew3DS) {
 		showDbg("Remote Play is available on New 3DS only.");
@@ -691,6 +727,24 @@ int remotePlayMenu(u32 localaddr) {
 		select = showMenuEx2(titleCurrent, REMOTE_PLAY_MENU_COUNT, captions, descs, select, &keys);
 
 		if (keys == KEY_B) {
+			if (waitKeysOverride & KEY_B) {
+				return 0;
+			}
+
+			if (memcmp(rpConfig, &config, sizeof(config)) != 0) {
+				int confirm = remotePlayMenuConfirm();
+				if (confirm < 0) {
+					return 0;
+				}
+				if (confirm > 0) {
+					if (!remotePlayApply(&config)) {
+						continue;
+					}
+					return 1;
+				}
+				continue;
+			}
+
 			return 0;
 		}
 
@@ -833,16 +887,8 @@ int remotePlayMenu(u32 localaddr) {
 				break;
 
 			case REMOTE_PLAY_MENU_APPLY: if (keys == KEY_A) { /* apply */
-				u32 daddr = config.dstAddr;
-				if (daddr == 0) {
-					showMsg("IP address cannot be empty.");
+				if (!remotePlayApply(&config))
 					break;
-				}
-
-				releaseVideo();
-				rpStartupFromMenu(&config);
-				tryInitRemotePlay(daddr);
-				acquireVideo();
 
 				return 1;
 			}
