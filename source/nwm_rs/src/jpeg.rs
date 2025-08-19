@@ -66,12 +66,13 @@ pub struct JpegScreenShared {
     pub mcus_per_row: usize,
     mcus: u16,
     delta_q_params: DeltaQParams,
+    downsample: u8,
+    width: u16,
+    height: u16,
 }
 
 pub struct JpegShared {
     quality: u32,
-    chroma_ss: [u8; RP_SCREEN_COUNT as usize],
-    downsample: [u8; RP_SCREEN_COUNT as usize],
     quant_tbls: QuantTbls,
     divisors: Divisors,
     div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
@@ -222,10 +223,8 @@ impl JpegShared {
         }
 
         self.core_count = core_count;
-        self.chroma_ss = hq.map(|hq| hq as u8);
-        self.downsample = downsample.map(|downsample| downsample as u8);
         self.last_restart_range = if delta_prog { 64 } else { 32 };
-        self.set_comp_infos(hq, delta_prog)
+        self.set_comp_infos(hq, downsample, delta_prog)
     }
 
     fn once_delta_q_tbls(&mut self) {
@@ -264,14 +263,21 @@ impl JpegShared {
 
     fn set_comp_infos(
         &mut self,
-        mut hq: [u32; RP_SCREEN_COUNT as usize],
+        hq: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
         delta_prog: bool,
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
 
         for s in ScreenIndex::all() {
             let screen = s.index_into_mut(&mut self.screens);
-            let hq = *s.index_into_mut(&mut hq) as u8;
+            let hq = *s.index_into(&hq) as u8;
+
+            screen.downsample = *s.index_into(&downsample) as u8;
+
+            screen.width = downsample_screen_width(screen.downsample) as u16;
+            screen.height =
+                downsample_screen_height(screen.downsample, s.get() == RP_SCREEN_TOP as u32) as u16;
 
             let comp_infos = if hq == RP_CHROMASS_444 {
                 &self.jpeg_tbls.comp_infos_444
@@ -298,16 +304,9 @@ impl JpegShared {
             }
             screen.mcu_row_size = DCTSIZE * screen.max_h_samp_factor;
             screen.mcu_col_size = DCTSIZE * screen.max_v_samp_factor;
-            screen.mcus_per_row = jdiv_round_up(GSP_SCREEN_WIDTH as usize, screen.mcu_row_size);
-            if s.get() == RP_SCREEN_TOP as u32 {
-                let mcu_rows_top =
-                    jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, screen.mcu_col_size);
-                screen.mcus = (screen.mcus_per_row * mcu_rows_top) as u16;
-            } else {
-                let mcu_rows_bot =
-                    jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, screen.mcu_col_size);
-                screen.mcus = (screen.mcus_per_row * mcu_rows_bot) as u16;
-            }
+            screen.mcus_per_row = jdiv_round_up(screen.width as usize, screen.mcu_row_size);
+            let mcu_rows = jdiv_round_up(screen.height as usize, screen.mcu_col_size);
+            screen.mcus = (screen.mcus_per_row * mcu_rows) as u16;
 
             *s.index_into_mut(&mut ret) = if delta_prog {
                 let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
@@ -631,14 +630,6 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    fn screen_height(&self) -> u32 {
-        if self.worker.info.is_top {
-            GSP_SCREEN_HEIGHT_TOP
-        } else {
-            GSP_SCREEN_HEIGHT_BOTTOM
-        }
-    }
-
     fn write_dht(&mut self, mut index: usize, is_ac: bool) {
         let tbl = if is_ac {
             &self.worker.shared.jpeg_tbls.huff_tbls.ac_huff_tbls[index]
@@ -714,8 +705,10 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         self.write_2bytes((3 * MAX_COMPONENTS + 2 + 5 + 1) as u16); /* length */
 
         self.write_byte(8);
-        self.write_2bytes(self.screen_height() as u16);
-        self.write_2bytes(GSP_SCREEN_WIDTH as u16);
+
+        let s = is_top_index(self.worker.info.is_top).index_into(&self.worker.shared.screens);
+        self.write_2bytes(s.height);
+        self.write_2bytes(s.width);
 
         self.write_byte(MAX_COMPONENTS as u8);
 
@@ -787,9 +780,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         G: FnMut(),
     {
         let bpp = get_bpp_for_format(self.worker.info.color_space);
-        let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let pitch = screen.width as usize * bpp as usize;
         let mcus = screen.mcus;
 
         pre_progress();
@@ -842,10 +835,10 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                     let mut chunks = chunks.iter();
 
                     let chunk0 = chunks.next().unwrap();
-                    self.pre_process(*chunk0, false);
+                    self.pre_process_full(*chunk0, false);
 
                     let chunk1 = chunks.next().unwrap();
-                    self.pre_process(*chunk1, true);
+                    self.pre_process_full(*chunk1, true);
                 } else {
                     return None;
                 }
@@ -866,9 +859,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             }
         } else {
             let pre_process = if hss {
-                Self::pre_process_no_vsubsamp::<true>
+                Self::pre_process_full_no_vsubsamp::<true>
             } else {
-                Self::pre_process_no_vsubsamp::<false>
+                Self::pre_process_full_no_vsubsamp::<false>
             };
 
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
@@ -955,18 +948,41 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         &mut self,
         input: &[&[u8]; S],
         output_base: usize,
+        width: usize,
     ) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        let s = is_top_index(self.worker.info.is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
 
         for ci in 0..MAX_COMPONENTS {
             let color = &mut self.worker.bufs.color[ci];
             if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                color.ptr = &mut color.buf[0][0];
+                unsafe {
+                    match screen.downsample {
+                        // RP_DOWNSAMPLE_CHECKER => {}
+                        // RP_DOWNSAMPLE_EVEN_ODD => {}
+                        RP_DOWNSAMPLE_QUARTER => color.ptr = &mut color.buf.quarter[0][0],
+                        _ => color.ptr = &mut color.buf.full[0][0],
+                    };
+                }
             } else {
                 let output_base = output_base * S as usize;
                 let output_step = S;
-                let output =
-                    &mut self.worker.bufs.prep[ci][output_base..output_base + output_step][0][0];
+                let output = unsafe {
+                    match screen.downsample {
+                        // RP_DOWNSAMPLE_CHECKER => {}
+                        // RP_DOWNSAMPLE_EVEN_ODD => {}
+                        RP_DOWNSAMPLE_QUARTER => {
+                            &mut self.worker.bufs.prep.quarter[ci]
+                                [output_base..output_base + output_step][0][0]
+                        }
+                        _ => {
+                            &mut self.worker.bufs.prep.full[ci]
+                                [output_base..output_base + output_step][0][0]
+                        }
+                    }
+                };
                 color.ptr = output;
             }
         }
@@ -974,33 +990,34 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             ColorSpace::XBGR => cconvert::<3, 2, 1, 4, { S }>(
                 input,
                 &mut self.worker.bufs.color,
+                width,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
                 input,
                 &mut self.worker.bufs.color,
+                width,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::RGB565 => cconvert2::<{ S }, _>(
                 input,
                 rgb565_comps,
                 &mut self.worker.bufs.color,
+                width,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
                 input,
                 rgb5a1_comps,
                 &mut self.worker.bufs.color,
+                width,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB4 => todo!(),
         }
     }
 
-    fn h2v1_downsample(
-        input: &[u8; GSP_SCREEN_WIDTH as usize],
-        output: &mut [u8; GSP_SCREEN_WIDTH as usize],
-    ) {
+    fn h2v1_downsample<const WIDTH: usize>(input: &[u8; WIDTH], output: &mut [u8; WIDTH]) {
         let mut bias = 0;
         for (input, output) in input
             .as_chunks::<{ MAX_SAMP_FACTOR }>()
@@ -1018,9 +1035,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    fn h2v2_downsample(
-        input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR],
-        output: &mut [u8; GSP_SCREEN_WIDTH as usize],
+    fn h2v2_downsample<const WIDTH: usize>(
+        input: &[[u8; WIDTH]; MAX_SAMP_FACTOR],
+        output: &mut [u8; WIDTH],
     ) {
         let [input0, input1] = input;
         let input0 = input0.as_chunks::<{ MAX_SAMP_FACTOR }>().0.iter();
@@ -1038,35 +1055,45 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    pub fn downsample<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
+    pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
         for ci in 0..MAX_COMPONENTS {
             let input = &self.worker.bufs.color[ci];
             if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                if V_SAMP {
-                    let output = &mut self.worker.bufs.prep[ci][output_base];
-                    Self::h2v2_downsample(&input.buf, output);
-                } else {
-                    let output = &mut self.worker.bufs.prep[ci][output_base];
-                    Self::h2v1_downsample(&input.buf[0], output);
+                unsafe {
+                    if V_SAMP {
+                        let output = &mut self.worker.bufs.prep.full[ci][output_base];
+                        Self::h2v2_downsample(&input.buf.full, output);
+                    } else {
+                        let output = &mut self.worker.bufs.prep.full[ci][output_base];
+                        Self::h2v1_downsample(&input.buf.full[0], output);
+                    }
                 }
             }
         }
     }
 
-    fn pre_process(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {
+    fn pre_process_full(&mut self, src: [&[u8]; DCTSIZE], which_half: bool) {
         for (base, chunk) in src.as_chunks::<{ MAX_SAMP_FACTOR }>().0.iter().enumerate() {
             let output_base = if which_half { base + DCTSIZE / 2 } else { base };
-            self.color_convert::<_, true, true>(chunk, output_base);
-            self.downsample::<true, true>(output_base);
+            self.color_convert::<_, true, true>(
+                chunk,
+                output_base,
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            );
+            self.downsample_full::<true, true>(output_base);
         }
     }
 
-    fn pre_process_no_vsubsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
+    fn pre_process_full_no_vsubsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
         for (base, chunk) in src.as_chunks::<1>().0.iter().enumerate() {
-            self.color_convert::<_, H_SAMP, false>(chunk, base);
-            self.downsample::<H_SAMP, false>(base);
+            self.color_convert::<_, H_SAMP, false>(
+                chunk,
+                base,
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            );
+            self.downsample_full::<H_SAMP, false>(base);
         }
     }
 
@@ -1225,7 +1252,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 let qn = if prev_delta_q == DELTA_Q_COUNT - 1 {
                     unsafe {
                         forward_dct::<DELTA_Q, false, false, false>(
-                            &self.worker.bufs.prep[ci],
+                            screen.downsample,
+                            &self.worker.bufs.prep,
+                            ci,
                             &mut cache.cache,
                             ypos as u16,
                             xpos as u16,
@@ -1239,7 +1268,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 } else {
                     unsafe {
                         forward_dct::<DELTA_Q, false, true, false>(
-                            &self.worker.bufs.prep[ci],
+                            screen.downsample,
+                            &self.worker.bufs.prep,
+                            ci,
                             &mut cache.cache,
                             ypos as u16,
                             xpos as u16,
@@ -1631,7 +1662,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                     if !cache_hit {
                         unsafe {
                             forward_dct::<DELTA_Q, true, RESCALE_PREV, RESCALE_PREV_SHR>(
-                                &self.worker.bufs.prep[ci],
+                                screen.downsample,
+                                &self.worker.bufs.prep,
+                                ci,
                                 output,
                                 ypos,
                                 xpos,
@@ -1938,7 +1971,67 @@ unsafe fn forward_dct<
     const RESCALE_PREV: bool,
     const RESCALE_PREV_SHR: bool,
 >(
-    input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+    downsample: u8,
+    input: &WorkerPrepBufDownsample,
+    ci: usize,
+    output: &mut JBlock,
+    ypos: u16,
+    xpos: u16,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    r_pshifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    unsafe {
+        match downsample {
+            // RP_DOWNSAMPLE_CHECKER => {}
+            // RP_DOWNSAMPLE_EVEN_ODD => {}
+            RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
+                DELTA_Q,
+                UPDATE_PREV,
+                RESCALE_PREV,
+                RESCALE_PREV_SHR,
+                { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
+            >(
+                input.quarter.get_unchecked(ci),
+                output,
+                ypos,
+                xpos,
+                div_parts,
+                div_shifts,
+                prev,
+                r_pshifts,
+                next,
+            ),
+            _ => do_forward_dct::<
+                DELTA_Q,
+                UPDATE_PREV,
+                RESCALE_PREV,
+                RESCALE_PREV_SHR,
+                { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
+            >(
+                input.full.get_unchecked(ci),
+                output,
+                ypos,
+                xpos,
+                div_parts,
+                div_shifts,
+                prev,
+                r_pshifts,
+                next,
+            ),
+        }
+    }
+}
+unsafe fn do_forward_dct<
+    const DELTA_Q: bool,
+    const UPDATE_PREV: bool,
+    const RESCALE_PREV: bool,
+    const RESCALE_PREV_SHR: bool,
+    const WIDTH: usize,
+>(
+    input: &[[u8; WIDTH]; MAX_SAMP_FACTOR * DCTSIZE],
     output: &mut JBlock,
     ypos: u16,
     xpos: u16,
@@ -1957,8 +2050,8 @@ unsafe fn forward_dct<
     )
 }
 
-unsafe fn convsamp(
-    input: &[[u8; GSP_SCREEN_WIDTH as usize]; MAX_SAMP_FACTOR * DCTSIZE],
+unsafe fn convsamp<const WIDTH: usize>(
+    input: &[[u8; WIDTH]; MAX_SAMP_FACTOR * DCTSIZE],
     ypos: u16,
     xpos: u16,
     output: &mut JBlock,
@@ -2332,26 +2425,19 @@ fn pconvert(r: u8, g: u8, b: u8, y: &mut u8, cb: &mut u8, cr: &mut u8, ctab: &[i
 fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, const N: usize>(
     input: &[&[u8]; N],
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
+    width: usize,
     tab: &[i32; TABLE_SIZE],
-) where
-    [(); GSP_SCREEN_WIDTH as usize * P]:,
-{
+) {
     let [output0, output1, output2] = output;
-    let output0 = unsafe {
-        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
-    let output1 = unsafe {
-        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
-    let output2 = unsafe {
-        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr as *mut u8, width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr as *mut u8, width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr as *mut u8, width * N) };
     for i in 0..N {
-        let input: &[u8; GSP_SCREEN_WIDTH as usize * P] = input[i].try_into().unwrap();
+        let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * P) };
 
-        let output0 = unsafe { output0.get_unchecked_mut(i) };
-        let output1 = unsafe { output1.get_unchecked_mut(i) };
-        let output2 = unsafe { output2.get_unchecked_mut(i) };
+        let output0 = &mut output0[width * i..width * (i + 1)];
+        let output1 = &mut output1[width * i..width * (i + 1)];
+        let output2 = &mut output2[width * i..width * (i + 1)];
 
         for (((input, output0), output1), output2) in input
             .as_chunks::<P>()
@@ -2374,27 +2460,21 @@ fn cconvert2<const N: usize, F>(
     input: &[&[u8]; N],
     comps: F,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
+    width: usize,
     tab: &ColorConvTabs,
 ) where
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
-    [(); GSP_SCREEN_WIDTH as usize * 2]:,
 {
     let [output0, output1, output2] = output;
-    let output0 = unsafe {
-        slice::from_raw_parts_mut(output0.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
-    let output1 = unsafe {
-        slice::from_raw_parts_mut(output1.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
-    let output2 = unsafe {
-        slice::from_raw_parts_mut(output2.ptr as *mut [u8; GSP_SCREEN_WIDTH as usize], N)
-    };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr as *mut u8, width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr as *mut u8, width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr as *mut u8, width * N) };
     for i in 0..N {
-        let input: &[u8; GSP_SCREEN_WIDTH as usize * 2] = input[i].try_into().unwrap();
+        let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * 2) };
 
-        let output0 = unsafe { output0.get_unchecked_mut(i) };
-        let output1 = unsafe { output1.get_unchecked_mut(i) };
-        let output2 = unsafe { output2.get_unchecked_mut(i) };
+        let output0 = &mut output0[width * i..width * (i + 1)];
+        let output1 = &mut output1[width * i..width * (i + 1)];
+        let output2 = &mut output2[width * i..width * (i + 1)];
 
         for (((input, output0), output1), output2) in input
             .as_chunks::<2>()
