@@ -34,6 +34,15 @@ macro_rules! rp_config_field {
     };
 }
 
+macro_rules! rp_config_screen_field {
+    ($v:ident, $s:ident) => {
+        unsafe {
+            AtomicU32::from_mut(&mut (*config_consts::RP_CONFIG).screens[$s.get() as usize].$v)
+        }
+    };
+}
+
+#[allow(unused)]
 impl RpConfig {
     pub fn core_count(&self) -> &mut AtomicU32 {
         rp_config_field!(coreCount)
@@ -67,8 +76,12 @@ impl RpConfig {
         rp_config_field!(threadPriority)
     }
 
-    pub fn chroma_ss(&self) -> &mut AtomicU32 {
-        rp_config_field!(chromaSs)
+    pub fn separate_screen_config(&self) -> &mut AtomicU32 {
+        rp_config_field!(separateScreenConfig)
+    }
+
+    pub fn chroma_ss(&self, s: ScreenIndex) -> &mut AtomicU32 {
+        rp_config_screen_field!(chromaSs, s)
     }
 }
 

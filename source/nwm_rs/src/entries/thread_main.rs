@@ -209,7 +209,9 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
 
         let jpeg = &mut *jpeg::JPEG;
         let quality = RP_CONFIG.quality().load(Ordering::Acquire);
-        let chroma_ss = RP_CONFIG.chroma_ss().load(Ordering::Acquire);
+        let chroma_ss = RP_CONFIG
+            .chroma_ss(ScreenIndex::init(0))
+            .load(Ordering::Acquire);
         jpeg.init(
             quality,
             core_count,

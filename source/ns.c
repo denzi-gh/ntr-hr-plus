@@ -1,3 +1,4 @@
+#include "constants.h"
 #include "global.h"
 
 #include "3ds/services/soc.h"
@@ -327,7 +328,10 @@ static void nsHandleRemotePlay(void) {
 
 	config.threadPriority = rpConfig->threadPriority;
 	config.coreCount = rpConfig->coreCount;
-	config.chromaSs = rpConfig->chromaSs;
+	config.separateScreenConfig = rpConfig->separateScreenConfig;
+	for (int i = 0; i < RP_SCREEN_COUNT; ++i) {
+		config.screens[i] = rpConfig->screens[i];
+	}
 
 	rpStartupFromMenu(&config);
 }
