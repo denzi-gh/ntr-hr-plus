@@ -3,6 +3,7 @@
 
 #include "3ds/ipc.h"
 #include "3ds/services/hid.h"
+#include "rp.h"
 #include "sys/socket.h"
 #include "netinet/in.h"
 #include "arpa/inet.h"
@@ -373,6 +374,8 @@ static const char *getScreenName(int screen_index) {
 	return "";
 }
 
+const u8 changed_color[3] = { 63, 255, 63 };
+
 // REMOTE_PLAY_ADVMENU_COUNT + (screen name + REMOTE_PLAY_ADVMENU_SCREEN_COUNT) * both screens + REMOTE_PLAY_ADVMENU_BACK
 #define REMOTE_PLAY_ADVMENU_COUNT_MAX (REMOTE_PLAY_ADVMENU_COUNT + (1 + REMOTE_PLAY_ADVMENU_SCREEN_COUNT) * RP_SCREEN_COUNT + 1)
 
@@ -383,19 +386,23 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 		u32 count = REMOTE_PLAY_ADVMENU_COUNT;
 		const char *captions[REMOTE_PLAY_ADVMENU_COUNT_MAX] = { 0 };
 		const char *descs[REMOTE_PLAY_ADVMENU_COUNT_MAX] = { 0 };
+		const u8 (*colors[REMOTE_PLAY_ADVMENU_COUNT_MAX])[3] = { 0 };
 
 		char coreCountCaption[LOCAL_OPT_TEXT_BUF_SIZE];
 		xsnprintf(coreCountCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Number of Encoding Cores: %"PRId32, config->coreCount);
 		captions[REMOTE_PLAY_ADVMENU_CORE_COUNT] = coreCountCaption;
+		colors[REMOTE_PLAY_ADVMENU_CORE_COUNT] = config->coreCount != rpConfig->coreCount ? &changed_color : 0;
 
 		char encoderPriorityCaption[LOCAL_OPT_TEXT_BUF_SIZE];
 		xsnprintf(encoderPriorityCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Encoder Priority: %"PRId32, config->threadPriority);
 		captions[REMOTE_PLAY_ADVMENU_THREAD_PRIORITY] = encoderPriorityCaption;
 		descs[REMOTE_PLAY_ADVMENU_THREAD_PRIORITY] = "Higher value means lower priority.\nLower priority means less game/audio\nstutter possibly.";
+		colors[REMOTE_PLAY_ADVMENU_THREAD_PRIORITY] = config->threadPriority != rpConfig->threadPriority ? &changed_color : 0;
 
 		char separateScreenConfigCaption[LOCAL_OPT_TEXT_BUF_SIZE];
 		xsnprintf(separateScreenConfigCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Per Screens Options: %s", config->separateScreenConfig ? "On" : "Off");
 		captions[REMOTE_PLAY_ADVMENU_SEPARATE_SCREEN_CONFIG] = separateScreenConfigCaption;
+		colors[REMOTE_PLAY_ADVMENU_SEPARATE_SCREEN_CONFIG] = config->separateScreenConfig != rpConfig->separateScreenConfig ? &changed_color : 0;
 
 		char chromaSSCaption[RP_SCREEN_COUNT][LOCAL_OPT_TEXT_BUF_SIZE] = { 0 };
 		char downsampleCaption[RP_SCREEN_COUNT][LOCAL_OPT_TEXT_BUF_SIZE] = { 0 };
@@ -415,17 +422,21 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 			xsnprintf(chromaSSCaption[i], LOCAL_OPT_TEXT_BUF_SIZE, "Chroma Subsampling: %s", getChromaSSName(config->screens[i].chromaSs));
 			captions[count + REMOTE_PLAY_ADVMENU_SCREEN_CHROMASS] = chromaSSCaption[i];
 			descs[count + REMOTE_PLAY_ADVMENU_SCREEN_CHROMASS] = getChromaSSDesc(config->screens[i].chromaSs);
+			colors[count + REMOTE_PLAY_ADVMENU_SCREEN_CHROMASS] = config->screens[i].chromaSs != rpConfig->screens[i].chromaSs ? &changed_color : 0;
 
-			xsnprintf(downsampleCaption[i], LOCAL_OPT_TEXT_BUF_SIZE, "Downsample: %s", getDownsampleName(config->screens[i].downSample));
+			xsnprintf(downsampleCaption[i], LOCAL_OPT_TEXT_BUF_SIZE, "Downsample: %s", getDownsampleName(config->screens[i].downsample));
 			captions[count + REMOTE_PLAY_ADVMENU_SCREEN_DOWNSAMPLE] = downsampleCaption[i];
-			descs[count + REMOTE_PLAY_ADVMENU_SCREEN_DOWNSAMPLE] = getDownsampleDesc(config->screens[i].downSample);
+			descs[count + REMOTE_PLAY_ADVMENU_SCREEN_DOWNSAMPLE] = getDownsampleDesc(config->screens[i].downsample);
+			colors[count + REMOTE_PLAY_ADVMENU_SCREEN_DOWNSAMPLE] = config->screens[i].downsample != rpConfig->screens[i].downsample ? &changed_color : 0;
 
 			xsnprintf(fpsLimitCaption[i], LOCAL_OPT_TEXT_BUF_SIZE, "Max FPS: %s", getFpsLimitName(config->screens[i].fpsLimit));
 			captions[count + REMOTE_PLAY_ADVMENU_SCREEN_FPS_LIMIT] = fpsLimitCaption[i];
+			colors[count + REMOTE_PLAY_ADVMENU_SCREEN_FPS_LIMIT] = config->screens[i].fpsLimit != rpConfig->screens[i].fpsLimit ? &changed_color : 0;
 
 			xsnprintf(noSkipFrameCaption[i], LOCAL_OPT_TEXT_BUF_SIZE, "No Skip Frame: %s", getNoSkipFrameName(config->screens[i].noSkipFrame));
 			captions[count + REMOTE_PLAY_ADVMENU_SCREEN_NO_SKIP_FRAME] = noSkipFrameCaption[i];
 			descs[count + REMOTE_PLAY_ADVMENU_SCREEN_NO_SKIP_FRAME] = getNoSkipFrameDesc();
+			colors[count + REMOTE_PLAY_ADVMENU_SCREEN_NO_SKIP_FRAME] = config->screens[i].noSkipFrame != rpConfig->screens[i].noSkipFrame ? &changed_color : 0;
 
 			count += REMOTE_PLAY_ADVMENU_SCREEN_COUNT;
 		}
@@ -436,7 +447,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 		captions[REMOTE_PLAY_ADVMENU_BACK] = "Back";
 
 		u32 keys;
-		select = showMenuEx2("Remote Play (Advanced Options)", count, captions, descs, select, &keys);
+		select = showMenuEx3("Remote Play (Advanced Options)", count, captions, descs, select, &keys, colors);
 
 		if (keys == KEY_B) {
 			return 0;
@@ -506,7 +517,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 							if (!config->separateScreenConfig) {
 								for (int i = 1; i < RP_SCREEN_COUNT; ++i) {
 									config->screens[i].chromaSs = CLAMP(config->screens[0].chromaSs, RP_CHROMASS_MIN, RP_CHROMASS_MAX);
-									config->screens[i].downSample = CLAMP(config->screens[0].downSample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
+									config->screens[i].downsample = CLAMP(config->screens[0].downsample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
 									config->screens[i].fpsLimit = CLAMP(config->screens[0].fpsLimit, RP_FPS_LIMIT_MIN, RP_FPS_LIMIT_MAX);
 									config->screens[i].noSkipFrame = CLAMP(config->screens[0].noSkipFrame, false, true);
 								}
@@ -554,18 +565,18 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 						}
 
 						case REMOTE_PLAY_ADVMENU_SCREEN_DOWNSAMPLE: { /* downsample */
-							int downSample = config->screens[screen_index].downSample;
+							int downsample = config->screens[screen_index].downsample;
 							if (keys == KEY_X)
-								downSample = rpConfig->screens[screen_index].downSample;
+								downsample = rpConfig->screens[screen_index].downsample;
 							else
-								menu_adjust_value_with_key(&downSample, keys, 1, 1);
+								menu_adjust_value_with_key(&downsample, keys, 1, 1);
 
-							downSample = CWRAP(downSample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
+							downsample = CWRAP(downsample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
 
-							if (downSample != (int)config->screens[screen_index].downSample) {
-								config->screens[screen_index].downSample = downSample;
+							if (downsample != (int)config->screens[screen_index].downsample) {
+								config->screens[screen_index].downsample = downsample;
 								if (!config->separateScreenConfig) {
-									config->screens[getOtherScreenIndex(screen_index)].downSample = downSample;
+									config->screens[getOtherScreenIndex(screen_index)].downsample = downsample;
 								}
 							}
 							break;
@@ -723,8 +734,18 @@ int remotePlayMenu(u32 localaddr) {
 		descs[REMOTE_PLAY_MENU_PRIORITY_FACTOR] = "0: Priority screen only.";
 		descs[REMOTE_PLAY_MENU_RELIABLE_STREAM] = getReliableStreamDesc(reliableStream);
 
+		const u8 (*colors[REMOTE_PLAY_MENU_COUNT])[3] = { 0 };
+		colors[REMOTE_PLAY_MENU_PRIORITY_SCREEN] = !!(config.mode & 0xff00) != !!(rpConfig->mode & 0xff00) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_PRIORITY_FACTOR] = (config.mode & 0xff) != (rpConfig->mode & 0xff) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_QUALITY] = config.quality != rpConfig->quality ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_QOS] = config.qos != rpConfig->qos ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_VIEWER_IP] = config.dstAddr != rpConfig->dstAddr ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_VIEWER_PORT] = (config.dstPort & 0xffff) != (rpConfig->dstPort & 0xffff) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_RELIABLE_STREAM] = (config.dstPort & 0xffff0000) != (rpConfig->dstPort & 0xffff0000) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_ADV] = memcmp(RP_CONFIG_ADV_CFG(&config), RP_CONFIG_ADV_CFG(rpConfig), RP_CONFIG_ADV_CFG_SIZE) != 0 ? &changed_color : 0;
+
 		u32 keys;
-		select = showMenuEx2(titleCurrent, REMOTE_PLAY_MENU_COUNT, captions, descs, select, &keys);
+		select = showMenuEx3(titleCurrent, REMOTE_PLAY_MENU_COUNT, captions, descs, select, &keys, colors);
 
 		if (keys == KEY_B) {
 			if (waitKeysOverride & KEY_B) {
@@ -967,7 +988,7 @@ static void rpClampParamsInMenu(RP_CONFIG *config) {
 
 	for (int i = 0; i < RP_SCREEN_COUNT; ++i) {
 		config->screens[i].chromaSs = CLAMP(config->screens[i].chromaSs, RP_CHROMASS_MIN, RP_CHROMASS_MAX);
-		config->screens[i].downSample = CLAMP(config->screens[i].downSample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
+		config->screens[i].downsample = CLAMP(config->screens[i].downsample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
 		config->screens[i].fpsLimit = CLAMP(config->screens[i].fpsLimit, RP_FPS_LIMIT_MIN, RP_FPS_LIMIT_MAX);
 		config->screens[i].noSkipFrame = CLAMP(config->screens[i].noSkipFrame, false, true);
 	}
@@ -975,7 +996,7 @@ static void rpClampParamsInMenu(RP_CONFIG *config) {
 	if (!config->separateScreenConfig) {
 		for (int i = 1; i < RP_SCREEN_COUNT; ++i) {
 			config->screens[i].chromaSs = CLAMP(config->screens[0].chromaSs, RP_CHROMASS_MIN, RP_CHROMASS_MAX);
-			config->screens[i].downSample = CLAMP(config->screens[0].downSample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
+			config->screens[i].downsample = CLAMP(config->screens[0].downsample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
 			config->screens[i].fpsLimit = CLAMP(config->screens[0].fpsLimit, RP_FPS_LIMIT_MIN, RP_FPS_LIMIT_MAX);
 			config->screens[i].noSkipFrame = CLAMP(config->screens[0].noSkipFrame, false, true);
 		}

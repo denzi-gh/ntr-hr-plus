@@ -85,7 +85,7 @@ impl RpConfig {
     }
 
     pub fn downsample(&self, s: ScreenIndex) -> &mut AtomicU32 {
-        rp_config_screen_field!(downSample, s)
+        rp_config_screen_field!(downsample, s)
     }
 
     pub fn fps_limit(&self, s: ScreenIndex) -> &mut AtomicU32 {

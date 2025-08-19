@@ -334,9 +334,13 @@ s32 showMenuEx(const char *title, u32 entriesCount, const char *captions[], cons
 	return showMenuEx2(title, entriesCount, captions, descriptions, selectOn, NULL);
 }
 
+s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn, u32 *keysPressed) {
+	return showMenuEx3(title, entriesCount, captions, descriptions, selectOn, keysPressed, NULL);
+}
+
 #define MENU_ITEMS_MAX (10)
 #define MENU_ITEM_HEIGHT (CHAR_HEIGHT + 1)
-s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn, u32 *keysPressed) {
+s32 showMenuEx3(const char *title, u32 entriesCount, const char *captions[], const char *descriptions[], u32 selectOn, u32 *keysPressed, const u8 (*colors[])[3]) {
 	u32 i;
 	int select = 0;
 	char buf[LOCAL_TITLE_BUF_SIZE];
@@ -372,7 +376,10 @@ s32 showMenuEx2(const char *title, u32 entriesCount, const char *captions[], con
 		}
 		for (i = drawStart; i < drawEnd; i++) {
 			strnjoin(buf, LOCAL_TITLE_BUF_SIZE, i == (u32)select ? "* " : "  ", captions[i]);
-			print(buf, x, pos, 0, 0, 0);
+			if (colors && colors[i])
+				print(buf, x, pos, (*colors[i])[0], (*colors[i])[1], (*colors[i])[2]);
+			else
+				print(buf, x, pos, 0, 0, 0);
 			pos += MENU_ITEM_HEIGHT;
 		}
 		if (drawEnd < entriesCount) {
