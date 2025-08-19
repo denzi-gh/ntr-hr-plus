@@ -83,6 +83,18 @@ impl RpConfig {
     pub fn chroma_ss(&self, s: ScreenIndex) -> &mut AtomicU32 {
         rp_config_screen_field!(chromaSs, s)
     }
+
+    pub fn downsample(&self, s: ScreenIndex) -> &mut AtomicU32 {
+        rp_config_screen_field!(downSample, s)
+    }
+
+    pub fn fps_limit(&self, s: ScreenIndex) -> &mut AtomicU32 {
+        rp_config_screen_field!(fpsLimit, s)
+    }
+
+    pub fn no_skip_frame(&self, s: ScreenIndex) -> &mut AtomicU32 {
+        rp_config_screen_field!(noSkipFrame, s)
+    }
 }
 
 pub const THREAD_WAIT_NS: DurationNs = DurationNs::init(NWM_THREAD_WAIT_NS as s64);

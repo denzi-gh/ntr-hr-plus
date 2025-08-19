@@ -320,6 +320,18 @@ static const char *getFpsLimitName(int i) {
 		default:
 		case RP_FPS_LIMIT_NONE:
 			return "60";
+		case RP_FPS_LIMIT_1:
+			return "1";
+		case RP_FPS_LIMIT_2:
+			return "2";
+		case RP_FPS_LIMIT_3:
+			return "3";
+		case RP_FPS_LIMIT_4:
+			return "4";
+		case RP_FPS_LIMIT_5:
+			return "5";
+		case RP_FPS_LIMIT_6:
+			return "6";
 		case RP_FPS_LIMIT_10:
 			return "10";
 		case RP_FPS_LIMIT_12:

@@ -134,6 +134,40 @@ impl WorkSync {
         let last_timing = unsafe { *LAST_FRAME_TIMINGS.get(&is_top_index) };
         let frame_time = timing.get() as u32 - last_timing;
 
+        let fps_limit = RP_CONFIG.fps_limit(is_top_index).load(Ordering::Acquire);
+        if fps_limit > 0 {
+            let fps_limit = match fps_limit as u8 {
+                RP_FPS_LIMIT_1 => 1,
+                RP_FPS_LIMIT_2 => 2,
+                RP_FPS_LIMIT_3 => 3,
+                RP_FPS_LIMIT_4 => 4,
+                RP_FPS_LIMIT_5 => 5,
+                RP_FPS_LIMIT_6 => 6,
+                RP_FPS_LIMIT_10 => 10,
+                RP_FPS_LIMIT_12 => 12,
+                RP_FPS_LIMIT_15 => 15,
+                RP_FPS_LIMIT_20 => 20,
+                RP_FPS_LIMIT_30 => 30,
+                _ => 60,
+            };
+            let frame_time_limit = SYSCLOCK_ARM11 / fps_limit;
+            let frame_time_limit = frame_time_limit - frame_time_limit / 10; // tol
+            let prev_frame_time = get_frame_time(is_top_index).load(Ordering::Acquire);
+            let curr_frame_time =
+                (prev_frame_time + frame_time * (FRAME_TIME_FACTOR - 1)) / FRAME_TIME_FACTOR;
+            if curr_frame_time < frame_time_limit {
+                return Err(WorkSkipFrame(self.0));
+            }
+        };
+
+        if RP_CONFIG
+            .no_skip_frame(is_top_index)
+            .load(Ordering::Acquire)
+            > 0
+        {
+            return Ok(WorkFrame(self.0, timing.get() as u32, frame_time));
+        }
+
         if frame_time >= entries::thread_screen::frame_timing_allowance() {
             entries::thread_screen::set_no_skip_frame(is_top);
         }
