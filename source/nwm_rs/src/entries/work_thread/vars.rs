@@ -34,7 +34,7 @@ impl Impl {
     }
 }
 
-pub unsafe fn init(quality: u32, chroma_ss: u32) {
+pub unsafe fn init(quality: u32, chroma_ss: [u32; RP_SCREEN_COUNT as usize]) {
     unsafe {
         LAST_ROW_LAST_N.store(0, Ordering::Release);
         LAST_ENCODED_SCREEN = ScreenIndex::init(0);
@@ -267,9 +267,10 @@ impl WorkFrame {
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
         let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+        let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
-        let mcu_size = jpeg_shared.mcu_col_size as u32;
-        let mcus_per_row = jpeg_shared.mcus_per_row as u32;
+        let mcu_size = jpeg_screen.mcu_col_size as u32;
+        let mcus_per_row = jpeg_screen.mcus_per_row as u32;
         let mcu_rows = unsafe { core::intrinsics::unchecked_div(bctx.height(), mcu_size) };
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
@@ -531,7 +532,8 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
     let hdr = (delta_prog as u16)
         << (RP_KCP_HDR_CHROMASS_NBITS + RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
-        | (unsafe { JPEG_CHROMA_SS as u16 }) << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
+        | (unsafe { *is_top_index(info.is_top).index_into(&JPEG_CHROMA_SS) as u16 })
+            << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
         | (is_top_index(info.is_top).get() as u16)
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
         | (info.core_count.get() as u16) << RP_KCP_HDR_QUALITY_NBITS
@@ -727,7 +729,11 @@ impl WorkAcquire {
         let i_count = *bctx.i_count.get(&t);
         let pitch = bctx.pitch();
 
-        let mcu_size = unsafe { jpeg::get_jpeg_shared().mcu_col_size };
+        let mcu_size = unsafe {
+            is_top_index(bctx.is_top)
+                .index_into(&jpeg::get_jpeg_shared().screens)
+                .mcu_col_size
+        };
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
         let i_count_half = j_max_half_factor(i_count as u32) as usize;
@@ -886,4 +892,4 @@ pub struct TermInfo {
 
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut JPEG_QUALITY: u32 = const_default();
-static mut JPEG_CHROMA_SS: u32 = const_default();
+static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();

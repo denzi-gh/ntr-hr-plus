@@ -120,6 +120,13 @@ where
     {
         unsafe { t.get_unchecked_mut(self.i as usize) }
     }
+
+    pub fn index_into<'a, T, const N: usize>(&self, t: &'a [T; N]) -> &'a T
+    where
+        [(); ((NE as usize) < N) as usize - 1]:,
+    {
+        unsafe { t.get_unchecked(self.i as usize) }
+    }
 }
 
 pub type Ranged<const N: u32> = IRanged<0, { N - 1 }>;

@@ -56,14 +56,7 @@ struct DeltaQParams {
     m: f32,
 }
 
-pub struct JpegShared {
-    quality: u32,
-    chroma_ss: u8,
-    quant_tbls: QuantTbls,
-    divisors: Divisors,
-    div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
-    div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
-    core_count: CoreCount,
+pub struct JpegScreenShared {
     comp_infos: *const CompInfos,
     max_h_samp_factor: usize,
     max_v_samp_factor: usize,
@@ -71,8 +64,19 @@ pub struct JpegShared {
     mcu_row_size: usize,
     pub mcu_col_size: usize,
     pub mcus_per_row: usize,
-    mcus_top: u16,
-    mcus_bot: u16,
+    mcus: u16,
+    delta_q_params: DeltaQParams,
+}
+
+pub struct JpegShared {
+    quality: u32,
+    chroma_ss: [u8; RP_SCREEN_COUNT as usize],
+    quant_tbls: QuantTbls,
+    divisors: Divisors,
+    div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
+    core_count: CoreCount,
+    pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
     pub last_restart_range: u32,
     qos_adj: f32,
     jpeg_tbls: JpegTbls,
@@ -80,7 +84,6 @@ pub struct JpegShared {
     delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     work_sem: RangedArray<Handle, WORK_COUNT>,
     screen_sem: RangedArray<Handle, SCREEN_COUNT>,
-    delta_q_params: DeltaQParams,
 }
 
 const DELTA_Q_CACHE_COUNTS: [u8; MAX_COMPONENTS] = [10, 5, 5];
@@ -144,7 +147,7 @@ impl JpegSharedMut {
         self.rand32 = Rand32::new(get_system_tick().get() as u64);
     }
 
-    fn init(&mut self, delta_prog: bool, max_blocks_in_mcu: usize, q_steps: f32) {
+    fn init(&mut self, delta_prog: bool, params: [(usize, f32); RP_SCREEN_COUNT as usize]) {
         if delta_prog {
             self.compressed_size = const_default();
             for s in ScreenIndex::all() {
@@ -156,6 +159,7 @@ impl JpegSharedMut {
 
         if delta_prog {
             for i in 0..SCREEN_COUNT as usize {
+                let (max_blocks_in_mcu, q_steps) = params[i];
                 for j in 0..RP_DELTA_Q_COEFS_COUNT as usize {
                     self.delta_q_calc[i].f[j].m = q_steps;
                     self.delta_q_calc[i].f[j].p = q_steps * q_steps;
@@ -179,8 +183,8 @@ impl JpegShared {
         quality: u32,
         delta_prog: bool,
         core_count: CoreCount,
-        hq: u32,
-    ) -> (usize, f32) {
+        hq: [u32; RP_SCREEN_COUNT as usize],
+    ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         self.quality = quality;
         self.quant_tbls
             .set_quality(if delta_prog { 100 } else { self.quality });
@@ -216,7 +220,8 @@ impl JpegShared {
         }
 
         self.core_count = core_count;
-        self.chroma_ss = hq as u8;
+        self.chroma_ss = hq.map(|hq| hq as u8);
+        self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(hq, delta_prog)
     }
 
@@ -254,73 +259,91 @@ impl JpegShared {
         self.once_delta_q_tbls();
     }
 
-    fn set_comp_infos(&mut self, hq: u32, delta_prog: bool) -> (usize, f32) {
-        let comp_infos = if hq as u8 == RP_CHROMASS_444 {
-            &self.jpeg_tbls.comp_infos_444
-        } else if hq as u8 == RP_CHROMASS_422 {
-            &self.jpeg_tbls.comp_infos_422
-        } else {
-            &self.jpeg_tbls.comp_infos_420
-        };
-        self.comp_infos = comp_infos;
-        self.max_h_samp_factor = 1;
-        self.max_v_samp_factor = 1;
-        self.max_blocks_in_mcu = 0;
-        for i in 0..MAX_COMPONENTS {
-            let info = &comp_infos.infos[i];
-            self.max_h_samp_factor = cmp::max(self.max_h_samp_factor, info.h_samp_factor as usize);
-            self.max_v_samp_factor = cmp::max(self.max_v_samp_factor, info.v_samp_factor as usize);
-            self.max_blocks_in_mcu += info.h_samp_factor as usize * info.v_samp_factor as usize;
-        }
-        if self.max_blocks_in_mcu > MAX_BLOCKS_IN_MCU {
-            panic!();
-        }
-        self.mcu_row_size = DCTSIZE * self.max_h_samp_factor;
-        self.mcu_col_size = DCTSIZE * self.max_v_samp_factor;
-        self.mcus_per_row = jdiv_round_up(GSP_SCREEN_WIDTH as usize, self.mcu_row_size);
-        let mcu_rows_top = jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, self.mcu_col_size);
-        self.mcus_top = (self.mcus_per_row * mcu_rows_top) as u16;
-        let mcu_rows_bot = jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, self.mcu_col_size);
-        self.mcus_bot = (self.mcus_per_row * mcu_rows_bot) as u16;
+    fn set_comp_infos(
+        &mut self,
+        mut hq: [u32; RP_SCREEN_COUNT as usize],
+        delta_prog: bool,
+    ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
+        let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
 
-        self.last_restart_range = if delta_prog { 64 } else { 32 };
+        for s in ScreenIndex::all() {
+            let screen = s.index_into_mut(&mut self.screens);
+            let hq = *s.index_into_mut(&mut hq) as u8;
 
-        if delta_prog {
-            let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
-            for ci in 0..MAX_COMPONENTS {
-                let comp = &comp_infos.infos[ci];
-                let mcu_we = comp.h_samp_exp;
-                let mcu_he = comp.v_samp_exp;
-
-                qf[comp.quant_tbl_no as usize] += 1 << mcu_we + mcu_he;
+            let comp_infos = if hq == RP_CHROMASS_444 {
+                &self.jpeg_tbls.comp_infos_444
+            } else if hq == RP_CHROMASS_422 {
+                &self.jpeg_tbls.comp_infos_422
+            } else {
+                &self.jpeg_tbls.comp_infos_420
+            };
+            screen.comp_infos = comp_infos;
+            screen.max_h_samp_factor = 1;
+            screen.max_v_samp_factor = 1;
+            screen.max_blocks_in_mcu = 0;
+            for i in 0..MAX_COMPONENTS {
+                let info = &comp_infos.infos[i];
+                screen.max_h_samp_factor =
+                    cmp::max(screen.max_h_samp_factor, info.h_samp_factor as usize);
+                screen.max_v_samp_factor =
+                    cmp::max(screen.max_v_samp_factor, info.v_samp_factor as usize);
+                screen.max_blocks_in_mcu +=
+                    info.h_samp_factor as usize * info.v_samp_factor as usize;
             }
-            const QF_F: [f32; NUM_QUANT_TBLS] = [1.25f32, 2f32 / 3f32];
-            let qf = {
-                let mut ret: [f32; NUM_QUANT_TBLS] = const_default();
-                for i in 0..NUM_QUANT_TBLS {
-                    ret[i] = qf[i] as f32 * QF_F[i];
-                }
-                ret
-            };
-            self.delta_q_params.qf = qf;
-            let qt = {
-                let mut qt = 0f32;
-                for i in 0..NUM_QUANT_TBLS {
-                    qt += self.delta_q_params.qf[i];
-                }
-                qt
-            };
-            let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
-            let q_steps = q_step.0 + q_step.1;
-            let q_steps_i = 1f32 / q_steps;
-            self.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
+            if screen.max_blocks_in_mcu > MAX_BLOCKS_IN_MCU {
+                panic!();
+            }
+            screen.mcu_row_size = DCTSIZE * screen.max_h_samp_factor;
+            screen.mcu_col_size = DCTSIZE * screen.max_v_samp_factor;
+            screen.mcus_per_row = jdiv_round_up(GSP_SCREEN_WIDTH as usize, screen.mcu_row_size);
+            if s.get() == RP_SCREEN_TOP as u32 {
+                let mcu_rows_top =
+                    jdiv_round_up(GSP_SCREEN_HEIGHT_TOP as usize, screen.mcu_col_size);
+                screen.mcus = (screen.mcus_per_row * mcu_rows_top) as u16;
+            } else {
+                let mcu_rows_bot =
+                    jdiv_round_up(GSP_SCREEN_HEIGHT_BOTTOM as usize, screen.mcu_col_size);
+                screen.mcus = (screen.mcus_per_row * mcu_rows_bot) as u16;
+            }
 
-            self.delta_q_params.m = (MIN_DCT_COMP_SIZE * self.max_blocks_in_mcu) as f32;
+            *s.index_into_mut(&mut ret) = if delta_prog {
+                let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
+                for ci in 0..MAX_COMPONENTS {
+                    let comp = &comp_infos.infos[ci];
+                    let mcu_we = comp.h_samp_exp;
+                    let mcu_he = comp.v_samp_exp;
 
-            (self.max_blocks_in_mcu, q_steps)
-        } else {
-            (0, 0f32)
+                    qf[comp.quant_tbl_no as usize] += 1 << mcu_we + mcu_he;
+                }
+                const QF_F: [f32; NUM_QUANT_TBLS] = [1.25f32, 2f32 / 3f32];
+                let qf = {
+                    let mut ret: [f32; NUM_QUANT_TBLS] = const_default();
+                    for i in 0..NUM_QUANT_TBLS {
+                        ret[i] = qf[i] as f32 * QF_F[i];
+                    }
+                    ret
+                };
+                screen.delta_q_params.qf = qf;
+                let qt = {
+                    let mut qt = 0f32;
+                    for i in 0..NUM_QUANT_TBLS {
+                        qt += screen.delta_q_params.qf[i];
+                    }
+                    qt
+                };
+                let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
+                let q_steps = q_step.0 + q_step.1;
+                let q_steps_i = 1f32 / q_steps;
+                screen.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
+
+                screen.delta_q_params.m = (MIN_DCT_COMP_SIZE * screen.max_blocks_in_mcu) as f32;
+
+                (screen.max_blocks_in_mcu, q_steps)
+            } else {
+                (0, 0f32)
+            }
         }
+        ret
     }
 }
 
@@ -655,7 +678,12 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         self.write_byte(MAX_COMPONENTS as u8);
 
-        let infos = unsafe { &(*self.worker.shared.comp_infos).infos };
+        let infos = unsafe {
+            &(*is_top_index(self.worker.info.is_top)
+                .index_into(&self.worker.shared.screens)
+                .comp_infos)
+                .infos
+        };
         for i in 0..MAX_COMPONENTS {
             let comp = &infos[i];
             self.write_byte(comp.component_id);
@@ -688,7 +716,12 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         self.write_byte(MAX_COMPONENTS as u8);
 
-        for info in unsafe { &(*self.worker.shared.comp_infos).infos } {
+        for info in unsafe {
+            &(*is_top_index(self.worker.info.is_top)
+                .index_into(&self.worker.shared.screens)
+                .comp_infos)
+                .infos
+        } {
             self.write_byte(info.component_id);
             self.write_byte((info.h_samp_factor << 4) + info.v_samp_factor);
             self.write_byte(info.quant_tbl_no);
@@ -753,11 +786,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let bpp = get_bpp_for_format(self.worker.info.color_space);
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
         let is_top = self.worker.info.is_top;
-        let mcus = if is_top {
-            self.worker.shared.mcus_top
-        } else {
-            self.worker.shared.mcus_bot
-        };
+        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let mcus = screen.mcus;
 
         pre_progress();
 
@@ -788,7 +818,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 } as *mut JBlock)
                     .add(
                         self.worker.info.restart_interval as usize
-                            * self.worker.shared.max_blocks_in_mcu
+                            * screen.max_blocks_in_mcu
                             * self.worker.thread_index.get() as usize,
                     )
             } else {
@@ -796,8 +826,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             }
         };
 
-        let hss = self.worker.shared.max_h_samp_factor == MAX_SAMP_FACTOR;
-        let vss = self.worker.shared.max_v_samp_factor == MAX_SAMP_FACTOR;
+        let hss = screen.max_h_samp_factor == MAX_SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == MAX_SAMP_FACTOR;
 
         if vss {
             let src_chunks = src
@@ -822,12 +852,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 /* Compress and encode */
                 self.process(
                     if DELTA_Q {
-                        unsafe {
-                            prev.add(
-                                i * self.worker.shared.mcus_per_row
-                                    * self.worker.shared.max_blocks_in_mcu,
-                            )
-                        }
+                        unsafe { prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu) }
                     } else {
                         ptr::null_mut()
                     },
@@ -852,12 +877,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 /* Compress and encode */
                 self.process(
                     if DELTA_Q {
-                        unsafe {
-                            prev.add(
-                                i * self.worker.shared.mcus_per_row
-                                    * self.worker.shared.max_blocks_in_mcu,
-                            )
-                        }
+                        unsafe { prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu) }
                     } else {
                         ptr::null_mut()
                     },
@@ -1050,7 +1070,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     #[named]
     fn process(&mut self, prev: *mut JBlock, row_i: u8) {
         let mut delta_cache = false;
-        for mcu_col_num in 0..self.worker.shared.mcus_per_row {
+        let is_top = self.worker.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        for mcu_col_num in 0..screen.mcus_per_row {
             if DELTA_Q {
                 let s = is_top_index(self.worker.info.is_top);
                 let w = self.worker.info.work_index;
@@ -1112,7 +1134,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 }
 
                 let dq_rescale_prev = *shared_mut.dq_rescale_prev.get(&w);
-                let prev = unsafe { prev.add(mcu_col_num * self.worker.shared.max_blocks_in_mcu) };
+                let prev = unsafe { prev.add(mcu_col_num * screen.max_blocks_in_mcu) };
 
                 if dq_rescale_prev > 0 {
                     self.compress_dq::<true, false>(delta_cache, mcu_col_num, prev);
@@ -1134,6 +1156,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let need_ov_stats = unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats > 0 };
 
         let s = is_top_index(self.worker.info.is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
         let w = self.worker.info.work_index;
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
@@ -1161,16 +1184,13 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
             let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
-            let comp = unsafe { &(*self.worker.shared.comp_infos).infos[ci] };
+            let comp = unsafe { &(*screen.comp_infos).infos[ci] };
             let qni = comp.quant_tbl_no;
             let mcu_we = comp.h_samp_exp;
             let mcu_he = comp.v_samp_exp;
 
             dq_cache_gen_unique_indices(rand32, &mut indices, DELTA_Q_CACHE_COUNTS[ci], unsafe {
-                core::intrinsics::unchecked_shl(
-                    self.worker.shared.mcus_per_row as u8,
-                    mcu_we + mcu_he,
-                )
+                core::intrinsics::unchecked_shl(screen.mcus_per_row as u8, mcu_we + mcu_he)
             });
 
             for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
@@ -1195,9 +1215,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                 let prev = unsafe {
                     prev.add(
-                        mcu_i as usize * self.worker.shared.max_blocks_in_mcu
-                            + mcu_r as usize
-                            + blkn_start,
+                        mcu_i as usize * screen.max_blocks_in_mcu + mcu_r as usize + blkn_start,
                     )
                 };
 
@@ -1246,6 +1264,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         const TARGET_FRAME_RATE: u32 = 60;
         let s_1 = is_top_index(!self.worker.info.is_top);
+        let screen_1 = s_1.index_into(&self.worker.shared.screens);
 
         let frame_time = entries::work_thread::get_frame_time(s)
             .load(Ordering::Acquire)
@@ -1260,12 +1279,12 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 SYSCLOCK_ARM11 as f32 / frame_time as f32,
             )
         };
+        let frame_rate_clamp_max = |frame_rate: f32, _s: ScreenIndex| frame_rate.max(1f32);
 
         let frame_rate = frame_rate_get_clamp_min(frame_time);
-        let frame_rate_clamp_max = |frame_rate: f32, _s: ScreenIndex| frame_rate.max(1f32);
         let frame_rate = frame_rate_clamp_max(frame_rate, s);
         let frame_rate_1 = frame_rate_get_clamp_min(frame_time_1);
-        let frame_rate_f = 1f32 / (frame_rate + frame_rate_clamp_max(frame_rate_1, s_1));
+        let frame_rate_1 = frame_rate_clamp_max(frame_rate_1, s_1);
 
         let qr = (DELTA_Q_COUNT as u32 / 6
             + DELTA_Q_COUNT as u32 * self.worker.shared.quality * self.worker.shared.quality
@@ -1280,22 +1299,14 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let current_qos = entries::thread_nwm::rp_delta_q_qos() as f32;
 
-        let mcus = (if s.get() == RP_SCREEN_TOP as u32 {
-            self.worker.shared.mcus_top
-        } else {
-            self.worker.shared.mcus_bot
-        }) as f32;
-        let mcus_1 = (if s_1.get() == RP_SCREEN_TOP as u32 {
-            self.worker.shared.mcus_top
-        } else {
-            self.worker.shared.mcus_bot
-        }) as f32;
+        let mcus = screen.mcus as f32;
+        let mcus_1 = screen_1.mcus as f32;
+        let frame_rate_f = 1f32 / (frame_rate * mcus + frame_rate_1 * mcus_1);
 
-        let mcus_f = 1f32 / (mcus + mcus_1);
         let mcusi = 1f32 / mcus;
+        // let mcusi_1 = 1f32 / mcus_1;
         let qos_adj = self.worker.shared.qos_adj;
-        let qos_b = current_qos * frame_rate_f * mcusi * qos_adj;
-        let qos_b = qos_b * 2f32 * mcus * mcus_f;
+        let qos_b = current_qos * frame_rate_f * qos_adj;
 
         let comp_size = shared_mut.compressed_size.get(&s).load(Ordering::Acquire);
         let comp_size = {
@@ -1303,7 +1314,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             let blkn = (comp_size >> entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS)
                 & ((1 << entries::thread_nwm::JPEG_COMP_COUNT_BLKN_NBITS) - 1);
             if blkn > 0 {
-                size as f32 * mcus * self.worker.shared.max_blocks_in_mcu as f32 / blkn as f32
+                size as f32 * mcus * screen.max_blocks_in_mcu as f32 / blkn as f32
             } else {
                 0f32
             }
@@ -1371,17 +1382,17 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let nbits = {
             let mut ret = 0f32;
-            let qf = &self.worker.shared.delta_q_params.qf;
+            let qf = &screen.delta_q_params.qf;
             for i in 0..NUM_QUANT_TBLS {
                 ret += (qnv[i].dc.nbits as f32 / qnc[i] as f32
                     + qnv[i].ac.nbits as f32 / qnc[i] as f32)
                     * qf[i];
             }
-            ret + self.worker.shared.delta_q_params.m // todo
+            ret + screen.delta_q_params.m // todo
         };
 
         {
-            let q_steps_i = self.worker.shared.delta_q_params.q_steps_i;
+            let q_steps_i = screen.delta_q_params.q_steps_i;
             let comp_d = if comp_size > 0f32 {
                 qos - comp_size
             } else {
@@ -1492,6 +1503,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let div_parts = &self.worker.shared.divisors.divisors;
         let w = self.worker.info.work_index;
         let mut blkn = 0;
+        let is_top = self.worker.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
@@ -1503,7 +1516,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let _need_wait_for_nwm = DELTA_Q && self.worker.thread_index.get() == 0;
 
-        let comp_infos = unsafe { &*self.worker.shared.comp_infos };
+        let comp_infos = unsafe { &*screen.comp_infos };
         for ci in 0..MAX_COMPONENTS {
             let comp = &comp_infos.infos[ci];
 
@@ -1655,7 +1668,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     fn encode_mcu(&mut self) {
         let mut blkn = 0;
 
-        let comp_infos = unsafe { &*self.worker.shared.comp_infos };
+        let is_top = self.worker.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let comp_infos = unsafe { &*screen.comp_infos };
 
         for ci in 0..MAX_COMPONENTS {
             let comp = &comp_infos.infos[ci];
@@ -2198,11 +2213,11 @@ impl Jpeg {
         &mut self,
         quality: u32,
         core_count: CoreCount,
-        hq: u32,
+        hq: [u32; RP_SCREEN_COUNT as usize],
         delta_prog: bool,
     ) -> Option<()> {
-        let (max_blocks_in_mcu, q_steps) = self.shared.init(quality, delta_prog, core_count, hq);
-        self.shared_mut.init(delta_prog, max_blocks_in_mcu, q_steps);
+        let shared_mut_params = self.shared.init(quality, delta_prog, core_count, hq);
+        self.shared_mut.init(delta_prog, shared_mut_params);
 
         for w in WorkIndex::all() {
             let sem = self.shared.work_sem.get_mut(&w);
