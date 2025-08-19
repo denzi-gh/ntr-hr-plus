@@ -382,7 +382,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 		descs[REMOTE_PLAY_ADVMENU_THREAD_PRIORITY] = "Higher value means lower priority.\nLower priority means less game/audio\nstutter possibly.";
 
 		char separateScreenConfigCaption[LOCAL_OPT_TEXT_BUF_SIZE];
-		xsnprintf(separateScreenConfigCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Separate Screens Options: %s", config->separateScreenConfig ? "On" : "Off");
+		xsnprintf(separateScreenConfigCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Per Screens Options: %s", config->separateScreenConfig ? "On" : "Off");
 		captions[REMOTE_PLAY_ADVMENU_SEPARATE_SCREEN_CONFIG] = separateScreenConfigCaption;
 
 		char chromaSSCaption[RP_SCREEN_COUNT][LOCAL_OPT_TEXT_BUF_SIZE] = { 0 };
