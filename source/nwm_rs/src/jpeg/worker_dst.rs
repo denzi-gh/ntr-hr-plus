@@ -4,9 +4,9 @@
 use super::*;
 
 #[derive(Copy, Clone)]
-pub enum WorkderDstUser {
-    NoneInfo(*const entries::thread_nwm::NwmThreadInfo),
-    KcpHdr(ArqRpHdr),
+pub union WorkderDstUser {
+    pub none_info: *const entries::thread_nwm::NwmThreadInfo,
+    pub kcp_hdr: ArqRpHdr,
 }
 
 #[derive(Clone, ConstDefault)]
@@ -17,12 +17,28 @@ pub struct WorkerDst {
     pub dst: *mut u8,
     pub free_in_bytes: u16,
     pub user: WorkderDstUser,
+    pub rel_stream: bool,
+    pub delta_prog: bool,
 }
 
 impl WorkerDst {
-    pub fn write_byte<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self, byte: u8) -> bool {
+    pub fn init(s: ScreenIndex, w: WorkIndex, dst: *mut u8, user: WorkderDstUser) -> Self {
+        Self {
+            blkn: 0,
+            s,
+            w,
+            dst: dst as *mut u8,
+            free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
+            user,
+            rel_stream: entries::thread_nwm::get_reliable_stream()
+                != entries::thread_nwm::ReliableStream::None,
+            delta_prog: entries::thread_nwm::get_reliable_stream_delta_prog(),
+        }
+    }
+
+    pub fn write_byte(&mut self, byte: u8) -> bool {
         if self.free_in_bytes == 0 {
-            if !self.flush::<REL_STREAM, DELTA_Q>() {
+            if !self.flush() {
                 return false;
             }
         }
@@ -33,7 +49,7 @@ impl WorkerDst {
         true
     }
 
-    pub fn write_bytes<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self, bytes: &[u8]) -> bool {
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> bool {
         let mut src = bytes.as_ptr();
         let mut len = bytes.len() as u16;
 
@@ -46,12 +62,12 @@ impl WorkerDst {
                 src = unsafe { src.add(self.free_in_bytes as usize) };
                 unsafe { self.dst = self.dst.add(self.free_in_bytes as usize) };
                 self.free_in_bytes = 0;
-                if !self.flush::<REL_STREAM, DELTA_Q>() {
+                if !self.flush() {
                     return false;
                 }
             }
         } else {
-            if !self.flush::<REL_STREAM, DELTA_Q>() {
+            if !self.flush() {
                 return false;
             }
         }
@@ -66,21 +82,21 @@ impl WorkerDst {
         true
     }
 
-    fn flush<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self) -> bool {
+    fn flush(&mut self) -> bool {
         unsafe {
-            self.dq_update_size::<DELTA_Q>(entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32);
+            self.dq_update_size(entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32);
             self.blkn = 0;
-            entries::thread_nwm::rp_send_buffer::<REL_STREAM>(self, false)
+            entries::thread_nwm::rp_send_buffer(self, false, self.rel_stream)
         }
     }
 
-    pub fn term<const REL_STREAM: bool, const DELTA_Q: bool>(&mut self) -> bool {
+    pub fn term(&mut self) -> bool {
         unsafe {
-            self.dq_update_size::<DELTA_Q>(
+            self.dq_update_size(
                 entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32 - self.free_in_bytes as u32,
             );
             self.blkn = 0;
-            entries::thread_nwm::rp_send_buffer::<REL_STREAM>(self, true)
+            entries::thread_nwm::rp_send_buffer(self, true, self.rel_stream)
         }
     }
 
@@ -89,8 +105,8 @@ impl WorkerDst {
         self.dst = dst;
     }
 
-    fn dq_update_size<const DLETA_Q: bool>(&mut self, size: u32) {
-        if DLETA_Q {
+    fn dq_update_size(&mut self, size: u32) {
+        if self.delta_prog {
             let comp_size = unsafe { (*JPEG).shared_mut.compressed_size.get_mut(&self.s) };
             entries::thread_nwm::rp_dq_update_size(comp_size, size, self.blkn)
         } else {

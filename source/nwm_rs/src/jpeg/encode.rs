@@ -34,8 +34,8 @@ impl<const H_SAMP: bool, const V_SAMP: bool> SubSampConst<H_SAMP, V_SAMP> {
     const ASSERT: () = subsamp_constraint::<H_SAMP, V_SAMP>();
 }
 
-pub struct JpegEncode<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> {
-    pub worker: &'b mut JpegWorker<'a, REL_STREAM>,
+pub struct JpegEncode<'a, 'b> {
+    pub worker: &'b mut JpegWorker<'a>,
     pub dst: WorkerDst,
 }
 
@@ -47,7 +47,7 @@ fn get_bpp_for_format(c: ColorSpace) -> u8 {
     }
 }
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+impl<'a, 'b> JpegEncode<'a, 'b> {
     #[named]
     pub fn encode<F, G>(
         &mut self,
@@ -67,7 +67,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         pre_progress(1);
 
-        if !REL_STREAM && self.worker.thread_index.get() == 0 {
+        if !self.worker.shared.rel_stream && self.worker.thread_index.get() == 0 {
             self.write_headers();
         }
 
@@ -77,7 +77,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let s = is_top_index(is_top);
 
         let prev = unsafe {
-            if DELTA_Q {
+            if self.worker.shared.delta_prog {
                 if src.len() == 0 {
                     wait_syn(
                         cname!(),
@@ -120,7 +120,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                         /* Compress and encode */
                         self.process(
-                            if DELTA_Q {
+                            if self.worker.shared.delta_prog {
                                 unsafe {
                                     prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
                                 }
@@ -140,7 +140,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                             /* Compress and encode */
                             self.process(
-                                if DELTA_Q {
+                                if self.worker.shared.delta_prog {
                                     unsafe {
                                         prev.add(n * screen.mcus_per_row * screen.max_blocks_in_mcu)
                                     }
@@ -166,7 +166,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                         /* Compress and encode */
                         self.process(
-                            if DELTA_Q {
+                            if self.worker.shared.delta_prog {
                                 unsafe {
                                     prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
                                 }
@@ -199,7 +199,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                         /* Compress and encode */
                         self.process(
-                            if DELTA_Q {
+                            if self.worker.shared.delta_prog {
                                 unsafe {
                                     prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
                                 }
@@ -227,7 +227,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                         /* Compress and encode */
                         self.process(
-                            if DELTA_Q {
+                            if self.worker.shared.delta_prog {
                                 unsafe {
                                     prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
                                 }
@@ -246,7 +246,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         self.flush_mcu();
 
         let mut delta_q = 0;
-        if !REL_STREAM {
+        if !self.worker.shared.rel_stream {
             if self.worker.thread_index == thread_index_last(self.worker.shared.core_count) {
                 self.write_trailer();
             } else {
@@ -256,7 +256,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         self.write_term();
 
-        if DELTA_Q {
+        if self.worker.shared.delta_prog {
             unsafe {
                 let shared_mut = &mut *self.worker.shared_mut.cell;
                 delta_q = *shared_mut.work_delta_q.get(&w);
@@ -293,7 +293,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
         for mcu_col_num in 0..screen.mcus_per_row {
-            if DELTA_Q {
+            if self.worker.shared.delta_prog {
                 let s = is_top_index(self.worker.info.is_top);
                 let w = self.worker.info.work_index;
                 let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
@@ -357,14 +357,14 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 let prev = unsafe { prev.add(mcu_col_num * screen.max_blocks_in_mcu) };
 
                 if dq_rescale_prev > 0 {
-                    self.compress_dq::<true, false>(delta_cache, mcu_col_num, prev);
+                    self.compress(mcu_col_num, prev, delta_cache, true, false);
                 } else if dq_rescale_prev < 0 {
-                    self.compress_dq::<true, true>(delta_cache, mcu_col_num, prev);
+                    self.compress(mcu_col_num, prev, delta_cache, true, true);
                 } else {
-                    self.compress_dq::<false, false>(delta_cache, mcu_col_num, prev);
+                    self.compress(mcu_col_num, prev, delta_cache, false, false);
                 }
             } else {
-                self.compress::<false, false, false>(mcu_col_num, ptr::null_mut());
+                self.compress(mcu_col_num, ptr::null_mut(), false, false, false);
             }
 
             self.encode_mcu();

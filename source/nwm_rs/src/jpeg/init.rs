@@ -38,13 +38,16 @@ impl JpegShared {
     fn init(
         &mut self,
         quality: [u32; RP_SCREEN_COUNT as usize],
+        rel_stream: bool,
         delta_prog: bool,
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
-        self.quality = quality;
+        self.rel_stream = rel_stream;
+        self.delta_prog = delta_prog;
 
+        self.quality = quality;
         for s in ScreenIndex::all() {
             let screen = s.index_into_mut(&mut self.screens);
             let quality = *s.index_into(&quality);
@@ -236,11 +239,12 @@ impl Jpeg {
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
+        rel_stream: bool,
         delta_prog: bool,
     ) -> Option<()> {
         let shared_mut_params = self
             .shared
-            .init(quality, delta_prog, core_count, hq, downsample);
+            .init(quality, rel_stream, delta_prog, core_count, hq, downsample);
         self.shared_mut.init(delta_prog, shared_mut_params);
 
         for w in WorkIndex::all() {

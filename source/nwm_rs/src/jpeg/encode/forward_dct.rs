@@ -3,12 +3,11 @@
 
 use super::*;
 
-pub unsafe fn forward_dct<
-    const DELTA_Q: bool,
-    const UPDATE_PREV: bool,
-    const RESCALE_PREV: bool,
-    const RESCALE_PREV_SHR: bool,
->(
+pub unsafe fn forward_dct(
+    delta_prog: bool,
+    update_prev: bool,
+    rescale_prev: bool,
+    rescale_prev_shr: bool,
     downsample: u8,
     input: &WorkerPrepBufDownsample,
     ci: usize,
@@ -23,136 +22,107 @@ pub unsafe fn forward_dct<
     r_pshifts: &[u8; DCTSIZE2],
     next: *mut JBlock,
 ) -> QuantizeRet {
-    if hsamp
+    let hsamp = hsamp
         && if vsamp {
             need_subsamp_ci::<true, true>(ci as u8)
         } else {
             need_subsamp_ci::<true, false>(ci as u8)
-        }
-    {
-        unsafe {
-            match downsample {
-                RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
-                    DELTA_Q,
-                    UPDATE_PREV,
-                    RESCALE_PREV,
-                    RESCALE_PREV_SHR,
-                    { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
-                    true,
-                >(
+        };
+
+    unsafe {
+        match downsample {
+            RP_DOWNSAMPLE_QUARTER => {
+                convsamp::<{ downsample_screen_width(RP_DOWNSAMPLE_QUARTER) }>(
+                    hsamp,
                     input.quarter.buf.get_unchecked(ci),
-                    output,
                     ypos,
                     xpos,
-                    div_parts,
-                    div_shifts,
-                    prev,
-                    r_pshifts,
-                    next,
-                ),
-                _ => do_forward_dct::<
-                    DELTA_Q,
-                    UPDATE_PREV,
-                    RESCALE_PREV,
-                    RESCALE_PREV_SHR,
-                    { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
-                    true,
-                >(
-                    input.full.get_unchecked(ci),
                     output,
-                    ypos,
-                    xpos,
-                    div_parts,
-                    div_shifts,
-                    prev,
-                    r_pshifts,
-                    next,
-                ),
+                )
             }
+            _ => convsamp::<{ downsample_screen_width(RP_DOWNSAMPLE_NONE) }>(
+                hsamp,
+                input.full.get_unchecked(ci),
+                ypos,
+                xpos,
+                output,
+            ),
         }
-    } else {
-        unsafe {
-            match downsample {
-                RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
-                    DELTA_Q,
-                    UPDATE_PREV,
-                    RESCALE_PREV,
-                    RESCALE_PREV_SHR,
-                    { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
-                    false,
-                >(
-                    input.quarter.buf.get_unchecked(ci),
-                    output,
-                    ypos,
-                    xpos,
-                    div_parts,
-                    div_shifts,
-                    prev,
-                    r_pshifts,
-                    next,
-                ),
-                _ => do_forward_dct::<
-                    DELTA_Q,
-                    UPDATE_PREV,
-                    RESCALE_PREV,
-                    RESCALE_PREV_SHR,
-                    { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
-                    false,
-                >(
-                    input.full.get_unchecked(ci),
-                    output,
-                    ypos,
-                    xpos,
-                    div_parts,
-                    div_shifts,
-                    prev,
-                    r_pshifts,
-                    next,
-                ),
-            }
+
+        do_forward_dct(
+            delta_prog,
+            update_prev,
+            rescale_prev,
+            rescale_prev_shr,
+            output,
+            div_parts,
+            div_shifts,
+            prev,
+            r_pshifts,
+            next,
+        )
+    }
+}
+
+unsafe fn convsamp<const WIDTH: usize>(
+    hsamp: bool,
+    input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
+    ypos: u16,
+    xpos: u16,
+    output: &mut JBlock,
+) {
+    unsafe {
+        if hsamp {
+            do_convsamp::<WIDTH, true>(input, ypos, xpos, output);
+        } else {
+            do_convsamp::<WIDTH, false>(input, ypos, xpos, output);
         }
     }
 }
-unsafe fn do_forward_dct<
-    const DELTA_Q: bool,
-    const UPDATE_PREV: bool,
-    const RESCALE_PREV: bool,
-    const RESCALE_PREV_SHR: bool,
-    const WIDTH: usize,
-    const H_SAMP: bool,
->(
-    input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
+
+unsafe fn do_forward_dct(
+    delta_prog: bool,
+    update_prev: bool,
+    rescale_prev: bool,
+    rescale_prev_shr: bool,
     output: &mut JBlock,
-    ypos: u16,
-    xpos: u16,
     div_parts: &[DivisorPart; DCTSIZE2],
     div_shifts: &[u8; DCTSIZE2],
     prev: *mut JBlock,
     r_pshifts: &[u8; DCTSIZE2],
     next: *mut JBlock,
 ) -> QuantizeRet {
-    unsafe {
-        convsamp::<WIDTH, H_SAMP>(input, ypos, xpos, output);
-    }
     fdct_ifast(output);
-    quantize::<DELTA_Q, UPDATE_PREV, RESCALE_PREV, RESCALE_PREV_SHR>(
-        output, div_parts, div_shifts, prev, r_pshifts, next,
+    quantize(
+        delta_prog,
+        update_prev,
+        rescale_prev,
+        rescale_prev_shr,
+        output,
+        div_parts,
+        div_shifts,
+        prev,
+        r_pshifts,
+        next,
     )
 }
 
-unsafe fn convsamp<const WIDTH: usize, const H_SAMP: bool>(
+unsafe fn do_convsamp<const WIDTH: usize, const H_SAMP: bool>(
     input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
     ypos: u16,
     xpos: u16,
     output: &mut JBlock,
 ) {
+    let width = if H_SAMP { WIDTH / SAMP_FACTOR } else { WIDTH };
+    let check_width = xpos as usize + DCTSIZE > width;
+
     let mut oidx = 0;
     for yidx in 0..DCTSIZE {
         let input = unsafe { input.get_unchecked(ypos as usize + yidx) };
         for xidx in 0..DCTSIZE {
             let idx = xpos as usize + xidx;
 
-            if idx < if H_SAMP { WIDTH / SAMP_FACTOR } else { WIDTH } {
+            if !check_width || idx < width {
                 output[oidx] = *unsafe { input.get_unchecked(idx) } as i16 - CENTERJSAMPLE as i16;
             } else {
                 output[oidx] = if oidx > 0 { output[oidx - 1] } else { 0 };
@@ -269,7 +239,101 @@ fn fdct_ifast(inout: &mut JBlock) {
     }
 }
 
-fn quantize<
+fn quantize(
+    delta_q: bool,
+    update_prev: bool,
+    rescale_prev: bool,
+    rescale_prev_shr: bool,
+    inout: &mut JBlock,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    rp_shifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    if !delta_q {
+        do_quantize::<false, false, false, false>(
+            inout, div_parts, div_shifts, prev, rp_shifts, next,
+        )
+    } else {
+        do_quantize_delta_q(
+            update_prev,
+            rescale_prev,
+            rescale_prev_shr,
+            inout,
+            div_parts,
+            div_shifts,
+            prev,
+            rp_shifts,
+            next,
+        )
+    }
+}
+
+fn do_quantize_delta_q(
+    update_prev: bool,
+    rescale_prev: bool,
+    rescale_prev_shr: bool,
+    inout: &mut JBlock,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    rp_shifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    if update_prev {
+        do_quantize_update_prev::<true>(
+            rescale_prev,
+            rescale_prev_shr,
+            inout,
+            div_parts,
+            div_shifts,
+            prev,
+            rp_shifts,
+            next,
+        )
+    } else {
+        do_quantize_update_prev::<false>(
+            rescale_prev,
+            rescale_prev_shr,
+            inout,
+            div_parts,
+            div_shifts,
+            prev,
+            rp_shifts,
+            next,
+        )
+    }
+}
+
+fn do_quantize_update_prev<const UPDATE_PREV: bool>(
+    rescale_prev: bool,
+    rescale_prev_shr: bool,
+    inout: &mut JBlock,
+    div_parts: &[DivisorPart; DCTSIZE2],
+    div_shifts: &[u8; DCTSIZE2],
+    prev: *mut JBlock,
+    rp_shifts: &[u8; DCTSIZE2],
+    next: *mut JBlock,
+) -> QuantizeRet {
+    if rescale_prev {
+        if rescale_prev_shr {
+            do_quantize::<true, UPDATE_PREV, true, true>(
+                inout, div_parts, div_shifts, prev, rp_shifts, next,
+            )
+        } else {
+            do_quantize::<true, UPDATE_PREV, true, false>(
+                inout, div_parts, div_shifts, prev, rp_shifts, next,
+            )
+        }
+    } else {
+        do_quantize::<true, UPDATE_PREV, false, false>(
+            inout, div_parts, div_shifts, prev, rp_shifts, next,
+        )
+    }
+}
+
+fn do_quantize<
     const DELTA_Q: bool,
     const UPDATE_PREV: bool,
     const RESCALE_PREV: bool,
@@ -340,7 +404,10 @@ pub fn jpeg_nbits_nonzero(x: i32) -> u8 {
     (mem::size_of_val(&x) * 8 - x.leading_zeros() as usize) as u8
 }
 
-pub fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(c: JCoef, s: u8) -> JCoef {
+pub fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+    c: JCoef,
+    s: u8,
+) -> JCoef {
     unsafe {
         if RESCALE_PREV {
             if RESCALE_PREV_SHR {

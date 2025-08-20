@@ -3,11 +3,14 @@
 
 use super::*;
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
-    pub fn compress<const DELTA_CACHE: bool, const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
+impl<'a, 'b> JpegEncode<'a, 'b> {
+    pub fn compress(
         &mut self,
         mcu_col_num: usize,
         prev: *mut JBlock,
+        delta_cache: bool,
+        rescale_prev: bool,
+        rescale_prev_shr: bool,
     ) {
         let w = self.worker.info.work_index;
         let mut blkn = 0;
@@ -25,13 +28,14 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let delta_q0 = unsafe { self.worker.shared.delta_q0_tbls.get_unchecked(delta_q) };
         let mut delta_cache_start = 0;
 
-        let _need_wait_for_nwm = DELTA_Q && self.worker.thread_index.get() == 0;
+        let _need_wait_for_nwm =
+            self.worker.shared.delta_prog && self.worker.thread_index.get() == 0;
 
         let comp_infos = unsafe { &*screen.comp_infos };
         for ci in 0..MAX_COMPONENTS {
             let comp = &comp_infos.infos[ci];
 
-            let div_shifts = if DELTA_Q {
+            let div_shifts = if self.worker.shared.delta_prog {
                 unsafe {
                     self.worker
                         .shared
@@ -62,13 +66,13 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 for _ in 0..mcu_width {
                     let mut cache_hit = false;
                     let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
-                    let prev = if DELTA_Q {
+                    let prev = if self.worker.shared.delta_prog {
                         unsafe { prev.add(blkn as usize) }
                     } else {
                         ptr::null_mut()
                     };
 
-                    if DELTA_CACHE {
+                    if delta_cache {
                         for qi in cache_next_i[ci]..DELTA_Q_CACHE_COUNTS[ci] {
                             let delta_cache_i = delta_cache_start + qi;
                             let cache = unsafe { cache.get_unchecked_mut(delta_cache_i as usize) };
@@ -91,8 +95,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                                     };
                                     for i in 0..DCTSIZE2 {
                                         unsafe {
-                                            let (off_prev, off_diff) = if RESCALE_PREV
-                                                && RESCALE_PREV_SHR
+                                            let (off_prev, off_diff) = if rescale_prev
+                                                && rescale_prev_shr
                                             {
                                                 let mask =
                                                     core::intrinsics::unchecked_shl(1, delta_q0[i])
@@ -133,7 +137,11 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                     if !cache_hit {
                         unsafe {
-                            forward_dct::<DELTA_Q, true, RESCALE_PREV, RESCALE_PREV_SHR>(
+                            forward_dct(
+                                self.worker.shared.delta_prog,
+                                true,
+                                rescale_prev,
+                                rescale_prev_shr,
                                 screen.downsample,
                                 &self.worker.bufs.prep,
                                 ci,
@@ -161,19 +169,6 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         }
     }
 
-    pub fn compress_dq<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
-        &mut self,
-        delta_cache: bool,
-        mcu_col_num: usize,
-        prev: *mut JBlock,
-    ) {
-        if delta_cache {
-            self.compress::<true, RESCALE_PREV, RESCALE_PREV_SHR>(mcu_col_num, prev);
-        } else {
-            self.compress::<false, RESCALE_PREV, RESCALE_PREV_SHR>(mcu_col_num, prev);
-        }
-    }
-
     pub fn encode_mcu(&mut self) {
         let mut blkn = 0;
 
@@ -186,7 +181,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             let mcu_width = comp.h_samp_factor;
             let mcu_height = comp.v_samp_factor;
 
-            let dc_tbl = if DELTA_Q {
+            let dc_tbl = if self.worker.shared.delta_prog {
                 unsafe {
                     self.worker
                         .shared
@@ -205,7 +200,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                         .get_unchecked(comp.dc_tbl_no as usize)
                 }
             };
-            let ac_tbl = if DELTA_Q {
+            let ac_tbl = if self.worker.shared.delta_prog {
                 unsafe {
                     self.worker
                         .shared
@@ -262,7 +257,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         const BUFSIZE: usize = DCTSIZE2 * 8;
 
         let mut localbuf: [u8; BUFSIZE] = const_default();
-        let mut buf = EncodeBuffer::<_, REL_STREAM, DELTA_Q>::init(state, dst, &mut localbuf);
+        let mut buf = EncodeBuffer::init(state, dst, &mut localbuf, dst.rel_stream);
 
         let (val1, bits, b0) = {
             let val = block[0] as i32 - last_dc_val as i32;

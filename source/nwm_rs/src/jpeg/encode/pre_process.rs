@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],

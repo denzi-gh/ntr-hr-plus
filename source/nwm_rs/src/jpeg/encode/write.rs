@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn write_headers(&mut self) {
         /* File header */
         self.write_marker(M_SOI);
@@ -34,7 +34,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     }
 
     pub fn write_byte(&mut self, value: u8) {
-        self.dst.write_byte::<REL_STREAM, DELTA_Q>(value);
+        self.dst.write_byte(value);
     }
 
     pub fn write_2bytes(&mut self, value: u16)
@@ -199,7 +199,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     }
 
     pub fn write_term(&mut self) {
-        self.dst.term::<REL_STREAM, DELTA_Q>();
+        self.dst.term();
     }
 
     pub fn reset_mcu(&mut self) {
@@ -213,10 +213,11 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let mut localbuf: [u8; mem::size_of::<BitBufType>() * 4] = const_default();
         let put_buffer = self.worker.huff_state.c;
-        let mut buf = EncodeBuffer::<_, REL_STREAM, DELTA_Q>::init(
+        let mut buf = EncodeBuffer::<_>::init(
             &mut self.worker.huff_state,
             &mut self.dst,
             &mut localbuf,
+            self.worker.shared.delta_prog,
         );
 
         while put_bits >= 8 {

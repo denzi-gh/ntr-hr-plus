@@ -7,15 +7,15 @@ pub enum EncodeBufferBase<'a, const N: usize> {
     Local(&'a [u8; N]),
     Dst,
 }
-pub struct EncodeBuffer<'a, 'b, 'c, const N: usize, const REL_STREAM: bool, const DELTA_Q: bool> {
+pub struct EncodeBuffer<'a, 'b, 'c, const N: usize> {
     pub buf: *mut u8,
     pub base: EncodeBufferBase<'a, N>,
     pub state: &'b mut HuffState,
     pub dst: &'c mut WorkerDst,
+    pub rel_stream: bool,
 }
 
-impl<'a, 'b, 'c, const N: usize, const REL_STREAM: bool, const DELTA_Q: bool>
-    EncodeBuffer<'a, 'b, 'c, N, REL_STREAM, DELTA_Q>
+impl<'a, 'b, 'c, const N: usize> EncodeBuffer<'a, 'b, 'c, N>
 where
     'a: 'c,
 {
@@ -23,6 +23,7 @@ where
         state: &'b mut HuffState,
         dst: &'a mut WorkerDst,
         buf: &'d mut [u8; N],
+        rel_stream: bool,
     ) -> Self {
         if dst.free_in_bytes < N as u16 {
             EncodeBuffer {
@@ -30,6 +31,7 @@ where
                 base: EncodeBufferBase::Local(buf),
                 state,
                 dst,
+                rel_stream,
             }
         } else {
             EncodeBuffer {
@@ -37,6 +39,7 @@ where
                 base: EncodeBufferBase::Dst,
                 state,
                 dst,
+                rel_stream,
             }
         }
     }
@@ -45,9 +48,8 @@ where
         match self.base {
             EncodeBufferBase::Local(buf) => {
                 let len = unsafe { self.buf.offset_from_unsigned(buf.as_ptr()) };
-                self.dst.write_bytes::<REL_STREAM, DELTA_Q>(unsafe {
-                    slice::from_raw_parts(buf.as_ptr(), len)
-                });
+                self.dst
+                    .write_bytes(unsafe { slice::from_raw_parts(buf.as_ptr(), len) });
             }
             EncodeBufferBase::Dst => unsafe { self.dst.advance_to(self.buf) },
         }
@@ -55,7 +57,7 @@ where
 
     pub unsafe fn emit_byte(&mut self, b: u8) {
         unsafe {
-            if REL_STREAM {
+            if self.rel_stream {
                 *self.buf = b;
                 self.buf = self.buf.add(1);
             } else {
@@ -68,7 +70,7 @@ where
 
     unsafe fn flush(&mut self) {
         unsafe {
-            if !REL_STREAM && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
+            if !self.rel_stream && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
                 self.emit_byte((self.state.c >> 24) as u8);
                 self.emit_byte((self.state.c >> 16) as u8);
                 self.emit_byte((self.state.c >> 8) as u8);

@@ -807,54 +807,33 @@ impl WorkAcquire {
         let progress = || {};
 
         let s = is_top_index(bctx.is_top);
-        let jpeg_ret = match entries::thread_nwm::get_reliable_stream() {
+        let mut worker = unsafe { (*jpeg::JPEG).get_worker(w, t) };
+
+        let (user, dst) = match entries::thread_nwm::get_reliable_stream() {
             entries::thread_nwm::ReliableStream::None => {
-                let mut worker = unsafe { (*jpeg::JPEG).get_worker::<false>(w, t) };
-
-                let (user, dst) = {
-                    let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
-                    (
-                        jpeg::WorkderDstUser::NoneInfo(ninfo as *const _),
-                        ninfo.info.pos.load(Ordering::Acquire),
-                    )
-                };
-
-                let dst = jpeg::WorkerDst {
-                    blkn: 0,
-                    s,
-                    w,
-                    dst: dst as *mut u8,
-                    free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
-                    user,
-                };
-                worker.encode(dst, src, pre_progress, progress)?
+                let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
+                (
+                    jpeg::WorkderDstUser {
+                        none_info: ninfo as *const _,
+                    },
+                    ninfo.info.pos.load(Ordering::Acquire),
+                )
             }
             entries::thread_nwm::ReliableStream::KCP => {
-                let mut worker = unsafe { (*jpeg::JPEG).get_worker::<true>(w, t) };
-
-                let (user, dst) = {
-                    let dst =
-                        if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
-                            entries::thread_nwm::rp_data_buf_data(dst)
-                        } else {
-                            return None;
-                        };
-                    let hdr = jpeg::ArqRpHdr { w, t };
-
-                    (jpeg::WorkderDstUser::KcpHdr(hdr), dst)
+                let dst = if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
+                    entries::thread_nwm::rp_data_buf_data(dst)
+                } else {
+                    return None;
                 };
+                let hdr = jpeg::ArqRpHdr { w, t };
 
-                let dst = jpeg::WorkerDst {
-                    blkn: 0,
-                    s,
-                    w,
-                    dst: dst as *mut u8,
-                    free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
-                    user,
-                };
-                worker.encode(dst, src, pre_progress, progress)?
+                (jpeg::WorkderDstUser { kcp_hdr: hdr }, dst)
             }
         };
+
+        let dst = jpeg::WorkerDst::init(s, w, dst, user);
+
+        let jpeg_ret = worker.encode(dst, src, pre_progress, progress)?;
 
         if reset_threads() {
             return None;

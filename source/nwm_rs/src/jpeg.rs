@@ -44,6 +44,8 @@ pub struct JpegScreenShared {
 }
 
 pub struct JpegShared {
+    pub rel_stream: bool,
+    pub delta_prog: bool,
     pub quality: [u32; RP_SCREEN_COUNT as usize],
     pub div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub core_count: CoreCount,

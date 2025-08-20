@@ -240,6 +240,7 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
             core_count,
             chroma_ss,
             downsample,
+            entries::thread_nwm::get_reliable_stream() != entries::thread_nwm::ReliableStream::None,
             entries::thread_nwm::get_reliable_stream_delta_prog(),
         )?;
         entries::work_thread::init(quality, chroma_ss, downsample);

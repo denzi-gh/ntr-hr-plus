@@ -14,7 +14,7 @@ pub struct HuffState {
 pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 
 #[derive(ConstDefault)]
-pub struct JpegWorker<'a, const REL_STREAM: bool> {
+pub struct JpegWorker<'a> {
     pub shared: &'a JpegShared,
     pub shared_mut: JpegSharedMutCell,
     pub bufs: &'a mut WorkerBufs,
@@ -30,7 +30,7 @@ pub struct JpegSharedMutCell {
     pub cell: *mut JpegSharedMut,
 }
 
-impl<'a, const REL_STREAM: bool> JpegWorker<'a, REL_STREAM> {
+impl<'a> JpegWorker<'a> {
     pub fn encode<F, G>(
         &'a mut self,
         dst: WorkerDst,
@@ -42,12 +42,7 @@ impl<'a, const REL_STREAM: bool> JpegWorker<'a, REL_STREAM> {
         F: FnMut(u32),
         G: FnMut(),
     {
-        let delta_prog = REL_STREAM && entries::thread_nwm::get_reliable_stream_delta_prog();
-        if delta_prog {
-            JpegEncode::<_, true> { worker: self, dst }.encode(src, pre_progress, progress)
-        } else {
-            JpegEncode::<_, false> { worker: self, dst }.encode(src, pre_progress, progress)
-        }
+        JpegEncode { worker: self, dst }.encode(src, pre_progress, progress)
     }
 }
 
@@ -65,11 +60,11 @@ impl Jpeg {
         *info.work_index.index_into_mut(&mut self.info) = info;
     }
 
-    pub unsafe fn get_worker<'a, const REL_STREAM: bool>(
+    pub unsafe fn get_worker<'a>(
         &'a mut self,
         work_index: WorkIndex,
         thread_index: ThreadIndex,
-    ) -> JpegWorker<'a, REL_STREAM> {
+    ) -> JpegWorker<'a> {
         JpegWorker {
             shared: &self.shared,
             shared_mut: JpegSharedMutCell {

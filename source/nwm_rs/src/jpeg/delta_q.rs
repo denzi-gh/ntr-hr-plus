@@ -111,7 +111,7 @@ fn dq_cache_gen_unique_indices(
     }
 }
 
-impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL_STREAM, DELTA_Q> {
+impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn compute_dq(&mut self, prev: *mut JBlock) {
         let need_ov_stats = unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats > 0 };
 
@@ -183,7 +183,11 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
                 let qn = if prev_delta_q == DELTA_Q_COUNT - 1 {
                     unsafe {
-                        forward_dct::<DELTA_Q, false, false, false>(
+                        forward_dct(
+                            self.worker.shared.delta_prog,
+                            false,
+                            false,
+                            false,
                             screen.downsample,
                             &self.worker.bufs.prep,
                             ci,
@@ -201,7 +205,11 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                     }
                 } else {
                     unsafe {
-                        forward_dct::<DELTA_Q, false, true, false>(
+                        forward_dct(
+                            self.worker.shared.delta_prog,
+                            false,
+                            true,
+                            false,
                             screen.downsample,
                             &self.worker.bufs.prep,
                             ci,
