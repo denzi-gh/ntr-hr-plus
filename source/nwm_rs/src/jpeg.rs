@@ -1029,22 +1029,6 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         Some(JpegDqRet { delta_q, mcus })
     }
 
-    fn need_subsamp<const COMP_I: u8, const H_SAMP: bool, const V_SAMP: bool>() -> bool {
-        (H_SAMP || V_SAMP) && COMP_I != 0
-    }
-
-    fn need_subsamp_ci<const H_SAMP: bool, const V_SAMP: bool>(ci: u8) -> bool {
-        if ci == 0 {
-            Self::need_subsamp::<0, H_SAMP, V_SAMP>()
-        } else if ci == 1 {
-            Self::need_subsamp::<1, H_SAMP, V_SAMP>()
-        } else if ci == 2 {
-            Self::need_subsamp::<2, H_SAMP, V_SAMP>()
-        } else {
-            false
-        }
-    }
-
     fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -1085,7 +1069,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         for ci in 0..MAX_COMPONENTS {
             let color = &mut self.worker.bufs.color[ci];
-            if DOWNSAMPLE || Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+            if DOWNSAMPLE || need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
                     color.ptr = (*color.buf.full.as_mut_ptr()).as_mut_ptr();
                 }
@@ -1134,12 +1118,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let mut bias = 0;
         let output = unsafe { slice::from_raw_parts_mut(output, WIDTH / SAMP_FACTOR) };
         for (input, output) in input.as_chunks::<{ SAMP_FACTOR }>().0.iter().zip(output) {
-            *output = ((input[0] as u16
-                + input[1] as u16
-                + input[0] as u16
-                + input[1] as u16
-                + bias as u16)
-                >> 2) as u8;
+            *output = ((input[0] as u16 + input[1] as u16 + bias as u16) >> 1) as u8;
             bias ^= 1; /* 1=>2, 2=>1 */
         }
     }
@@ -1167,7 +1146,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         for ci in 0..MAX_COMPONENTS {
             let input = &self.worker.bufs.color[ci];
-            if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+            if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
                     if V_SAMP {
                         let output = self.worker.bufs.prep.full[ci][output_base].as_mut_ptr();
@@ -1188,7 +1167,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
         for ci in 0..MAX_COMPONENTS {
-            if Self::need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+            if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
                     if V_SAMP {
                         let prep = &mut self.worker.bufs.prep.quarter.prep[ci];
@@ -1220,7 +1199,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 );
 
                 for ci in 0..MAX_COMPONENTS {
-                    if Self::need_subsamp_ci::<true, true>(ci as u8) {
+                    if need_subsamp_ci::<true, true>(ci as u8) {
                         unsafe {
                             Self::h2v2_downsample(
                                 &self.worker.bufs.color[ci].buf.full,
@@ -1274,7 +1253,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                 );
 
                 for ci in 0..MAX_COMPONENTS {
-                    if Self::need_subsamp_ci::<true, true>(ci as u8) {
+                    if need_subsamp_ci::<true, true>(ci as u8) {
                         unsafe {
                             Self::h2v2_downsample(
                                 &self.worker.bufs.color[ci].buf.full,
@@ -1340,7 +1319,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
             );
 
             for ci in 0..MAX_COMPONENTS {
-                if Self::need_subsamp_ci::<true, false>(ci as u8) {
+                if need_subsamp_ci::<true, false>(ci as u8) {
                     unsafe {
                         Self::h2v2_downsample(
                             &self.worker.bufs.color[ci].buf.full,
@@ -1462,6 +1441,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let s = is_top_index(self.worker.info.is_top);
         let screen = s.index_into(&self.worker.shared.screens);
         let w = self.worker.info.work_index;
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
@@ -1529,6 +1510,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                             screen.downsample,
                             &self.worker.bufs.prep,
                             ci,
+                            hss,
+                            vss,
                             &mut cache.cache,
                             ypos as u16,
                             xpos as u16,
@@ -1545,6 +1528,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                             screen.downsample,
                             &self.worker.bufs.prep,
                             ci,
+                            hss,
+                            vss,
                             &mut cache.cache,
                             ypos as u16,
                             xpos as u16,
@@ -1813,6 +1798,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
         let div_parts = &screen.divisors.divisors;
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
@@ -1934,6 +1921,8 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                                 screen.downsample,
                                 &self.worker.bufs.prep,
                                 ci,
+                                hss,
+                                vss,
                                 output,
                                 ypos,
                                 xpos,
@@ -2234,6 +2223,22 @@ where
     }
 }
 
+fn need_subsamp<const COMP_I: u8, const H_SAMP: bool, const V_SAMP: bool>() -> bool {
+    (H_SAMP || V_SAMP) && COMP_I != 0
+}
+
+fn need_subsamp_ci<const H_SAMP: bool, const V_SAMP: bool>(ci: u8) -> bool {
+    if ci == 0 {
+        need_subsamp::<0, H_SAMP, V_SAMP>()
+    } else if ci == 1 {
+        need_subsamp::<1, H_SAMP, V_SAMP>()
+    } else if ci == 2 {
+        need_subsamp::<2, H_SAMP, V_SAMP>()
+    } else {
+        false
+    }
+}
+
 unsafe fn forward_dct<
     const DELTA_Q: bool,
     const UPDATE_PREV: bool,
@@ -2243,6 +2248,8 @@ unsafe fn forward_dct<
     downsample: u8,
     input: &WorkerPrepBufDownsample,
     ci: usize,
+    hsamp: bool,
+    vsamp: bool,
     output: &mut JBlock,
     ypos: u16,
     xpos: u16,
@@ -2252,42 +2259,93 @@ unsafe fn forward_dct<
     r_pshifts: &[u8; DCTSIZE2],
     next: *mut JBlock,
 ) -> QuantizeRet {
-    unsafe {
-        match downsample {
-            RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
-                DELTA_Q,
-                UPDATE_PREV,
-                RESCALE_PREV,
-                RESCALE_PREV_SHR,
-                { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
-            >(
-                input.quarter.buf.get_unchecked(ci),
-                output,
-                ypos,
-                xpos,
-                div_parts,
-                div_shifts,
-                prev,
-                r_pshifts,
-                next,
-            ),
-            _ => do_forward_dct::<
-                DELTA_Q,
-                UPDATE_PREV,
-                RESCALE_PREV,
-                RESCALE_PREV_SHR,
-                { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
-            >(
-                input.full.get_unchecked(ci),
-                output,
-                ypos,
-                xpos,
-                div_parts,
-                div_shifts,
-                prev,
-                r_pshifts,
-                next,
-            ),
+    if hsamp
+        && if vsamp {
+            need_subsamp_ci::<true, true>(ci as u8)
+        } else {
+            need_subsamp_ci::<true, false>(ci as u8)
+        }
+    {
+        unsafe {
+            match downsample {
+                RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
+                    DELTA_Q,
+                    UPDATE_PREV,
+                    RESCALE_PREV,
+                    RESCALE_PREV_SHR,
+                    { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
+                    true,
+                >(
+                    input.quarter.buf.get_unchecked(ci),
+                    output,
+                    ypos,
+                    xpos,
+                    div_parts,
+                    div_shifts,
+                    prev,
+                    r_pshifts,
+                    next,
+                ),
+                _ => do_forward_dct::<
+                    DELTA_Q,
+                    UPDATE_PREV,
+                    RESCALE_PREV,
+                    RESCALE_PREV_SHR,
+                    { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
+                    true,
+                >(
+                    input.full.get_unchecked(ci),
+                    output,
+                    ypos,
+                    xpos,
+                    div_parts,
+                    div_shifts,
+                    prev,
+                    r_pshifts,
+                    next,
+                ),
+            }
+        }
+    } else {
+        unsafe {
+            match downsample {
+                RP_DOWNSAMPLE_QUARTER => do_forward_dct::<
+                    DELTA_Q,
+                    UPDATE_PREV,
+                    RESCALE_PREV,
+                    RESCALE_PREV_SHR,
+                    { downsample_screen_width(RP_DOWNSAMPLE_QUARTER) },
+                    false,
+                >(
+                    input.quarter.buf.get_unchecked(ci),
+                    output,
+                    ypos,
+                    xpos,
+                    div_parts,
+                    div_shifts,
+                    prev,
+                    r_pshifts,
+                    next,
+                ),
+                _ => do_forward_dct::<
+                    DELTA_Q,
+                    UPDATE_PREV,
+                    RESCALE_PREV,
+                    RESCALE_PREV_SHR,
+                    { downsample_screen_width(RP_DOWNSAMPLE_NONE) },
+                    false,
+                >(
+                    input.full.get_unchecked(ci),
+                    output,
+                    ypos,
+                    xpos,
+                    div_parts,
+                    div_shifts,
+                    prev,
+                    r_pshifts,
+                    next,
+                ),
+            }
         }
     }
 }
@@ -2297,6 +2355,7 @@ unsafe fn do_forward_dct<
     const RESCALE_PREV: bool,
     const RESCALE_PREV_SHR: bool,
     const WIDTH: usize,
+    const H_SAMP: bool,
 >(
     input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
     output: &mut JBlock,
@@ -2309,7 +2368,7 @@ unsafe fn do_forward_dct<
     next: *mut JBlock,
 ) -> QuantizeRet {
     unsafe {
-        convsamp(input, ypos, xpos, output);
+        convsamp::<WIDTH, H_SAMP>(input, ypos, xpos, output);
     }
     fdct_ifast(output);
     quantize::<DELTA_Q, UPDATE_PREV, RESCALE_PREV, RESCALE_PREV_SHR>(
@@ -2317,7 +2376,7 @@ unsafe fn do_forward_dct<
     )
 }
 
-unsafe fn convsamp<const WIDTH: usize>(
+unsafe fn convsamp<const WIDTH: usize, const H_SAMP: bool>(
     input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
     ypos: u16,
     xpos: u16,
@@ -2329,7 +2388,7 @@ unsafe fn convsamp<const WIDTH: usize>(
         for xidx in 0..DCTSIZE {
             let idx = xpos as usize + xidx;
 
-            if idx < WIDTH {
+            if idx < if H_SAMP { WIDTH / SAMP_FACTOR } else { WIDTH } {
                 output[oidx] = *unsafe { input.get_unchecked(idx) } as i16 - CENTERJSAMPLE as i16;
             } else {
                 output[oidx] = if oidx > 0 { output[oidx - 1] } else { 0 };
