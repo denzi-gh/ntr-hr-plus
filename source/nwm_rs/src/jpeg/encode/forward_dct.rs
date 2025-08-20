@@ -31,18 +31,18 @@ pub unsafe fn forward_dct(
 
     unsafe {
         match downsample {
-            RP_DOWNSAMPLE_QUARTER => {
-                convsamp::<{ downsample_screen_width(RP_DOWNSAMPLE_QUARTER) }>(
-                    hsamp,
-                    input.quarter.buf.get_unchecked(ci),
-                    ypos,
-                    xpos,
-                    output,
-                )
-            }
-            _ => convsamp::<{ downsample_screen_width(RP_DOWNSAMPLE_NONE) }>(
+            RP_DOWNSAMPLE_QUARTER => convsamp(
+                downsample_screen_width(RP_DOWNSAMPLE_QUARTER),
                 hsamp,
-                input.full.get_unchecked(ci),
+                input.quarter.buf.get_unchecked(ci).as_ptr(),
+                ypos,
+                xpos,
+                output,
+            ),
+            _ => convsamp(
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+                hsamp,
+                input.full.get_unchecked(ci).as_ptr(),
                 ypos,
                 xpos,
                 output,
@@ -64,19 +64,17 @@ pub unsafe fn forward_dct(
     }
 }
 
-unsafe fn convsamp<const WIDTH: usize>(
+unsafe fn convsamp(
+    width: usize,
     hsamp: bool,
-    input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
+    input: *const u8,
     ypos: u16,
     xpos: u16,
     output: &mut JBlock,
 ) {
+    let width = if hsamp { width / SAMP_FACTOR } else { width };
     unsafe {
-        if hsamp {
-            do_convsamp::<WIDTH, true>(input, ypos, xpos, output);
-        } else {
-            do_convsamp::<WIDTH, false>(input, ypos, xpos, output);
-        }
+        do_convsamp(width, input, ypos, xpos, output);
     }
 }
 
@@ -107,23 +105,17 @@ unsafe fn do_forward_dct(
     )
 }
 
-unsafe fn do_convsamp<const WIDTH: usize, const H_SAMP: bool>(
-    input: &[[u8; WIDTH]; SAMP_FACTOR * DCTSIZE],
-    ypos: u16,
-    xpos: u16,
-    output: &mut JBlock,
-) {
-    let width = if H_SAMP { WIDTH / SAMP_FACTOR } else { WIDTH };
+unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, output: &mut JBlock) {
     let check_width = xpos as usize + DCTSIZE > width;
 
     let mut oidx = 0;
     for yidx in 0..DCTSIZE {
-        let input = unsafe { input.get_unchecked(ypos as usize + yidx) };
+        let input = unsafe { input.add(width * (ypos as usize + yidx)) };
         for xidx in 0..DCTSIZE {
             let idx = xpos as usize + xidx;
 
             if !check_width || idx < width {
-                output[oidx] = *unsafe { input.get_unchecked(idx) } as i16 - CENTERJSAMPLE as i16;
+                output[oidx] = unsafe { *input.add(idx) } as i16 - CENTERJSAMPLE as i16;
             } else {
                 output[oidx] = if oidx > 0 { output[oidx - 1] } else { 0 };
             }

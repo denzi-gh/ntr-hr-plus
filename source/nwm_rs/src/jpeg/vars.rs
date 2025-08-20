@@ -717,7 +717,7 @@ pub const fn downsample_screen_height(downsample: u8, is_top: bool) -> usize {
 
 #[derive(ConstDefault)]
 pub union WorkerColorBufDownsample {
-    pub full: [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; SAMP_FACTOR],
+    pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
 }
 
 #[derive(ConstDefault)]
@@ -728,16 +728,16 @@ pub struct WorkerColorBuf {
 
 #[derive(ConstDefault, Clone, Copy)]
 pub struct WorkerPrepBufDownsampleQuarter {
-    pub buf: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; SAMP_FACTOR * DCTSIZE];
+    pub buf: [[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER) * SAMP_FACTOR * DCTSIZE];
         MAX_COMPONENTS],
     pub prep:
-        [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; DOWNSAMPLE_FACTOR]; MAX_COMPONENTS],
+        [[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER) * DOWNSAMPLE_FACTOR]; MAX_COMPONENTS],
 }
 
 #[derive(ConstDefault)]
 pub union WorkerPrepBufDownsample {
-    pub full: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; SAMP_FACTOR * DCTSIZE];
-        MAX_COMPONENTS],
+    pub full:
+        [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR * DCTSIZE]; MAX_COMPONENTS],
     pub quarter: WorkerPrepBufDownsampleQuarter,
 }
 

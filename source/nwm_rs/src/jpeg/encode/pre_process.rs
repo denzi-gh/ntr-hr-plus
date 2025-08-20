@@ -51,15 +51,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let color = &mut self.worker.bufs.color[ci];
             if DOWNSAMPLE || need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
-                    color.ptr = (*color.buf.full.as_mut_ptr()).as_mut_ptr();
+                    color.ptr = color.buf.full.as_mut_ptr();
                 }
             } else {
-                let output_base = output_base * S as usize;
                 let output_step = S;
-                let output = unsafe {
-                    &mut self.worker.bufs.prep.full[ci][output_base..output_base + output_step][0]
-                        [0]
-                };
+                let output_base = output_base * output_step;
+                let output_base = output_base * downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                let output =
+                    unsafe { self.worker.bufs.prep.full[ci].as_mut_ptr().add(output_base) };
                 color.ptr = output;
             }
         }
@@ -94,24 +93,23 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    pub fn h2v1_downsample<const WIDTH: usize>(input: &[u8; WIDTH], output: *mut u8) {
+    pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
         let mut bias = 0;
-        let output = unsafe { slice::from_raw_parts_mut(output, WIDTH / SAMP_FACTOR) };
+        let input = unsafe { slice::from_raw_parts(input, width) };
+        let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
         for (input, output) in input.as_chunks::<{ SAMP_FACTOR }>().0.iter().zip(output) {
             *output = ((input[0] as u16 + input[1] as u16 + bias as u16) >> 1) as u8;
             bias ^= 1; /* 1=>2, 2=>1 */
         }
     }
 
-    pub fn h2v2_downsample<const WIDTH: usize>(
-        input: &[[u8; WIDTH]; SAMP_FACTOR],
-        output: *mut u8,
-    ) {
-        let [input0, input1] = input;
+    pub fn h2v2_downsample(width: usize, input: *const u8, output: *mut u8) {
+        let input0 = unsafe { slice::from_raw_parts(input, width) };
+        let input1 = unsafe { slice::from_raw_parts(input.add(width), width) };
         let input0 = input0.as_chunks::<{ SAMP_FACTOR }>().0.iter();
         let input1 = input1.as_chunks::<{ SAMP_FACTOR }>().0.iter();
         let mut bias = 1;
-        let output = unsafe { slice::from_raw_parts_mut(output, WIDTH / SAMP_FACTOR) };
+        let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
 
         for ((input0, input1), output) in input0.zip(input1).zip(output) {
             *output = ((input0[0] as u16
@@ -127,16 +125,20 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
         for ci in 0..MAX_COMPONENTS {
-            let input = &self.worker.bufs.color[ci];
             if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
+                    let input = self.worker.bufs.color[ci].buf.full.as_ptr();
+                    let output = self.worker.bufs.prep.full[ci]
+                        .as_mut_ptr()
+                        .add(output_base * out_width);
                     if V_SAMP {
-                        let output = self.worker.bufs.prep.full[ci][output_base].as_mut_ptr();
-                        Self::h2v2_downsample(&input.buf.full, output);
+                        Self::h2v2_downsample(width, input, output);
                     } else {
-                        let output = self.worker.bufs.prep.full[ci][output_base].as_mut_ptr();
-                        Self::h2v1_downsample(&input.buf.full[0], output);
+                        Self::h2v1_downsample(width, input, output);
                     }
                 }
             }
@@ -149,19 +151,20 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     ) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
+        let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER);
+        let out_width = width / SAMP_FACTOR;
+
         for ci in 0..MAX_COMPONENTS {
             if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                 unsafe {
+                    let prep = self.worker.bufs.prep.quarter.prep[ci].as_ptr();
+                    let output = self.worker.bufs.prep.quarter.buf[ci]
+                        .as_mut_ptr()
+                        .add(output_base * out_width);
                     if V_SAMP {
-                        let prep = &mut self.worker.bufs.prep.quarter.prep[ci];
-                        let output =
-                            self.worker.bufs.prep.quarter.buf[ci][output_base].as_mut_ptr();
-                        Self::h2v2_downsample(prep, output);
+                        Self::h2v2_downsample(width, prep, output);
                     } else {
-                        let prep = &mut self.worker.bufs.prep.quarter.prep[ci][0];
-                        let output =
-                            self.worker.bufs.prep.quarter.buf[ci][output_base].as_mut_ptr();
-                        Self::h2v1_downsample(prep, output);
+                        Self::h2v1_downsample(width, prep, output);
                     }
                 }
             }
@@ -189,15 +192,20 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             for ci in 0..MAX_COMPONENTS {
                 for j in 0..SAMP_FACTOR {
                     let k = i * SAMP_FACTOR + j;
-                    if H_SAMP && need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                        if let [src, dst] = &mut buf[ci][k - 1..=k] {
-                            let r = 0..downsample_screen_width(RP_DOWNSAMPLE_QUARTER) / 2;
-                            dst[r.clone()].copy_from_slice(&src[r]);
-                        } else {
-                            panic!()
-                        }
+                    let buf = buf[ci].as_mut_ptr();
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER);
+
+                    let width = if H_SAMP && need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                        width / SAMP_FACTOR
                     } else {
-                        buf[ci][k] = buf[ci][k - 1];
+                        width
+                    };
+
+                    unsafe {
+                        let src = buf.add(width * (k - 1));
+                        let dst = buf.add(width * k);
+
+                        ptr::copy_nonoverlapping(src, dst, width);
                     }
                 }
             }
@@ -213,6 +221,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     ) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
         for (prep_base, chunk) in chunk.as_chunks::<DOWNSAMPLE_FACTOR>().0.iter().enumerate() {
             self.color_convert_quarter_vsamp::<H_SAMP>(
                 chunk,
@@ -220,19 +232,21 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             );
 
             for ci in 0..MAX_COMPONENTS {
-                if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                    unsafe {
+                unsafe {
+                    let input = self.worker.bufs.color[ci].buf.full.as_ptr();
+                    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                         Self::h2v2_downsample(
-                            &self.worker.bufs.color[ci].buf.full,
-                            self.worker.bufs.prep.quarter.prep[ci][prep_base].as_mut_ptr(),
+                            width,
+                            input,
+                            self.worker.bufs.prep.quarter.prep[ci]
+                                .as_mut_ptr()
+                                .add(out_width * prep_base),
                         );
-                    }
-                } else {
-                    unsafe {
+                    } else {
                         let output = self.worker.bufs.prep.quarter.buf[ci]
-                            [output_base * SAMP_FACTOR + prep_base]
-                            .as_mut_ptr();
-                        Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
+                            .as_mut_ptr()
+                            .add(out_width * (output_base * SAMP_FACTOR + prep_base));
+                        Self::h2v2_downsample(width, input, output);
                     }
                 }
             }
@@ -270,6 +284,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     ) {
         const H_SAMP: bool = false;
         const _V_SAMP: bool = false;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
         for (output_base, chunk) in src
             .as_chunks::<{ DOWNSAMPLE_FACTOR }>()
             .0
@@ -283,8 +301,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             for ci in 0..MAX_COMPONENTS {
                 unsafe {
-                    let output = self.worker.bufs.prep.quarter.buf[ci][output_base].as_mut_ptr();
-                    Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
+                    let input = self.worker.bufs.color[ci].buf.full.as_ptr();
+                    let output = self.worker.bufs.prep.quarter.buf[ci]
+                        .as_mut_ptr()
+                        .add(out_width * output_base);
+                    Self::h2v2_downsample(width, input, output);
                 }
             }
         }
@@ -293,6 +314,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn pre_process_quarter_novsamp(&mut self, src: [&[u8]; DCTSIZE * DOWNSAMPLE_FACTOR]) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = false;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
         for (output_base, chunk) in src
             .as_chunks::<{ DOWNSAMPLE_FACTOR }>()
             .0
@@ -305,18 +330,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             );
 
             for ci in 0..MAX_COMPONENTS {
-                if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                    unsafe {
+                unsafe {
+                    let input = self.worker.bufs.color[ci].buf.full.as_ptr();
+                    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
                         Self::h2v2_downsample(
-                            &self.worker.bufs.color[ci].buf.full,
-                            self.worker.bufs.prep.quarter.prep[ci][0].as_mut_ptr(),
+                            width,
+                            input,
+                            self.worker.bufs.prep.quarter.prep[ci].as_mut_ptr(),
                         );
-                    }
-                } else {
-                    unsafe {
-                        let output =
-                            self.worker.bufs.prep.quarter.buf[ci][output_base].as_mut_ptr();
-                        Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
+                    } else {
+                        let output = self.worker.bufs.prep.quarter.buf[ci]
+                            .as_mut_ptr()
+                            .add(out_width * output_base);
+                        Self::h2v2_downsample(width, input, output);
                     }
                 }
             }
