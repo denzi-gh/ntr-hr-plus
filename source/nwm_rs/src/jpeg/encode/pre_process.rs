@@ -4,95 +4,6 @@
 use super::*;
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
-    pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
-        &mut self,
-        input: &[&[u8]; DOWNSAMPLE_FACTOR],
-        width: usize,
-    ) {
-        const V_SAMP: bool = true;
-        const DOWNSAMPLE: bool = true;
-        self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP, DOWNSAMPLE>(input, 0, width);
-    }
-
-    pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
-        &mut self,
-        input: &[&[u8]; DOWNSAMPLE_FACTOR],
-        width: usize,
-    ) {
-        const V_SAMP: bool = false;
-        const DOWNSAMPLE: bool = true;
-        self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP, DOWNSAMPLE>(input, 0, width);
-    }
-
-    pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
-        &mut self,
-        input: &[&[u8]; S],
-        output_base: usize,
-        width: usize,
-    ) {
-        const DOWNSAMPLE: bool = false;
-        self.color_convert::<S, H_SAMP, V_SAMP, DOWNSAMPLE>(input, output_base, width);
-    }
-
-    pub fn color_convert<
-        const S: usize,
-        const H_SAMP: bool,
-        const V_SAMP: bool,
-        const DOWNSAMPLE: bool,
-    >(
-        &mut self,
-        input: &[&[u8]; S],
-        output_base: usize,
-        width: usize,
-    ) {
-        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
-
-        for ci in 0..MAX_COMPONENTS {
-            let color = &mut self.worker.bufs.color[ci];
-            if DOWNSAMPLE || need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                unsafe {
-                    color.ptr = color.buf.full.as_mut_ptr();
-                }
-            } else {
-                let output_step = S;
-                let output_base = output_base * output_step;
-                let output_base = output_base * downsample_screen_width(RP_DOWNSAMPLE_NONE);
-                let output =
-                    unsafe { self.worker.bufs.prep.full[ci].as_mut_ptr().add(output_base) };
-                color.ptr = output;
-            }
-        }
-        match self.worker.info.color_space {
-            ColorSpace::XBGR => cconvert::<3, 2, 1, 4, { S }>(
-                input,
-                &mut self.worker.bufs.color,
-                width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
-            ),
-            ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
-                input,
-                &mut self.worker.bufs.color,
-                width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
-            ),
-            ColorSpace::RGB565 => cconvert2::<{ S }, _>(
-                input,
-                rgb565_comps,
-                &mut self.worker.bufs.color,
-                width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls,
-            ),
-            ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
-                input,
-                rgb5a1_comps,
-                &mut self.worker.bufs.color,
-                width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls,
-            ),
-            ColorSpace::RGB4 => todo!(),
-        }
-    }
-
     pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
         let mut bias = 0;
         let input = unsafe { slice::from_raw_parts(input, width) };
@@ -165,6 +76,32 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         Self::h2v2_downsample(width, prep, output);
                     } else {
                         Self::h2v1_downsample(width, prep, output);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
+        &mut self,
+        output_base: usize,
+    ) {
+        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD);
+        let out_width = width / SAMP_FACTOR;
+
+        for ci in 0..MAX_COMPONENTS {
+            if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                unsafe {
+                    let input = self.worker.bufs.color[ci].buf.even_odd.as_ptr();
+                    let output = self.worker.bufs.prep.even_odd[ci]
+                        .as_mut_ptr()
+                        .add(output_base * out_width);
+                    if V_SAMP {
+                        Self::h2v2_downsample(width, input, output);
+                    } else {
+                        Self::h2v1_downsample(width, input, output);
                     }
                 }
             }
@@ -265,6 +202,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+    pub fn pre_process_even_odd(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR]) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = true;
+        for (output_base, chunk) in src.as_chunks::<{ SAMP_FACTOR }>().0.iter().enumerate() {
+            self.color_convert_even_odd::<_, H_SAMP, V_SAMP>(
+                chunk,
+                output_base,
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            );
+            self.downsample_even_odd::<H_SAMP, V_SAMP>(output_base);
+        }
+    }
+
     pub fn pre_process_full(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR]) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
@@ -360,6 +310,18 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 downsample_screen_width(RP_DOWNSAMPLE_NONE),
             );
             self.downsample_full::<H_SAMP, V_SAMP>(base);
+        }
+    }
+
+    pub fn pre_process_even_odd_novsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
+        const V_SAMP: bool = false;
+        for (base, chunk) in src.as_chunks::<1>().0.iter().enumerate() {
+            self.color_convert_even_odd::<_, H_SAMP, V_SAMP>(
+                chunk,
+                base,
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            );
+            self.downsample_even_odd::<H_SAMP, V_SAMP>(base);
         }
     }
 }

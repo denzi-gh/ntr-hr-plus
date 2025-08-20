@@ -106,6 +106,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         if vss {
+            // vss == true
             match screen.downsample {
                 RP_DOWNSAMPLE_QUARTER => {
                     let src_chunks = src
@@ -146,6 +147,26 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         );
                     }
                 }
+                RP_DOWNSAMPLE_EVEN_ODD => {
+                    let src_chunks = src
+                        .chunks_exact(pitch)
+                        .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+                    for (i, chunks) in src_chunks.enumerate() {
+                        self.process(
+                            prev,
+                            i,
+                            |this| {
+                                /* Pre-process */
+                                this.pre_process_even_odd(chunks);
+                                pre_progress(1);
+                                true
+                            },
+                            || {
+                                progress();
+                            },
+                        );
+                    }
+                }
                 _ => {
                     let src_chunks = src
                         .chunks_exact(pitch)
@@ -168,6 +189,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 }
             };
         } else {
+            // vss == false
             match screen.downsample {
                 RP_DOWNSAMPLE_QUARTER => {
                     let pre_process = if hss {
@@ -186,6 +208,29 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             |this| {
                                 pre_process(this, chunk);
                                 pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                true
+                            },
+                            || {
+                                progress();
+                            },
+                        );
+                    }
+                }
+                RP_DOWNSAMPLE_EVEN_ODD => {
+                    let pre_process = if hss {
+                        Self::pre_process_even_odd_novsamp::<true>
+                    } else {
+                        Self::pre_process_even_odd_novsamp::<false>
+                    };
+
+                    let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
+                    for (i, chunk) in src_chunks.enumerate() {
+                        self.process(
+                            prev,
+                            i,
+                            |this| {
+                                pre_process(this, chunk);
+                                pre_progress(1);
                                 true
                             },
                             || {
@@ -261,7 +306,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
 
-        Some(JpegDqRet { delta_q, mcus })
+        Some(JpegDqRet {
+            delta_q,
+            mcus,
+            even_odd: self.worker.info.even_odd,
+        })
     }
 
     fn process<F, G>(&mut self, prev: *mut JBlock, row_i: usize, do_pre_process: F, do_progress: G)

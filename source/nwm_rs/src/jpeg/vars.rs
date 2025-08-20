@@ -689,16 +689,24 @@ pub const MAX_BLOCKS_IN_MCU: usize = SAMP_FACTOR * SAMP_FACTOR + 1 + 1;
 
 pub const DOWNSAMPLE_FACTOR: usize = 2;
 
-pub const fn downsample_quality_scale(downsample: u8, quality: u32) -> u32 {
+pub const fn downsample_quality_scale_factor(downsample: u8) -> u32 {
     match downsample {
-        RP_DOWNSAMPLE_QUARTER => 100 - (100 - quality + 2) / 4,
-        _ => quality,
+        RP_DOWNSAMPLE_QUARTER => 4,
+        RP_DOWNSAMPLE_EVEN_ODD => 2,
+        _ => 1,
     }
+}
+
+pub const fn downsample_quality_scale(downsample: u8, quality: u32) -> u32 {
+    let factor = downsample_quality_scale_factor(downsample);
+    100 - (100 - quality + factor / 2) / factor
 }
 
 pub const fn downsample_screen_width(downsample: u8) -> usize {
     match downsample {
-        RP_DOWNSAMPLE_QUARTER => GSP_SCREEN_WIDTH as usize / DOWNSAMPLE_FACTOR,
+        RP_DOWNSAMPLE_QUARTER | RP_DOWNSAMPLE_EVEN_ODD => {
+            GSP_SCREEN_WIDTH as usize / DOWNSAMPLE_FACTOR
+        }
         _ => GSP_SCREEN_WIDTH as usize,
     }
 }
@@ -711,13 +719,14 @@ pub const fn downsample_screen_height(downsample: u8, is_top: bool) -> usize {
     };
     match downsample {
         RP_DOWNSAMPLE_QUARTER => height / DOWNSAMPLE_FACTOR,
-        _ => height,
+        RP_DOWNSAMPLE_EVEN_ODD | _ => height,
     }
 }
 
 #[derive(ConstDefault)]
 pub union WorkerColorBufDownsample {
     pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
+    pub even_odd: [u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR],
 }
 
 #[derive(ConstDefault)]
@@ -739,6 +748,8 @@ pub union WorkerPrepBufDownsample {
     pub full:
         [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR * DCTSIZE]; MAX_COMPONENTS],
     pub quarter: WorkerPrepBufDownsampleQuarter,
+    pub even_odd: [[u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR * DCTSIZE];
+        MAX_COMPONENTS],
 }
 
 #[derive(ConstDefault)]

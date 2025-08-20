@@ -3,6 +3,152 @@
 
 use super::*;
 
+impl<'a, 'b> JpegEncode<'a, 'b> {
+    pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; DOWNSAMPLE_FACTOR],
+        width: usize,
+    ) {
+        const V_SAMP: bool = true;
+        self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP>(
+            input,
+            0,
+            width,
+            0,
+            1,
+            RP_DOWNSAMPLE_QUARTER,
+        );
+    }
+
+    pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; DOWNSAMPLE_FACTOR],
+        width: usize,
+    ) {
+        const V_SAMP: bool = false;
+        self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP>(
+            input,
+            0,
+            width,
+            0,
+            1,
+            RP_DOWNSAMPLE_QUARTER,
+        );
+    }
+
+    pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; S],
+        output_base: usize,
+        width: usize,
+    ) {
+        self.color_convert::<S, H_SAMP, V_SAMP>(
+            input,
+            output_base,
+            width,
+            0,
+            1,
+            RP_DOWNSAMPLE_NONE,
+        );
+    }
+
+    pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; S],
+        output_base: usize,
+        width: usize,
+    ) {
+        let start = if self.worker.info.even_odd == false {
+            0
+        } else {
+            1
+        };
+
+        self.color_convert::<S, H_SAMP, V_SAMP>(
+            input,
+            output_base,
+            width,
+            start,
+            2,
+            RP_DOWNSAMPLE_EVEN_ODD,
+        );
+    }
+
+    pub fn color_convert<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
+        &mut self,
+        input: &[&[u8]; S],
+        output_base: usize,
+        width: usize,
+        start: usize,
+        step: usize,
+        downsample: u8,
+    ) {
+        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        for ci in 0..MAX_COMPONENTS {
+            let color = &mut self.worker.bufs.color[ci];
+            if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                unsafe {
+                    match downsample {
+                        RP_DOWNSAMPLE_EVEN_ODD => color.ptr = color.buf.even_odd.as_mut_ptr(),
+                        _ => color.ptr = color.buf.full.as_mut_ptr(),
+                    }
+                }
+            } else {
+                let output_step = S;
+                let output_base = output_base * output_step;
+                let output_base = output_base * downsample_screen_width(downsample);
+                let output = unsafe {
+                    match downsample {
+                        RP_DOWNSAMPLE_EVEN_ODD => self.worker.bufs.prep.even_odd[ci]
+                            .as_mut_ptr()
+                            .add(output_base),
+                        _ => self.worker.bufs.prep.full[ci].as_mut_ptr().add(output_base),
+                    }
+                };
+                color.ptr = output;
+            }
+        }
+        match self.worker.info.color_space {
+            ColorSpace::XBGR => cconvert::<3, 2, 1, 4, { S }>(
+                input,
+                &mut self.worker.bufs.color,
+                width,
+                start,
+                step,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+            ),
+            ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
+                input,
+                &mut self.worker.bufs.color,
+                width,
+                start,
+                step,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+            ),
+            ColorSpace::RGB565 => cconvert2::<{ S }, _>(
+                input,
+                rgb565_comps,
+                &mut self.worker.bufs.color,
+                width,
+                start,
+                step,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+            ),
+            ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
+                input,
+                rgb5a1_comps,
+                &mut self.worker.bufs.color,
+                width,
+                start,
+                step,
+                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+            ),
+            ColorSpace::RGB4 => todo!(),
+        }
+    }
+}
+
 pub fn pconvert(
     r: u8,
     g: u8,
@@ -34,6 +180,8 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     input: &[&[u8]; N],
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
+    start: usize,
+    step: usize,
     tab: &[i32; TABLE_SIZE],
 ) {
     let [output0, output1, output2] = output;
@@ -51,6 +199,8 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
             .as_chunks::<P>()
             .0
             .iter()
+            .skip(start)
+            .step_by(step)
             .zip(output0.into_iter())
             .zip(output1.into_iter())
             .zip(output2.into_iter())
@@ -69,6 +219,8 @@ pub fn cconvert2<const N: usize, F>(
     comps: F,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
+    start: usize,
+    step: usize,
     tab: &ColorConvTabs,
 ) where
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
@@ -88,6 +240,8 @@ pub fn cconvert2<const N: usize, F>(
             .as_chunks::<2>()
             .0
             .iter()
+            .skip(start)
+            .step_by(step)
             .zip(output0.into_iter())
             .zip(output1.into_iter())
             .zip(output2.into_iter())

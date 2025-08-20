@@ -53,6 +53,7 @@ pub struct CInfo {
     pub restart_interval: u16,
     pub work_index: WorkIndex,
     pub core_count: CoreCount,
+    pub even_odd: bool,
 }
 
 impl Jpeg {

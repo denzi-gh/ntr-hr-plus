@@ -58,6 +58,7 @@ pub unsafe fn init(
         JPEG_QUALITY = quality;
         JPEG_CHROMA_SS = chroma_ss;
         JPEG_DOWNSAMPLE = downsample;
+        JPEG_EVEN_ODD = const_default();
     }
 }
 
@@ -297,7 +298,8 @@ impl WorkFrame {
 
         let w = self.0.0.w;
         let last_s = unsafe { &mut LAST_ENCODED_SCREEN };
-        let curr_s = is_top_index(bctx.is_top);
+        let is_top = bctx.is_top;
+        let curr_s = is_top_index(is_top);
 
         let core_count = core_count_in_use();
         let thread_index_last = thread_index_last(core_count);
@@ -312,8 +314,8 @@ impl WorkFrame {
         let mcus_per_row = jpeg_screen.mcus_per_row as u32;
 
         let height = jpeg::downsample_screen_height(
-            *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8,
-            bctx.is_top,
+            *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8,
+            is_top,
         ) as u32;
         let mcu_rows = unsafe { core::intrinsics::unchecked_div(height + mcu_size - 1, mcu_size) };
         let mcu_rows_per_thread = unsafe {
@@ -388,28 +390,32 @@ impl WorkFrame {
             (n, n_last)
         };
 
+        let restart_in_rows = v_adjusted as s32;
+        let restart_interval = restart_in_rows as u32 * mcus_per_row;
+
+        let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
+        let cinfo = jpeg::CInfo {
+            is_top: bctx.is_top,
+            color_space: match bctx.format {
+                0 => jpeg::ColorSpace::XBGR,
+                1 => jpeg::ColorSpace::BGR,
+                2 => jpeg::ColorSpace::RGB565,
+                3 => jpeg::ColorSpace::RGB5A1,
+                _ => jpeg::ColorSpace::RGB4,
+            },
+            restart_interval: restart_interval as u16,
+            work_index: w,
+            core_count,
+            even_odd,
+        };
+
+        unsafe { *curr_s.index_into_mut(&mut JPEG_EVEN_ODD) = !even_odd };
+
+        unsafe {
+            (*jpeg::JPEG).set_info(cinfo);
+        }
+
         for j in ThreadIndex::up_to(&thread_index_last) {
-            let restart_in_rows = v_adjusted as s32;
-            let restart_interval = restart_in_rows as u32 * mcus_per_row;
-
-            let cinfo = jpeg::CInfo {
-                is_top: bctx.is_top,
-                color_space: match bctx.format {
-                    0 => jpeg::ColorSpace::XBGR,
-                    1 => jpeg::ColorSpace::BGR,
-                    2 => jpeg::ColorSpace::RGB565,
-                    3 => jpeg::ColorSpace::RGB5A1,
-                    _ => jpeg::ColorSpace::RGB4,
-                },
-                restart_interval: restart_interval as u16,
-                work_index: w,
-                core_count,
-            };
-
-            unsafe {
-                (*jpeg::JPEG).set_info(cinfo);
-            }
-
             *bctx.i_start.get_mut(&j) = restart_in_rows as u32 * j.get();
             *bctx.i_count.get_mut(&j) = if j == thread_index_last {
                 v_last_adjusted
@@ -465,7 +471,7 @@ impl Drop for JpegRet {
         if f == core_count.get() - 1 {
             entries::thread_screen::reset_no_skip_frame(bctx.is_top);
 
-            if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
+            if !unsafe { send_term_dsts(w, self.1.delta_q as u16, self.1.even_odd) } {
                 set_reset_threads();
             }
 
@@ -510,7 +516,7 @@ pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
 }
 
 #[named]
-unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16, even_odd: bool) -> bool {
     if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
         return true;
     }
@@ -573,8 +579,9 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     };
 
     let info = unsafe { TERM_INFOS.get(&w) };
+    let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) };
     let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
-    let hdr = (unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) as u16 })
+    let hdr = (downsample as u16)
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
         | (delta_prog as u16)
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS)
@@ -588,8 +595,38 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
         } else {
             unsafe { *is_top_index(info.is_top).index_into(&JPEG_QUALITY) as u16 }
         });
+
+    let ex_hdr = downsample as u8 == RP_DOWNSAMPLE_EVEN_ODD;
+    let hdr = if ex_hdr {
+        const EX_HDR_BIT: u32 = 15;
+        assert!(
+            RP_KCP_HDR_QUALITY_NBITS
+                + RP_KCP_HDR_T_NBITS
+                + 1
+                + RP_KCP_HDR_CHROMASS_NBITS
+                + 1
+                + RP_KCP_HDR_DOWNSAMPLE_NBITS
+                <= EX_HDR_BIT
+        );
+        hdr | 1 << EX_HDR_BIT
+    } else {
+        hdr
+    };
+
     if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
         return false;
+    }
+
+    if ex_hdr {
+        let mut hdr: u16 = 0;
+
+        if downsample as u8 == RP_DOWNSAMPLE_EVEN_ODD {
+            hdr |= even_odd as u16;
+        }
+
+        if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
+            return false;
+        }
     }
 
     let core_count = core_count_in_use();
@@ -777,7 +814,7 @@ impl WorkAcquire {
                 *bctx.i_start.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
                 *bctx.i_count.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
             ),
-            _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
+            RP_DOWNSAMPLE_EVEN_ODD | _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
         };
         let pitch = bctx.pitch();
 
@@ -926,3 +963,4 @@ static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
+static mut JPEG_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();

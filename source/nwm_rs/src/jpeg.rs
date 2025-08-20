@@ -21,6 +21,7 @@ pub use worker_dst::*;
 pub struct JpegDqRet {
     pub delta_q: u8,
     pub mcus: u16,
+    pub even_odd: bool,
 }
 
 pub struct JpegScreenShared {

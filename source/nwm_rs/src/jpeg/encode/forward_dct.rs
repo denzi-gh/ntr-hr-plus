@@ -39,6 +39,14 @@ pub unsafe fn forward_dct(
                 xpos,
                 output,
             ),
+            RP_DOWNSAMPLE_EVEN_ODD => convsamp(
+                downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD),
+                hsamp,
+                input.even_odd.get_unchecked(ci).as_ptr(),
+                ypos,
+                xpos,
+                output,
+            ),
             _ => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_NONE),
                 hsamp,
