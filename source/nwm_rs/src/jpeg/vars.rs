@@ -377,7 +377,7 @@ pub const STD_CHROMINANCE_QUANT_TBL: [u8; DCTSIZE2] = [
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 ];
 
-#[derive(ConstDefault)]
+#[derive(ConstDefault, Clone, Copy)]
 pub struct QuantTbl {
     /* This array gives the coefficient quantizers in natural array order
      * (not the zigzag order in which they are stored in a JPEG DQT marker).
@@ -389,7 +389,7 @@ pub struct QuantTbl {
 
 pub const NUM_QUANT_TBLS: usize = 2;
 
-#[derive(ConstDefault)]
+#[derive(ConstDefault, Clone, Copy)]
 pub struct QuantTbls {
     pub quant_tbls: [QuantTbl; NUM_QUANT_TBLS],
 }
@@ -436,13 +436,13 @@ impl QuantTbls {
     }
 }
 
-#[derive(ConstDefault)]
+#[derive(ConstDefault, Clone, Copy)]
 pub struct DivisorPart {
     pub recip: i16,
     pub corr: i16,
 }
 
-#[derive(ConstDefault)]
+#[derive(ConstDefault, Clone, Copy)]
 pub struct Divisors {
     pub divisors: [[DivisorPart; DCTSIZE2]; NUM_QUANT_TBLS],
 }
@@ -688,6 +688,13 @@ pub type JBlock = [JCoef; DCTSIZE2];
 pub const MAX_BLOCKS_IN_MCU: usize = SAMP_FACTOR * SAMP_FACTOR + 1 + 1;
 
 pub const DOWNSAMPLE_FACTOR: usize = 2;
+
+pub const fn downsample_quality_scale(downsample: u8, quality: u32) -> u32 {
+    match downsample {
+        RP_DOWNSAMPLE_QUARTER => 100 - (100 - quality + 2) / 4,
+        _ => quality,
+    }
+}
 
 pub const fn downsample_screen_width(downsample: u8) -> usize {
     match downsample {

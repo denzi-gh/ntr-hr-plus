@@ -35,7 +35,7 @@ impl Impl {
 }
 
 pub unsafe fn init(
-    quality: u32,
+    quality: [u32; RP_SCREEN_COUNT as usize],
     chroma_ss: [u32; RP_SCREEN_COUNT as usize],
     downsample: [u32; RP_SCREEN_COUNT as usize],
 ) {
@@ -586,7 +586,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
         | (if delta_prog {
             delta_q
         } else {
-            unsafe { JPEG_QUALITY as u16 }
+            unsafe { *is_top_index(info.is_top).index_into(&JPEG_QUALITY) as u16 }
         });
     if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
         return false;
@@ -944,6 +944,6 @@ pub struct TermInfo {
 }
 
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
-static mut JPEG_QUALITY: u32 = const_default();
+static mut JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();

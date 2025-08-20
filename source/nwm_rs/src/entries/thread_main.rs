@@ -231,6 +231,10 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
                     .load(Ordering::Acquire),
             ]
         };
+        let quality = [
+            jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
+            jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
+        ];
         jpeg.init(
             quality,
             core_count,

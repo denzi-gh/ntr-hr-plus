@@ -69,18 +69,19 @@ pub struct JpegScreenShared {
     downsample: u8,
     width: u16,
     height: u16,
-}
 
-pub struct JpegShared {
-    quality: u32,
     quant_tbls: QuantTbls,
     divisors: Divisors,
     div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    qos_adj: f32,
+}
+
+pub struct JpegShared {
+    quality: [u32; RP_SCREEN_COUNT as usize],
     div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     core_count: CoreCount,
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
     pub last_restart_range: u32,
-    qos_adj: f32,
     jpeg_tbls: JpegTbls,
     delta_q_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
@@ -182,23 +183,55 @@ const fn jdiv_round_up(a: usize, b: usize) -> usize
 impl JpegShared {
     fn init(
         &mut self,
-        quality: u32,
+        quality: [u32; RP_SCREEN_COUNT as usize],
         delta_prog: bool,
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         self.quality = quality;
-        self.quant_tbls
-            .set_quality(if delta_prog { 100 } else { self.quality });
-        self.divisors
-            .set_divisors(&self.quant_tbls, &mut self.div_shifts);
+
+        for s in ScreenIndex::all() {
+            let screen = s.index_into_mut(&mut self.screens);
+            let quality = *s.index_into(&quality);
+
+            if !delta_prog || s.get() == RP_SCREEN_TOP as u32 {
+                screen
+                    .quant_tbls
+                    .set_quality(if delta_prog { 100 } else { quality });
+                screen
+                    .divisors
+                    .set_divisors(&screen.quant_tbls, &mut screen.div_shifts);
+            }
+
+            if delta_prog {
+                const QOS_ADJ_B: f32 = u8::BITS as f32;
+                const QOS_MIN_F: f32 = 0.625f32;
+                const QOS_MAX_L_F: f32 = 0.875f32;
+                const QOS_MAX_H_F: f32 = 0.75f32;
+                screen.qos_adj = QOS_ADJ_B * QOS_MIN_F
+                    + ((QOS_MAX_L_F
+                        + (QOS_MAX_H_F - QOS_MAX_L_F)
+                            * entries::thread_nwm::rp_delta_q_qos() as f32
+                            * (1f32 / RP_QOS_MAX as f32)
+                        - QOS_MIN_F)
+                        * QOS_ADJ_B
+                        * quality as f32
+                        * (1f32 / RP_QUALITY_MAX as f32));
+            }
+        }
 
         if delta_prog {
+            for s in 1..RP_SCREEN_COUNT as usize {
+                self.screens[s].quant_tbls = self.screens[RP_SCREEN_TOP as usize].quant_tbls;
+                self.screens[s].divisors = self.screens[RP_SCREEN_TOP as usize].divisors;
+                self.screens[s].div_shifts = self.screens[RP_SCREEN_TOP as usize].div_shifts;
+            }
+
             for q in 0..DELTA_Q_COUNT {
                 let div_shifts = &mut self.div_delta_q_shifts[q as usize];
                 for i in 0..NUM_QUANT_TBLS {
-                    let base_shifts = &self.div_shifts[i];
+                    let base_shifts = &self.screens[RP_SCREEN_TOP as usize].div_shifts[i];
                     let shifts = &mut div_shifts[i];
                     let ltbl = &self.delta_q_tbls[q as usize][i];
 
@@ -207,19 +240,6 @@ impl JpegShared {
                     }
                 }
             }
-            const QOS_ADJ_B: f32 = u8::BITS as f32;
-            const QOS_MIN_F: f32 = 0.625f32;
-            const QOS_MAX_L_F: f32 = 0.875f32;
-            const QOS_MAX_H_F: f32 = 0.75f32;
-            self.qos_adj = QOS_ADJ_B * QOS_MIN_F
-                + ((QOS_MAX_L_F
-                    + (QOS_MAX_H_F - QOS_MAX_L_F)
-                        * entries::thread_nwm::rp_delta_q_qos() as f32
-                        * (1f32 / RP_QOS_MAX as f32)
-                    - QOS_MIN_F)
-                    * QOS_ADJ_B
-                    * self.quality as f32
-                    * (1f32 / RP_QUALITY_MAX as f32));
         }
 
         self.core_count = core_count;
@@ -617,7 +637,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
     /* Emit a DQT marker */
     /* Returns the precision used (0 = 8bits, 1 = 16bits) for baseline checking */
     {
-        let qtbl = &self.worker.shared.quant_tbls.quant_tbls[index];
+        let s = is_top_index(self.worker.info.is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
+        let qtbl = &screen.quant_tbls.quant_tbls[index];
 
         self.write_marker(M_DQT);
         self.write_2bytes((DCTSIZE2 + 1 + 2) as u16);
@@ -1450,7 +1472,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let prev_delta_q = *delta_q;
         let delta_q0 = &self.worker.shared.delta_q0_tbls[prev_delta_q as usize];
-        let div_parts = &self.worker.shared.divisors.divisors;
+        let div_parts = &screen.divisors.divisors;
         let div_shifts = &self.worker.shared.div_delta_q_shifts[DELTA_Q_COUNT as usize - 1];
 
         let mut delta_cache_start = 0;
@@ -1572,9 +1594,9 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         let frame_rate_1 = frame_rate_get_clamp_min(frame_time_1);
         let frame_rate_1 = frame_rate_clamp_max(frame_rate_1, s_1);
 
-        let qr = (DELTA_Q_COUNT as u32 / 6
-            + DELTA_Q_COUNT as u32 * self.worker.shared.quality * self.worker.shared.quality
-                / 12000) as u8;
+        let quality = *s.index_into(&self.worker.shared.quality);
+        let qr =
+            (DELTA_Q_COUNT as u32 / 6 + DELTA_Q_COUNT as u32 * quality * quality / 12000) as u8;
         let (qc, qc_1) = if s.get() == RP_SCREEN_TOP as u32 {
             let [qc, qc_1] = &mut shared_mut.delta_q_calc;
             (qc, qc_1)
@@ -1591,7 +1613,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
 
         let mcusi = 1f32 / mcus;
         // let mcusi_1 = 1f32 / mcus_1;
-        let qos_adj = self.worker.shared.qos_adj;
+        let qos_adj = screen.qos_adj;
         let qos_b = current_qos * frame_rate_f * qos_adj;
 
         let comp_size = shared_mut.compressed_size.get(&s).load(Ordering::Acquire);
@@ -1786,11 +1808,11 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
         mcu_col_num: usize,
         prev: *mut JBlock,
     ) {
-        let div_parts = &self.worker.shared.divisors.divisors;
         let w = self.worker.info.work_index;
         let mut blkn = 0;
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let div_parts = &screen.divisors.divisors;
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
@@ -1815,12 +1837,7 @@ impl<'a, 'b, const REL_STREAM: bool, const DELTA_Q: bool> JpegEncode<'a, 'b, REL
                         .get_unchecked(comp.quant_tbl_no as usize)
                 }
             } else {
-                unsafe {
-                    self.worker
-                        .shared
-                        .div_shifts
-                        .get_unchecked(comp.quant_tbl_no as usize)
-                }
+                unsafe { screen.div_shifts.get_unchecked(comp.quant_tbl_no as usize) }
             };
 
             let rp_shifts = unsafe {
@@ -2562,7 +2579,7 @@ impl Jpeg {
     #[named]
     pub fn init(
         &mut self,
-        quality: u32,
+        quality: [u32; RP_SCREEN_COUNT as usize],
         core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
