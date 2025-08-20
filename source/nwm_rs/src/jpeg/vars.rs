@@ -980,3 +980,10 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
 }
 
 pub static mut JPEG: *mut Jpeg = const_default();
+
+pub const fn jdiv_round_up(a: usize, b: usize) -> usize
+/* Compute a/b rounded up to next integer, ie, ceil(a/b) */
+/* Assumes a >= 0, b > 0 */
+{
+    (a + b - 1) / b
+}
