@@ -310,7 +310,12 @@ impl WorkFrame {
 
         let mcu_size = jpeg_screen.mcu_col_size as u32;
         let mcus_per_row = jpeg_screen.mcus_per_row as u32;
-        let mcu_rows = unsafe { core::intrinsics::unchecked_div(bctx.height(), mcu_size) };
+
+        let height = jpeg::downsample_screen_height(
+            *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8,
+            bctx.is_top,
+        ) as u32;
+        let mcu_rows = unsafe { core::intrinsics::unchecked_div(height + mcu_size - 1, mcu_size) };
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
         };
@@ -766,8 +771,14 @@ impl WorkAcquire {
         let t = self.0.t;
 
         let src = bctx.src;
-        let i_start = *bctx.i_start.get(&t);
-        let i_count = *bctx.i_count.get(&t);
+        let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+        let (i_start, i_count) = match downsample {
+            RP_DOWNSAMPLE_QUARTER => (
+                *bctx.i_start.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
+                *bctx.i_count.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
+            ),
+            _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
+        };
         let pitch = bctx.pitch();
 
         let mcu_size = unsafe {
@@ -785,11 +796,11 @@ impl WorkAcquire {
         };
 
         let mut pre_progress_count = 0;
-        let pre_progress = || {
+        let pre_progress = |count| {
             if pre_progress_count >= i_count_half {
                 capture_screen(&mut bctx.should_capture);
             }
-            pre_progress_count += 1;
+            pre_progress_count += count as usize;
         };
 
         let progress = || {};

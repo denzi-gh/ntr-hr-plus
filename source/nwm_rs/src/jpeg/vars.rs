@@ -681,15 +681,17 @@ impl EntropyTbls {
     }
 }
 
-pub const MAX_SAMP_FACTOR: usize = 2;
+pub const SAMP_FACTOR: usize = 2;
 
 pub type JCoef = i16;
 pub type JBlock = [JCoef; DCTSIZE2];
-pub const MAX_BLOCKS_IN_MCU: usize = MAX_SAMP_FACTOR * MAX_SAMP_FACTOR + 1 + 1;
+pub const MAX_BLOCKS_IN_MCU: usize = SAMP_FACTOR * SAMP_FACTOR + 1 + 1;
+
+pub const DOWNSAMPLE_FACTOR: usize = 2;
 
 pub const fn downsample_screen_width(downsample: u8) -> usize {
     match downsample {
-        RP_DOWNSAMPLE_QUARTER => GSP_SCREEN_WIDTH as usize / 2,
+        RP_DOWNSAMPLE_QUARTER => GSP_SCREEN_WIDTH as usize / DOWNSAMPLE_FACTOR,
         _ => GSP_SCREEN_WIDTH as usize,
     }
 }
@@ -701,14 +703,14 @@ pub const fn downsample_screen_height(downsample: u8, is_top: bool) -> usize {
         GSP_SCREEN_HEIGHT_BOTTOM as usize
     };
     match downsample {
-        RP_DOWNSAMPLE_QUARTER => height / 2,
+        RP_DOWNSAMPLE_QUARTER => height / DOWNSAMPLE_FACTOR,
         _ => height,
     }
 }
 
 #[derive(ConstDefault)]
 pub union WorkerColorBufDownsample {
-    pub full: [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; MAX_SAMP_FACTOR],
+    pub full: [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; SAMP_FACTOR],
 }
 
 #[derive(ConstDefault)]
@@ -719,15 +721,15 @@ pub struct WorkerColorBuf {
 
 #[derive(ConstDefault, Clone, Copy)]
 pub struct WorkerPrepBufDownsampleQuarter {
-    pub buf: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; MAX_SAMP_FACTOR * DCTSIZE];
+    pub buf: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; SAMP_FACTOR * DCTSIZE];
         MAX_COMPONENTS],
     pub prep:
-        [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; MAX_SAMP_FACTOR]; MAX_COMPONENTS],
+        [[[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER)]; DOWNSAMPLE_FACTOR]; MAX_COMPONENTS],
 }
 
 #[derive(ConstDefault)]
 pub union WorkerPrepBufDownsample {
-    pub full: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; MAX_SAMP_FACTOR * DCTSIZE];
+    pub full: [[[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE)]; SAMP_FACTOR * DCTSIZE];
         MAX_COMPONENTS],
     pub quarter: WorkerPrepBufDownsampleQuarter,
 }
