@@ -3,7 +3,15 @@
 
 use super::*;
 
-pub fn pconvert(r: u8, g: u8, b: u8, y: &mut u8, cb: &mut u8, cr: &mut u8, ctab: &[i32; TABLE_SIZE]) {
+pub fn pconvert(
+    r: u8,
+    g: u8,
+    b: u8,
+    y: &mut u8,
+    cb: &mut u8,
+    cr: &mut u8,
+    ctab: &[i32; TABLE_SIZE],
+) {
     /* If the inputs are 0.._MAXJSAMPLE, the outputs of these equations
      * must be too; we do not need an explicit range-limiting operation.
      * Hence the value being shifted is never negative, and we don't
@@ -29,9 +37,9 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     tab: &[i32; TABLE_SIZE],
 ) {
     let [output0, output1, output2] = output;
-    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr as *mut u8, width * N) };
-    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr as *mut u8, width * N) };
-    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr as *mut u8, width * N) };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, width * N) };
     for i in 0..N {
         let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * P) };
 
@@ -66,9 +74,9 @@ pub fn cconvert2<const N: usize, F>(
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
 {
     let [output0, output1, output2] = output;
-    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr as *mut u8, width * N) };
-    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr as *mut u8, width * N) };
-    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr as *mut u8, width * N) };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, width * N) };
     for i in 0..N {
         let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * 2) };
 
