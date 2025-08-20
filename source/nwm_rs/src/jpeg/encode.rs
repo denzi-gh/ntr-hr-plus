@@ -113,45 +113,37 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         .array_chunks::<{ DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR }>();
                     let n = src_chunks.len();
                     for (i, chunks) in src_chunks.clone().enumerate() {
-                        /* Pre-process */
-                        self.pre_process_quarter(chunks);
-
-                        pre_progress(DOWNSAMPLE_FACTOR as u32);
-
-                        /* Compress and encode */
                         self.process(
-                            if self.worker.shared.delta_prog {
-                                unsafe {
-                                    prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
-                                }
-                            } else {
-                                ptr::null_mut()
+                            prev,
+                            i,
+                            |this| {
+                                /* Pre-process */
+                                this.pre_process_quarter(chunks);
+                                pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                true
                             },
-                            i as u8,
+                            || {
+                                progress();
+                            },
                         );
-
-                        progress();
                     }
 
                     if let Some(rem) = src_chunks.into_remainder() {
-                        /* Pre-process */
-                        if self.pre_process_quarter_rem(rem) {
-                            pre_progress(DOWNSAMPLE_FACTOR as u32);
-
-                            /* Compress and encode */
-                            self.process(
-                                if self.worker.shared.delta_prog {
-                                    unsafe {
-                                        prev.add(n * screen.mcus_per_row * screen.max_blocks_in_mcu)
-                                    }
-                                } else {
-                                    ptr::null_mut()
-                                },
-                                n as u8,
-                            );
-
-                            progress();
-                        }
+                        self.process(
+                            prev,
+                            n,
+                            |this| {
+                                /* Pre-process */
+                                if !this.pre_process_quarter_rem(rem) {
+                                    return false;
+                                }
+                                pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                true
+                            },
+                            || {
+                                progress();
+                            },
+                        );
                     }
                 }
                 _ => {
@@ -159,24 +151,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         .chunks_exact(pitch)
                         .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
                     for (i, chunks) in src_chunks.enumerate() {
-                        /* Pre-process */
-                        self.pre_process_full(chunks);
-
-                        pre_progress(1);
-
-                        /* Compress and encode */
                         self.process(
-                            if self.worker.shared.delta_prog {
-                                unsafe {
-                                    prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
-                                }
-                            } else {
-                                ptr::null_mut()
+                            prev,
+                            i,
+                            |this| {
+                                /* Pre-process */
+                                this.pre_process_full(chunks);
+                                pre_progress(1);
+                                true
                             },
-                            i as u8,
+                            || {
+                                progress();
+                            },
                         );
-
-                        progress();
                     }
                 }
             };
@@ -193,23 +180,18 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
                         .array_chunks::<{ DCTSIZE * DOWNSAMPLE_FACTOR }>();
                     for (i, chunk) in src_chunks.enumerate() {
-                        pre_process(self, chunk);
-
-                        pre_progress(DOWNSAMPLE_FACTOR as u32);
-
-                        /* Compress and encode */
                         self.process(
-                            if self.worker.shared.delta_prog {
-                                unsafe {
-                                    prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
-                                }
-                            } else {
-                                ptr::null_mut()
+                            prev,
+                            i,
+                            |this| {
+                                pre_process(this, chunk);
+                                pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                true
                             },
-                            i as u8,
+                            || {
+                                progress();
+                            },
                         );
-
-                        progress();
                     }
                 }
                 _ => {
@@ -221,23 +203,18 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
                     let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
                     for (i, chunk) in src_chunks.enumerate() {
-                        pre_process(self, chunk);
-
-                        pre_progress(1);
-
-                        /* Compress and encode */
                         self.process(
-                            if self.worker.shared.delta_prog {
-                                unsafe {
-                                    prev.add(i * screen.mcus_per_row * screen.max_blocks_in_mcu)
-                                }
-                            } else {
-                                ptr::null_mut()
+                            prev,
+                            i,
+                            |this| {
+                                pre_process(this, chunk);
+                                pre_progress(1);
+                                true
                             },
-                            i as u8,
+                            || {
+                                progress();
+                            },
                         );
-
-                        progress();
                     }
                 }
             }
@@ -287,8 +264,33 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         Some(JpegDqRet { delta_q, mcus })
     }
 
+    fn process<F, G>(&mut self, prev: *mut JBlock, row_i: usize, do_pre_process: F, do_progress: G)
+    where
+        F: FnOnce(&mut Self) -> bool,
+        G: FnOnce(),
+    {
+        if !do_pre_process(self) {
+            return;
+        }
+
+        let is_top = self.worker.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+
+        /* Compress and encode */
+        self.do_process(
+            if self.worker.shared.delta_prog {
+                unsafe { prev.add(row_i * screen.mcus_per_row * screen.max_blocks_in_mcu) }
+            } else {
+                ptr::null_mut()
+            },
+            row_i as u8,
+        );
+
+        do_progress();
+    }
+
     #[named]
-    fn process(&mut self, prev: *mut JBlock, row_i: u8) {
+    fn do_process(&mut self, prev: *mut JBlock, row_i: u8) {
         let mut delta_cache = false;
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);

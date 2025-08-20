@@ -103,7 +103,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    pub fn h2v2_downsample<const WIDTH: usize>(input: &[[u8; WIDTH]; SAMP_FACTOR], output: *mut u8) {
+    pub fn h2v2_downsample<const WIDTH: usize>(
+        input: &[[u8; WIDTH]; SAMP_FACTOR],
+        output: *mut u8,
+    ) {
         let [input0, input1] = input;
         let input0 = input0.as_chunks::<{ SAMP_FACTOR }>().0.iter();
         let input1 = input1.as_chunks::<{ SAMP_FACTOR }>().0.iter();
@@ -173,31 +176,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             .array_chunks::<{ SAMP_FACTOR * DOWNSAMPLE_FACTOR }>()
             .enumerate()
         {
-            for (prep_base, chunk) in chunk.as_chunks::<DOWNSAMPLE_FACTOR>().0.iter().enumerate() {
-                self.color_convert_quarter_vsamp::<H_SAMP>(
-                    chunk,
-                    downsample_screen_width(RP_DOWNSAMPLE_NONE),
-                );
-
-                for ci in 0..MAX_COMPONENTS {
-                    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                        unsafe {
-                            Self::h2v2_downsample(
-                                &self.worker.bufs.color[ci].buf.full,
-                                self.worker.bufs.prep.quarter.prep[ci][prep_base].as_mut_ptr(),
-                            );
-                        }
-                    } else {
-                        unsafe {
-                            let output = self.worker.bufs.prep.quarter.buf[ci]
-                                [output_base * SAMP_FACTOR + prep_base]
-                                .as_mut_ptr();
-                            Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
-                        }
-                    }
-                }
-            }
-            self.downsample_quarter::<H_SAMP, V_SAMP>(output_base);
+            self.do_pre_process_quarter(output_base, &chunk);
             n = output_base + 1;
         }
 
@@ -205,13 +184,20 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             return false;
         }
 
+        let buf = unsafe { &mut self.worker.bufs.prep.quarter.buf };
         for i in n..DCTSIZE {
             for ci in 0..MAX_COMPONENTS {
                 for j in 0..SAMP_FACTOR {
                     let k = i * SAMP_FACTOR + j;
-                    unsafe {
-                        self.worker.bufs.prep.quarter.buf[ci][k] =
-                            self.worker.bufs.prep.quarter.buf[ci][k - 1];
+                    if H_SAMP && need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                        if let [src, dst] = &mut buf[ci][k - 1..=k] {
+                            let r = 0..downsample_screen_width(RP_DOWNSAMPLE_QUARTER) / 2;
+                            dst[r.clone()].copy_from_slice(&src[r]);
+                        } else {
+                            panic!()
+                        }
+                    } else {
+                        buf[ci][k] = buf[ci][k - 1];
                     }
                 }
             }
@@ -220,40 +206,48 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         true
     }
 
-    pub fn pre_process_quarter(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR]) {
+    pub fn do_pre_process_quarter(
+        &mut self,
+        output_base: usize,
+        chunk: &[&[u8]; SAMP_FACTOR * DOWNSAMPLE_FACTOR],
+    ) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
+        for (prep_base, chunk) in chunk.as_chunks::<DOWNSAMPLE_FACTOR>().0.iter().enumerate() {
+            self.color_convert_quarter_vsamp::<H_SAMP>(
+                chunk,
+                downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            );
+
+            for ci in 0..MAX_COMPONENTS {
+                if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                    unsafe {
+                        Self::h2v2_downsample(
+                            &self.worker.bufs.color[ci].buf.full,
+                            self.worker.bufs.prep.quarter.prep[ci][prep_base].as_mut_ptr(),
+                        );
+                    }
+                } else {
+                    unsafe {
+                        let output = self.worker.bufs.prep.quarter.buf[ci]
+                            [output_base * SAMP_FACTOR + prep_base]
+                            .as_mut_ptr();
+                        Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
+                    }
+                }
+            }
+        }
+        self.downsample_quarter::<H_SAMP, V_SAMP>(output_base);
+    }
+
+    pub fn pre_process_quarter(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR]) {
         for (output_base, chunk) in src
             .as_chunks::<{ SAMP_FACTOR * DOWNSAMPLE_FACTOR }>()
             .0
             .iter()
             .enumerate()
         {
-            for (prep_base, chunk) in chunk.as_chunks::<DOWNSAMPLE_FACTOR>().0.iter().enumerate() {
-                self.color_convert_quarter_vsamp::<H_SAMP>(
-                    chunk,
-                    downsample_screen_width(RP_DOWNSAMPLE_NONE),
-                );
-
-                for ci in 0..MAX_COMPONENTS {
-                    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                        unsafe {
-                            Self::h2v2_downsample(
-                                &self.worker.bufs.color[ci].buf.full,
-                                self.worker.bufs.prep.quarter.prep[ci][prep_base].as_mut_ptr(),
-                            );
-                        }
-                    } else {
-                        unsafe {
-                            let output = self.worker.bufs.prep.quarter.buf[ci]
-                                [output_base * SAMP_FACTOR + prep_base]
-                                .as_mut_ptr();
-                            Self::h2v2_downsample(&self.worker.bufs.color[ci].buf.full, output);
-                        }
-                    }
-                }
-            }
-            self.downsample_quarter::<H_SAMP, V_SAMP>(output_base);
+            self.do_pre_process_quarter(output_base, chunk);
         }
     }
 
@@ -270,7 +264,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    pub fn pre_process_quarter_nohsamp_novsamp(&mut self, src: [&[u8]; DCTSIZE * DOWNSAMPLE_FACTOR]) {
+    pub fn pre_process_quarter_nohsamp_novsamp(
+        &mut self,
+        src: [&[u8]; DCTSIZE * DOWNSAMPLE_FACTOR],
+    ) {
         const H_SAMP: bool = false;
         const _V_SAMP: bool = false;
         for (output_base, chunk) in src
