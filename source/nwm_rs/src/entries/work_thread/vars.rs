@@ -790,9 +790,10 @@ impl WorkAcquire {
         let j_count = mcu_size * pitch as usize * i_count as usize;
         let i_count_half = j_max_half_factor(i_count as u32) as usize;
 
+        let src_len = bctx.src_len() as usize;
         let src = unsafe {
-            slice::from_raw_parts(src, bctx.src_len() as usize)
-                .get_unchecked(j_start..(j_start + j_count))
+            slice::from_raw_parts(src, src_len)
+                .get_unchecked(j_start..cmp::min(j_start + j_count, src_len))
         };
 
         let mut pre_progress_count = 0;
