@@ -72,6 +72,7 @@ pub unsafe fn forward_dct(
     }
 }
 
+#[inline(always)]
 unsafe fn convsamp(
     width: usize,
     hsamp: bool,
@@ -113,6 +114,7 @@ unsafe fn do_forward_dct(
     )
 }
 
+#[inline(always)]
 unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, output: &mut JBlock) {
     let check_width = xpos as usize + DCTSIZE > width;
 
@@ -133,6 +135,7 @@ unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, outp
     }
 }
 
+#[inline(always)]
 fn multiply(v: i16, c: i32) -> i16 {
     const CONST_BITS: u8 = 8;
     ((v as i32 * c) >> CONST_BITS) as i16
@@ -239,6 +242,7 @@ fn fdct_ifast(inout: &mut JBlock) {
     }
 }
 
+#[inline(always)]
 fn quantize(
     delta_q: bool,
     update_prev: bool,
@@ -270,6 +274,7 @@ fn quantize(
     }
 }
 
+#[inline(always)]
 fn do_quantize_delta_q(
     update_prev: bool,
     rescale_prev: bool,
@@ -306,6 +311,7 @@ fn do_quantize_delta_q(
     }
 }
 
+#[inline(always)]
 fn do_quantize_update_prev<const UPDATE_PREV: bool>(
     rescale_prev: bool,
     rescale_prev_shr: bool,
@@ -333,6 +339,7 @@ fn do_quantize_update_prev<const UPDATE_PREV: bool>(
     }
 }
 
+#[inline(always)]
 fn do_quantize<
     const DELTA_Q: bool,
     const UPDATE_PREV: bool,
@@ -400,10 +407,12 @@ fn do_quantize<
     ret
 }
 
+#[inline(always)]
 pub fn jpeg_nbits_nonzero(x: i32) -> u8 {
     (mem::size_of_val(&x) * 8 - x.leading_zeros() as usize) as u8
 }
 
+#[inline(always)]
 pub fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
     c: JCoef,
     s: u8,

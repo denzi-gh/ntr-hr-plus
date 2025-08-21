@@ -4,6 +4,7 @@
 use super::*;
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
+    #[inline(always)]
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -20,6 +21,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[inline(always)]
     pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -36,6 +38,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[inline(always)]
     pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -52,6 +55,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[inline(always)]
     pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -74,6 +78,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[inline(always)]
     pub fn color_convert<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -150,6 +155,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 }
 
+#[inline(always)]
 pub fn pconvert(
     r: u8,
     g: u8,
@@ -177,6 +183,7 @@ pub fn pconvert(
             >> SCALEBITS) as u8;
 }
 
+#[inline(always)]
 pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, const N: usize>(
     input: &[&[u8]; N],
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
@@ -216,6 +223,7 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     }
 }
 
+#[inline(always)]
 pub fn cconvert2<const N: usize, F>(
     input: &[&[u8]; N],
     comps: F,
@@ -256,6 +264,7 @@ pub fn cconvert2<const N: usize, F>(
     }
 }
 
+#[inline(always)]
 pub fn rgb565_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
     let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
     let g = tab.g_6_tab[((input >> 5) & 0x3f) as usize];
@@ -263,6 +272,7 @@ pub fn rgb565_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
     (r, g, b)
 }
 
+#[inline(always)]
 pub fn rgb5a1_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
     let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
     let g = tab.rb_5_tab[((input >> 6) & 0x1f) as usize];
