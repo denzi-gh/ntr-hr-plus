@@ -19,23 +19,10 @@ pub struct WorkerDst {
     pub user: WorkderDstUser,
     pub rel_stream: bool,
     pub delta_prog: bool,
+    pub even_odd: bool,
 }
 
 impl WorkerDst {
-    pub fn init(s: ScreenIndex, w: WorkIndex, dst: *mut u8, user: WorkderDstUser) -> Self {
-        Self {
-            blkn: 0,
-            s,
-            w,
-            dst: dst as *mut u8,
-            free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
-            user,
-            rel_stream: entries::thread_nwm::get_reliable_stream()
-                != entries::thread_nwm::ReliableStream::None,
-            delta_prog: entries::thread_nwm::get_reliable_stream_delta_prog(),
-        }
-    }
-
     pub fn write_byte(&mut self, byte: u8) -> bool {
         if self.free_in_bytes == 0 {
             if !self.flush() {
@@ -107,7 +94,13 @@ impl WorkerDst {
 
     fn dq_update_size(&mut self, size: u32) {
         if self.delta_prog {
-            let comp_size = unsafe { (*JPEG).shared_mut.compressed_size.get_mut(&self.s) };
+            let comp_size = unsafe {
+                (*JPEG)
+                    .shared_mut
+                    .compressed_size
+                    .get_mut(&self.s)
+                    .get_unchecked_mut(self.even_odd as usize)
+            };
             entries::thread_nwm::rp_dq_update_size(comp_size, size, self.blkn)
         } else {
             entries::thread_nwm::rp_update_size(self.w, size)

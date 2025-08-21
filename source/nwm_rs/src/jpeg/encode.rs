@@ -402,10 +402,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         }
 
                         self.compute_dq(prev);
-                        shared_mut
-                            .compressed_size
-                            .get(&s)
-                            .store(0, Ordering::Release);
+                        unsafe {
+                            shared_mut
+                                .compressed_size
+                                .get(&s)
+                                .get_unchecked(self.worker.info.even_odd as usize)
+                                .store(0, Ordering::Release)
+                        };
                         delta_cache = true;
 
                         unsafe {

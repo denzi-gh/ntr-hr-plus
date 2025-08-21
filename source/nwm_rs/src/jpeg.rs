@@ -59,7 +59,7 @@ pub struct JpegShared {
 }
 
 pub struct JpegSharedMut {
-    pub compressed_size: RangedArray<AtomicU32, SCREEN_COUNT>,
+    pub compressed_size: RangedArray<[AtomicU32; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
     pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
     pub work_sem_count: RangedArray<AtomicU8, WORK_COUNT>,
     pub screen_bool: RangedArray<AtomicBool, SCREEN_COUNT>,

@@ -78,4 +78,24 @@ impl Jpeg {
             last_dc_vals: const_default(),
         }
     }
+
+    pub fn worker_dst(
+        &self,
+        s: ScreenIndex,
+        w: WorkIndex,
+        dst: *mut u8,
+        user: WorkderDstUser,
+    ) -> WorkerDst {
+        WorkerDst {
+            blkn: 0,
+            s,
+            w,
+            dst: dst as *mut u8,
+            free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
+            user,
+            rel_stream: self.shared.rel_stream,
+            delta_prog: self.shared.delta_prog,
+            even_odd: w.index_into(&self.info).even_odd,
+        }
+    }
 }

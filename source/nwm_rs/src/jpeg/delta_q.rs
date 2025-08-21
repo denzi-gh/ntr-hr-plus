@@ -297,7 +297,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let qos_adj = screen.qos_adj;
         let qos_b = current_qos * frame_rate_f * qos_adj;
 
-        let comp_size = shared_mut.compressed_size.get(&s).load(Ordering::Acquire);
+        let comp_size = unsafe {
+            shared_mut
+                .compressed_size
+                .get(&s)
+                .get_unchecked(self.worker.info.even_odd as usize)
+                .load(Ordering::Acquire)
+        };
         let comp_size = {
             let size = comp_size & ((1 << entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS) - 1);
             let blkn = (comp_size >> entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS)

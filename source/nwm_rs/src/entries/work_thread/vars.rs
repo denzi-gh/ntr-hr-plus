@@ -815,11 +815,10 @@ impl WorkAcquire {
         };
         let pitch = bctx.pitch();
 
-        let mcu_size = unsafe {
-            is_top_index(bctx.is_top)
-                .index_into(&jpeg::get_jpeg_shared().screens)
-                .mcu_col_size
-        };
+        let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+        let mcu_size = is_top_index(bctx.is_top)
+            .index_into(&jpeg_shared.screens)
+            .mcu_col_size;
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
 
@@ -860,7 +859,7 @@ impl WorkAcquire {
             }
         };
 
-        let dst = jpeg::WorkerDst::init(s, w, dst, user);
+        let dst = unsafe { (*jpeg::JPEG).worker_dst(s, w, dst, user) };
 
         let jpeg_ret = worker.encode(dst, src, pre_progress, progress)?;
 
