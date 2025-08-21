@@ -123,7 +123,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
-        let delta_q = shared_mut.delta_q.get_mut(&s);
+        let delta_q = unsafe {
+            shared_mut
+                .delta_q
+                .get_mut(&s)
+                .get_unchecked_mut(self.worker.info.even_odd as usize)
+        };
         let rand32 = &mut shared_mut.rand32;
         let cache = shared_mut.delta_q_cache.get_mut(&w);
         let cache_next_i = shared_mut.delta_q_cache_next.get_mut(&w);
@@ -273,6 +278,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         } else {
             let [qc_1, qc] = &mut shared_mut.delta_q_calc;
             (qc, qc_1)
+        };
+        let (qc, qc_1) = unsafe {
+            (
+                qc.get_unchecked_mut(self.worker.info.even_odd as usize),
+                qc_1.get_unchecked_mut(self.worker.info.even_odd as usize),
+            )
         };
 
         let current_qos = entries::thread_nwm::rp_delta_q_qos() as f32;

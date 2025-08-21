@@ -313,10 +313,8 @@ impl WorkFrame {
         let mcu_size = jpeg_screen.mcu_col_size as u32;
         let mcus_per_row = jpeg_screen.mcus_per_row as u32;
 
-        let height = jpeg::downsample_screen_height(
-            *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8,
-            is_top,
-        ) as u32;
+        let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
+        let height = jpeg::downsample_screen_height(downsample, is_top) as u32;
         let mcu_rows = unsafe { core::intrinsics::unchecked_div(height + mcu_size - 1, mcu_size) };
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
@@ -409,7 +407,9 @@ impl WorkFrame {
             even_odd,
         };
 
-        unsafe { *curr_s.index_into_mut(&mut JPEG_EVEN_ODD) = !even_odd };
+        if downsample == RP_DOWNSAMPLE_EVEN_ODD {
+            unsafe { *curr_s.index_into_mut(&mut JPEG_EVEN_ODD) = !even_odd };
+        }
 
         unsafe {
             (*jpeg::JPEG).set_info(cinfo);

@@ -998,3 +998,10 @@ pub const fn jdiv_round_up(a: usize, b: usize) -> usize
 {
     (a + b - 1) / b
 }
+
+pub const fn jround_up(a: usize, b: usize) -> usize
+/* Compute a/b rounded up to next integer, ie, ceil(a/b) */
+/* Assumes a >= 0, b > 0 */
+{
+    jdiv_round_up(a, b) * b
+}

@@ -61,7 +61,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     {
         let bpp = get_bpp_for_format(self.worker.info.color_space);
         let is_top = self.worker.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let w = self.worker.info.work_index;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
         let pitch = screen.width as usize * bpp as usize;
         let mcus = screen.mcus;
 
@@ -70,9 +72,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
 
         self.reset_mcu();
-
-        let w = self.worker.info.work_index;
-        let s = is_top_index(is_top);
 
         let prev = unsafe {
             if self.worker.shared.delta_prog {
@@ -85,16 +84,30 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 }
 
                 let shared_mut = &mut *self.worker.shared_mut.cell;
-                (if is_top {
+
+                let prev = if is_top {
                     shared_mut.dq_prev_coeffs_top.as_mut_ptr()
                 } else {
                     shared_mut.dq_prev_coeffs_bot.as_mut_ptr()
-                } as *mut JBlock)
-                    .add(
-                        self.worker.info.restart_interval as usize
-                            * screen.max_blocks_in_mcu
-                            * self.worker.thread_index.get() as usize,
-                    )
+                };
+
+                let prev = match screen.downsample {
+                    RP_DOWNSAMPLE_EVEN_ODD => {
+                        let count = (if is_top {
+                            shared_mut.dq_prev_coeffs_top.len()
+                        } else {
+                            shared_mut.dq_prev_coeffs_bot.len()
+                        }) / 2;
+                        prev.add(count * self.worker.info.even_odd as usize)
+                    }
+                    RP_DOWNSAMPLE_QUARTER | _ => prev,
+                };
+
+                (prev as *mut JBlock).add(
+                    self.worker.info.restart_interval as usize
+                        * screen.max_blocks_in_mcu
+                        * self.worker.thread_index.get() as usize,
+                )
             } else {
                 ptr::null_mut()
             }

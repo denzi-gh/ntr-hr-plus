@@ -15,7 +15,9 @@ impl JpegSharedMut {
         if delta_prog {
             self.compressed_size = const_default();
             for s in ScreenIndex::all() {
-                *self.delta_q.get_mut(&s) = DELTA_Q_COUNT - 1;
+                for i in 0..DOWNSAMPLE_FACTOR {
+                    (*self.delta_q.get_mut(&s))[i] = DELTA_Q_COUNT - 1;
+                }
             }
         }
 
@@ -24,11 +26,14 @@ impl JpegSharedMut {
         if delta_prog {
             for i in 0..SCREEN_COUNT as usize {
                 let (max_blocks_in_mcu, q_steps) = params[i];
-                for j in 0..RP_DELTA_Q_COEFS_COUNT as usize {
-                    self.delta_q_calc[i].f[j].m = q_steps;
-                    self.delta_q_calc[i].f[j].p = q_steps * q_steps;
+
+                for k in 0..DOWNSAMPLE_FACTOR {
+                    for j in 0..RP_DELTA_Q_COEFS_COUNT as usize {
+                        self.delta_q_calc[i][k].f[j].m = q_steps;
+                        self.delta_q_calc[i][k].f[j].p = q_steps * q_steps;
+                    }
+                    self.delta_q_calc[i][k].nbits = (MIN_DCT_COMP_SIZE * max_blocks_in_mcu) as f32;
                 }
-                self.delta_q_calc[i].nbits = (MIN_DCT_COMP_SIZE * max_blocks_in_mcu) as f32;
             }
         }
     }

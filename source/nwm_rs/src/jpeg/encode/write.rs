@@ -217,7 +217,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             &mut self.worker.huff_state,
             &mut self.dst,
             &mut localbuf,
-            self.worker.shared.delta_prog,
+            self.worker.shared.rel_stream,
         );
 
         while put_bits >= 8 {
