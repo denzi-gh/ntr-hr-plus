@@ -39,7 +39,7 @@ impl<'a> JpegWorker<'a> {
         progress: G,
     ) -> Option<JpegDqRet>
     where
-        F: FnMut(u32),
+        F: FnMut(),
         G: FnMut(),
     {
         JpegEncode { worker: self, dst }.encode(src, pre_progress, progress)

@@ -56,7 +56,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         mut progress: G,
     ) -> Option<JpegDqRet>
     where
-        F: FnMut(u32),
+        F: FnMut(),
         G: FnMut(),
     {
         let bpp = get_bpp_for_format(self.worker.info.color_space);
@@ -64,8 +64,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
         let pitch = screen.width as usize * bpp as usize;
         let mcus = screen.mcus;
-
-        pre_progress(1);
 
         if !self.worker.shared.rel_stream && self.worker.thread_index.get() == 0 {
             self.write_headers();
@@ -120,7 +118,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             |this| {
                                 /* Pre-process */
                                 this.pre_process_quarter(chunks);
-                                pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -138,7 +138,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                 if !this.pre_process_quarter_rem(rem) {
                                     return false;
                                 }
-                                pre_progress(DOWNSAMPLE_FACTOR as u32);
                                 true
                             },
                             || {
@@ -149,8 +148,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 }
                 RP_DOWNSAMPLE_EVEN_ODD => {
                     let src_chunks = src
-                        .chunks_exact(pitch)
+                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
                         .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+                    let n = src_chunks.len();
                     for (i, chunks) in src_chunks.enumerate() {
                         self.process(
                             prev,
@@ -158,7 +158,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             |this| {
                                 /* Pre-process */
                                 this.pre_process_even_odd(chunks);
-                                pre_progress(1);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -171,6 +173,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let src_chunks = src
                         .chunks_exact(pitch)
                         .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+                    let n = src_chunks.len();
                     for (i, chunks) in src_chunks.enumerate() {
                         self.process(
                             prev,
@@ -178,7 +181,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             |this| {
                                 /* Pre-process */
                                 this.pre_process_full(chunks);
-                                pre_progress(1);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -201,13 +206,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let src_chunks = src
                         .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
                         .array_chunks::<{ DCTSIZE * DOWNSAMPLE_FACTOR }>();
+                    let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
                             prev,
                             i,
                             |this| {
                                 pre_process(this, chunk);
-                                pre_progress(DOWNSAMPLE_FACTOR as u32);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -223,14 +231,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         Self::pre_process_even_odd_novsamp::<false>
                     };
 
-                    let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
+                    let src_chunks = src
+                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
+                        .array_chunks::<DCTSIZE>();
+                    let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
                             prev,
                             i,
                             |this| {
                                 pre_process(this, chunk);
-                                pre_progress(1);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -247,13 +260,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     };
 
                     let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
+                    let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
                             prev,
                             i,
                             |this| {
                                 pre_process(this, chunk);
-                                pre_progress(1);
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
                                 true
                             },
                             || {
@@ -306,11 +322,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
 
-        Some(JpegDqRet {
-            delta_q,
-            mcus,
-            even_odd: self.worker.info.even_odd,
-        })
+        Some(JpegDqRet { delta_q, mcus })
     }
 
     fn process<F, G>(&mut self, prev: *mut JBlock, row_i: usize, do_pre_process: F, do_progress: G)
@@ -421,4 +433,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             self.encode_mcu();
         }
     }
+}
+
+pub const fn j_max_half_factor(v: usize) -> usize {
+    v / 2
 }

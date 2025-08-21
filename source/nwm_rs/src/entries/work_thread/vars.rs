@@ -430,6 +430,7 @@ impl WorkFrame {
                 core_count,
                 v_adjusted,
                 v_last_adjusted,
+                even_odd,
             };
         }
 
@@ -471,7 +472,7 @@ impl Drop for JpegRet {
         if f == core_count.get() - 1 {
             entries::thread_screen::reset_no_skip_frame(bctx.is_top);
 
-            if !unsafe { send_term_dsts(w, self.1.delta_q as u16, self.1.even_odd) } {
+            if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
                 set_reset_threads();
             }
 
@@ -516,7 +517,7 @@ pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
 }
 
 #[named]
-unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16, even_odd: bool) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
         return true;
     }
@@ -543,7 +544,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16, even_odd: bool) -> bool {
     let rp_packet_data_size = entries::thread_nwm::get_packet_data_size();
     let mut copy_to_terms = |mut data: *const u8, mut len: usize| {
         while len > 0 {
-            let len_0 = rp_packet_data_size as usize - term_size;
+            let len_0 = rp_packet_data_size - term_size;
             if len_0 >= len {
                 unsafe {
                     ptr::copy_nonoverlapping(
@@ -621,7 +622,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16, even_odd: bool) -> bool {
         let mut hdr: u16 = 0;
 
         if downsample as u8 == RP_DOWNSAMPLE_EVEN_ODD {
-            hdr |= even_odd as u16;
+            hdr |= info.even_odd as u16;
         }
 
         if !copy_to_terms(&hdr as *const u16 as *const _, mem::size_of_val(&hdr)) {
@@ -797,10 +798,6 @@ unsafe fn rp_term_notify() {
     }
 }
 
-const fn j_max_half_factor(v: u32) -> u32 {
-    v / 2
-}
-
 impl WorkAcquire {
     pub fn send_frame(self) -> Option<JpegRet> {
         let bctx = self.0.bctx_mut();
@@ -825,7 +822,6 @@ impl WorkAcquire {
         };
         let j_start = mcu_size * pitch as usize * i_start as usize;
         let j_count = mcu_size * pitch as usize * i_count as usize;
-        let i_count_half = j_max_half_factor(i_count as u32) as usize;
 
         let src_len = bctx.src_len() as usize;
         let src = unsafe {
@@ -833,12 +829,8 @@ impl WorkAcquire {
                 .get_unchecked(j_start..cmp::min(j_start + j_count, src_len))
         };
 
-        let mut pre_progress_count = 0;
-        let pre_progress = |count| {
-            if pre_progress_count >= i_count_half {
-                capture_screen(&mut bctx.should_capture);
-            }
-            pre_progress_count += count as usize;
+        let pre_progress = || {
+            capture_screen(&mut bctx.should_capture);
         };
 
         let progress = || {};
@@ -957,6 +949,7 @@ pub struct TermInfo {
     pub core_count: CoreCount,
     pub v_adjusted: u32,
     pub v_last_adjusted: u32,
+    pub even_odd: bool,
 }
 
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
