@@ -97,7 +97,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             } else {
                 let output_step = S;
                 let output_base = output_base * output_step;
-                let output_base = output_base * downsample_screen_width(downsample);
+                let out_width = width / step;
+                let output_base = output_base * out_width;
                 let output = unsafe {
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => self.worker.bufs.prep.even_odd[ci]
@@ -184,16 +185,17 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     step: usize,
     tab: &[i32; TABLE_SIZE],
 ) {
+    let out_width = width / step;
     let [output0, output1, output2] = output;
-    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, width * N) };
-    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, width * N) };
-    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, width * N) };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, out_width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, out_width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, out_width * N) };
     for i in 0..N {
         let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * P) };
 
-        let output0 = &mut output0[width * i..width * (i + 1)];
-        let output1 = &mut output1[width * i..width * (i + 1)];
-        let output2 = &mut output2[width * i..width * (i + 1)];
+        let output0 = &mut output0[out_width * i..out_width * (i + 1)];
+        let output1 = &mut output1[out_width * i..out_width * (i + 1)];
+        let output2 = &mut output2[out_width * i..out_width * (i + 1)];
 
         for (((input, output0), output1), output2) in input
             .as_chunks::<P>()
@@ -225,16 +227,17 @@ pub fn cconvert2<const N: usize, F>(
 ) where
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
 {
+    let out_width = width / step;
     let [output0, output1, output2] = output;
-    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, width * N) };
-    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, width * N) };
-    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, width * N) };
+    let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, out_width * N) };
+    let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, out_width * N) };
+    let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, out_width * N) };
     for i in 0..N {
         let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * 2) };
 
-        let output0 = &mut output0[width * i..width * (i + 1)];
-        let output1 = &mut output1[width * i..width * (i + 1)];
-        let output2 = &mut output2[width * i..width * (i + 1)];
+        let output0 = &mut output0[out_width * i..out_width * (i + 1)];
+        let output1 = &mut output1[out_width * i..out_width * (i + 1)];
+        let output2 = &mut output2[out_width * i..out_width * (i + 1)];
 
         for (((input, output0), output1), output2) in input
             .as_chunks::<2>()
