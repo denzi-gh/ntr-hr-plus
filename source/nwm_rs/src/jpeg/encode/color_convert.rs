@@ -8,13 +8,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
-        width: usize,
     ) {
         const V_SAMP: bool = true;
         self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP>(
             input,
             0,
-            width,
             0,
             1,
             RP_DOWNSAMPLE_QUARTER,
@@ -25,13 +23,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
-        width: usize,
     ) {
         const V_SAMP: bool = false;
         self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP>(
             input,
             0,
-            width,
             0,
             1,
             RP_DOWNSAMPLE_QUARTER,
@@ -43,16 +39,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         &mut self,
         input: &[&[u8]; S],
         output_base: usize,
-        width: usize,
     ) {
-        self.color_convert::<S, H_SAMP, V_SAMP>(
-            input,
-            output_base,
-            width,
-            0,
-            1,
-            RP_DOWNSAMPLE_NONE,
-        );
+        self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
     }
 
     #[inline(always)]
@@ -60,7 +48,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         &mut self,
         input: &[&[u8]; S],
         output_base: usize,
-        width: usize,
     ) {
         let start = if self.worker.info.even_odd == false {
             0
@@ -71,7 +58,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<S, H_SAMP, V_SAMP>(
             input,
             output_base,
-            width,
             start,
             2,
             RP_DOWNSAMPLE_EVEN_ODD,
@@ -83,12 +69,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         &mut self,
         input: &[&[u8]; S],
         output_base: usize,
-        width: usize,
         start: usize,
         step: usize,
         downsample: u8,
     ) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
 
         for ci in 0..MAX_COMPONENTS {
             let color = &mut self.worker.bufs.color[ci];
