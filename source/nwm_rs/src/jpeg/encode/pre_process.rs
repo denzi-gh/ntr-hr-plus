@@ -126,21 +126,24 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let buf = unsafe { &mut self.worker.bufs.prep.quarter.buf };
         for i in n..DCTSIZE {
+            let k = i - n;
             for ci in 0..MAX_COMPONENTS {
-                for j in 0..SAMP_FACTOR {
-                    let k = i * SAMP_FACTOR + j;
-                    let buf = buf[ci].as_mut_ptr();
-                    let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER);
+                let samp_factor = if H_SAMP && need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+                    SAMP_FACTOR
+                } else {
+                    1
+                };
+                let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER) / samp_factor;
 
-                    let width = if H_SAMP && need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
-                        width / SAMP_FACTOR
-                    } else {
-                        width
-                    };
+                for j in 0..samp_factor {
+                    let l = (n - k) * samp_factor - j - 1;
+                    let m = i * samp_factor + j;
+
+                    let buf = buf[ci].as_mut_ptr();
 
                     unsafe {
-                        let src = buf.add(width * (k - 1));
-                        let dst = buf.add(width * k);
+                        let src = buf.add(width * l);
+                        let dst = buf.add(width * m);
 
                         ptr::copy_nonoverlapping(src, dst, width);
                     }

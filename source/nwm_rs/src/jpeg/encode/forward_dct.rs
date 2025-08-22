@@ -116,7 +116,15 @@ unsafe fn do_forward_dct(
 
 #[inline(always)]
 unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, output: &mut JBlock) {
-    let check_width = xpos as usize + DCTSIZE > width;
+    let xmax = xpos as usize + DCTSIZE;
+    let self_input = width >= xmax;
+
+    let xmax_dct_half = xpos as usize + DCTSIZE / 2;
+    let self_dct = width >= xmax_dct_half;
+
+    if !self_input && !self_dct {
+        assert!(width >= xpos as usize);
+    }
 
     let mut oidx = 0;
     for yidx in 0..DCTSIZE {
@@ -124,10 +132,13 @@ unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, outp
         for xidx in 0..DCTSIZE {
             let idx = xpos as usize + xidx;
 
-            if !check_width || idx < width {
+            if self_input || idx < width {
                 output[oidx] = unsafe { *input.add(idx) } as i16 - CENTERJSAMPLE as i16;
+            } else if self_dct {
+                let eidx = oidx - (idx - width) - 1;
+                output[oidx] = output[eidx];
             } else {
-                output[oidx] = if oidx > 0 { output[oidx - 1] } else { 0 };
+                output[oidx] = 0;
             }
 
             oidx += 1;
