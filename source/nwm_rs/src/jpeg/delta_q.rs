@@ -401,7 +401,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let qd2 = (if qd_2 < 0f32 {
                 (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
             } else {
-                (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
+                (qd_2 - SCALE_QD_I_F * QD2_THRES).max(0f32)
             }) * QD2_MUL;
 
             let scale_qd = |qd: f32, np: f32, pp: f32, ns: f32, ps: f32| {
