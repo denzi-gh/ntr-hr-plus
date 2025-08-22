@@ -396,9 +396,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let qd_1 = comp_d * q_steps_i;
             let nd = qc.nbits - nbits;
             let qd_2 = nd * q_steps_i;
+            // clamp small values, but not too small for the powf in next step
             const QD2_THRES: f32 = 4f32;
-            const QD2_MUL: f32 = 4f32 / 3f32;
-            let qd2 = (if qd_2 < 0f32 {
+            const QD2_MUL: f32 = 1.25f32;
+            let qd_2 = (if qd_2 < 0f32 {
                 (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
             } else {
                 (qd_2 - SCALE_QD_I_F * QD2_THRES).max(0f32)
@@ -412,8 +413,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 }
             };
 
+            // scaled so smaller values are even less significant,
+            // then give extra boost to the predicted value (likely wrong, TODO maybe)
             let qd1: f32 = scale_qd(qd_1, 1.25f32, 1.25f32, 1f32, 1f32);
-            let qd2 = scale_qd(qd2, 4f32 / 3f32, 4f32 / 3f32, 4f32, 4f32);
+            let qd2 = scale_qd(qd_2, 1.5f32, 1.5f32, 2.5f32, 2.5f32);
 
             let qd = qd1 + qd2;
             qc.q = qc.q * 0.75f32 + qd * (1f32 / 3f32);
