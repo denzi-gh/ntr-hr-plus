@@ -369,7 +369,7 @@ static const char *getScreenName(int screen_index) {
 		case RP_SCREEN_TOP:
 			return "  Top Screen:";
 		case RP_SCREEN_BOT:
-			return "  Bot Screen:";
+			return "  Bottom Screen:";
 	}
 	return "";
 }
@@ -400,7 +400,7 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 		colors[REMOTE_PLAY_ADVMENU_THREAD_PRIORITY] = config->threadPriority != rpConfig->threadPriority ? &changed_color : 0;
 
 		char separateScreenConfigCaption[LOCAL_OPT_TEXT_BUF_SIZE];
-		xsnprintf(separateScreenConfigCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Per Screens Options: %s", config->separateScreenConfig ? "On" : "Off");
+		xsnprintf(separateScreenConfigCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Per Screen Options: %s", config->separateScreenConfig ? "On" : "Off");
 		captions[REMOTE_PLAY_ADVMENU_SEPARATE_SCREEN_CONFIG] = separateScreenConfigCaption;
 		colors[REMOTE_PLAY_ADVMENU_SEPARATE_SCREEN_CONFIG] = config->separateScreenConfig != rpConfig->separateScreenConfig ? &changed_color : 0;
 
