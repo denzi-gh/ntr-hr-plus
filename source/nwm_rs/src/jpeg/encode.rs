@@ -451,6 +451,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 }
 
-pub const fn j_max_half_factor(v: usize) -> usize {
-    v / 2
+pub const fn j_max_half_factor(_v: usize) -> usize {
+    // v / 2
+    0
 }

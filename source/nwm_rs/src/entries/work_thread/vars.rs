@@ -893,7 +893,7 @@ pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
 #[derive(ConstDefault)]
 pub struct BlitCtx {
     pub format: u32,
-    pub src: *mut u8,
+    pub src: *const u8,
 
     pub frame_id: u8,
     pub is_top: bool,

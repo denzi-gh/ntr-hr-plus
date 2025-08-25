@@ -472,8 +472,7 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
     if let Some(lock) = screen_params_lock() {
         let w = unsafe { PARAMS.work_index };
 
-        let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
-        let img = *iinfo.bufs.get(&iinfo.index.get_atomic()) as u32;
+        let img = unsafe { img_info(is_top) } as u32;
 
         if capture_screen(lock.param(), is_top, screen_info, img, w) {
             true
