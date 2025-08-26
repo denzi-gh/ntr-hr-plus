@@ -692,7 +692,7 @@ pub const DOWNSAMPLE_FACTOR: usize = 2;
 pub const fn downsample_quality_scale_factor(downsample: u8) -> u32 {
     match downsample {
         RP_DOWNSAMPLE_QUARTER => 4,
-        RP_DOWNSAMPLE_EVEN_ODD => 2,
+        RP_DOWNSAMPLE_CHECKER | RP_DOWNSAMPLE_EVEN_ODD => 2,
         _ => 1,
     }
 }
@@ -721,6 +721,15 @@ pub const fn downsample_screen_height(downsample: u8, is_top: bool) -> usize {
         RP_DOWNSAMPLE_QUARTER => height / DOWNSAMPLE_FACTOR,
         RP_DOWNSAMPLE_EVEN_ODD | _ => height,
     }
+}
+
+pub const fn downsample_checker_screen_dim(is_top: bool) -> usize {
+    let height = if is_top {
+        GSP_SCREEN_HEIGHT_TOP as usize
+    } else {
+        GSP_SCREEN_HEIGHT_BOTTOM as usize
+    };
+    (GSP_SCREEN_WIDTH as usize + height) / DOWNSAMPLE_FACTOR
 }
 
 #[derive(ConstDefault)]

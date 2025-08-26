@@ -23,19 +23,35 @@ pub struct JpegDqRet {
     pub mcus: u16,
 }
 
+#[derive(ConstDefault)]
+pub struct McuRowParams {
+    pub mcu_col_start: u16,
+    pub mcu_col_end: u16,
+}
+
+#[derive(ConstDefault)]
+pub struct CheckerParams {
+    pub mcus: u16,
+    pub mcu_rows: u16,
+    pub mcus_per_row: u16,
+    pub mcu_row_params: [McuRowParams; jdiv_round_up(downsample_checker_screen_dim(true), DCTSIZE)],
+}
+
 pub struct JpegScreenShared {
     comp_infos: *const CompInfos,
-    max_h_samp_factor: usize,
-    max_v_samp_factor: usize,
-    max_blocks_in_mcu: usize,
-    mcu_row_size: usize,
+    pub max_h_samp_factor: usize,
+    pub max_v_samp_factor: usize,
+    pub max_blocks_in_mcu: usize,
+    pub mcu_row_size: usize,
     pub mcu_col_size: usize,
     pub mcus_per_row: usize,
-    mcus: u16,
+    pub mcu_rows: u16,
+    pub mcus: u16,
     delta_q_params: DeltaQParams,
-    downsample: u8,
-    width: u16,
-    height: u16,
+    pub downsample: u8,
+    pub width: u16,
+    pub height: u16,
+    pub checker: CheckerParams,
 
     quant_tbls: QuantTbls,
     divisors: Divisors,

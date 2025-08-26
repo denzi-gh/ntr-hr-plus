@@ -310,12 +310,17 @@ impl WorkFrame {
         let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
         let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
-        let mcu_size = jpeg_screen.mcu_col_size as u32;
-        let mcus_per_row = jpeg_screen.mcus_per_row as u32;
-
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
-        let height = jpeg::downsample_screen_height(downsample, is_top) as u32;
-        let mcu_rows = unsafe { core::intrinsics::unchecked_div(height + mcu_size - 1, mcu_size) };
+
+        let (mcus_per_row, mcu_rows) = if downsample == RP_DOWNSAMPLE_CHECKER {
+            (
+                jpeg_screen.checker.mcus_per_row as u32,
+                jpeg_screen.checker.mcu_rows as u32,
+            )
+        } else {
+            (jpeg_screen.mcus_per_row as u32, jpeg_screen.mcu_rows as u32)
+        };
+
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
         };
@@ -407,7 +412,7 @@ impl WorkFrame {
             even_odd,
         };
 
-        if downsample == RP_DOWNSAMPLE_EVEN_ODD {
+        if downsample == RP_DOWNSAMPLE_CHECKER || downsample == RP_DOWNSAMPLE_EVEN_ODD {
             unsafe { *curr_s.index_into_mut(&mut JPEG_EVEN_ODD) = !even_odd };
         }
 
@@ -580,7 +585,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     };
 
     let info = unsafe { TERM_INFOS.get(&w) };
-    let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) };
+    let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
     let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
     let hdr = (downsample as u16)
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
@@ -597,7 +602,8 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
             unsafe { *is_top_index(info.is_top).index_into(&JPEG_QUALITY) as u16 }
         });
 
-    let ex_hdr = downsample as u8 == RP_DOWNSAMPLE_EVEN_ODD;
+    let need_even_odd = downsample == RP_DOWNSAMPLE_CHECKER || downsample == RP_DOWNSAMPLE_EVEN_ODD;
+    let ex_hdr = need_even_odd;
     let hdr = if ex_hdr {
         const EX_HDR_BIT: u32 = 15;
         assert!(
@@ -621,7 +627,7 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     if ex_hdr {
         let mut hdr: u16 = 0;
 
-        if downsample as u8 == RP_DOWNSAMPLE_EVEN_ODD {
+        if need_even_odd {
             hdr |= info.even_odd as u16;
         }
 
@@ -806,26 +812,30 @@ impl WorkAcquire {
 
         let src = bctx.src;
         let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
-        let (i_start, i_count) = match downsample {
-            RP_DOWNSAMPLE_QUARTER => (
-                *bctx.i_start.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
-                *bctx.i_count.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
-            ),
-            RP_DOWNSAMPLE_EVEN_ODD | _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
-        };
-        let pitch = bctx.pitch();
-
-        let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
-        let mcu_size = is_top_index(bctx.is_top)
-            .index_into(&jpeg_shared.screens)
-            .mcu_col_size;
-        let j_start = mcu_size * pitch as usize * i_start as usize;
-        let j_count = mcu_size * pitch as usize * i_count as usize;
-
         let src_len = bctx.src_len() as usize;
-        let src = unsafe {
-            slice::from_raw_parts(src, src_len)
-                .get_unchecked(j_start..cmp::min(j_start + j_count, src_len))
+        let src = if downsample == RP_DOWNSAMPLE_CHECKER {
+            unsafe { slice::from_raw_parts(src, src_len) }
+        } else {
+            let (i_start, i_count) = match downsample {
+                RP_DOWNSAMPLE_QUARTER => (
+                    *bctx.i_start.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
+                    *bctx.i_count.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
+                ),
+                RP_DOWNSAMPLE_EVEN_ODD | _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
+            };
+            let pitch = bctx.pitch();
+
+            let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+            let mcu_size = is_top_index(bctx.is_top)
+                .index_into(&jpeg_shared.screens)
+                .mcu_col_size;
+            let j_start = mcu_size * pitch as usize * i_start as usize;
+            let j_count = mcu_size * pitch as usize * i_count as usize;
+
+            unsafe {
+                slice::from_raw_parts(src, src_len)
+                    .get_unchecked(j_start..cmp::min(j_start + j_count, src_len))
+            }
         };
 
         let pre_progress = || {

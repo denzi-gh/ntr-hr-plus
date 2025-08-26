@@ -152,14 +152,20 @@ impl JpegShared {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
 
         for s in ScreenIndex::all() {
+            let is_top = s.get() == RP_SCREEN_TOP as u32;
             let screen = s.index_into_mut(&mut self.screens);
             let hq = *s.index_into(&hq) as u8;
 
             screen.downsample = *s.index_into(&downsample) as u8;
 
-            screen.width = downsample_screen_width(screen.downsample) as u16;
-            screen.height =
-                downsample_screen_height(screen.downsample, s.get() == RP_SCREEN_TOP as u32) as u16;
+            if screen.downsample == RP_DOWNSAMPLE_CHECKER {
+                screen.width = downsample_checker_screen_dim(is_top) as u16;
+                screen.height = screen.width;
+            } else {
+                screen.width = downsample_screen_width(screen.downsample) as u16;
+                screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+            }
+            screen.checker = const_default();
 
             let comp_infos = if hq == RP_CHROMASS_444 {
                 &self.jpeg_tbls.comp_infos_444
@@ -187,8 +193,64 @@ impl JpegShared {
             screen.mcu_row_size = DCTSIZE * screen.max_h_samp_factor;
             screen.mcu_col_size = DCTSIZE * screen.max_v_samp_factor;
             screen.mcus_per_row = jdiv_round_up(screen.width as usize, screen.mcu_row_size);
-            let mcu_rows = jdiv_round_up(screen.height as usize, screen.mcu_col_size);
-            screen.mcus = (screen.mcus_per_row * mcu_rows) as u16;
+            screen.mcu_rows = jdiv_round_up(screen.height as usize, screen.mcu_col_size) as u16;
+            screen.mcus = screen.mcus_per_row as u16 * screen.mcu_rows;
+
+            if screen.downsample == RP_DOWNSAMPLE_CHECKER {
+                let tl = GSP_SCREEN_WIDTH;
+                let br = if is_top {
+                    GSP_SCREEN_HEIGHT_TOP
+                } else {
+                    GSP_SCREEN_HEIGHT_BOTTOM
+                };
+
+                let mcu_l_v = tl / screen.mcu_col_size as u32;
+                let mcu_l_r = tl % screen.mcu_col_size as u32;
+                let mcu_l_w = (mcu_l_r > 0) as u32;
+
+                let mcu_r_v = br / screen.mcu_col_size as u32;
+                let mcu_r_r = br % screen.mcu_col_size as u32;
+                let mcu_r_w = (mcu_r_r > 0) as u32;
+
+                let checker = &mut screen.checker;
+
+                let mut mcus = 0;
+                for mcu_y_start in 0..screen.mcu_rows as u32 {
+                    let params = &mut checker.mcu_row_params[mcu_y_start as usize];
+
+                    let x_start = if mcu_y_start < mcu_l_v {
+                        let y_end = (mcu_y_start + 1) * screen.mcu_col_size as u32;
+                        tl - y_end
+                    } else if mcu_y_start < mcu_l_v + mcu_l_w {
+                        0
+                    } else {
+                        let y_start =
+                            (mcu_y_start - mcu_l_v) * screen.mcu_col_size as u32 - mcu_l_r;
+                        y_start
+                    };
+                    params.mcu_col_start = (x_start / screen.mcu_row_size as u32) as u16;
+
+                    let x_end = if mcu_y_start < mcu_r_v {
+                        let y_end = (mcu_y_start + 1) * screen.mcu_col_size as u32;
+                        tl + y_end
+                    } else if mcu_y_start < mcu_r_v + mcu_r_w {
+                        tl + br
+                    } else {
+                        let y_start =
+                            (mcu_y_start - mcu_r_v) * screen.mcu_col_size as u32 - mcu_r_r;
+                        tl + (br - y_start)
+                    };
+                    params.mcu_col_end = jdiv_round_up(x_end as usize, screen.mcu_row_size) as u16;
+
+                    mcus += params.mcu_col_end - params.mcu_col_start;
+                }
+
+                checker.mcus = mcus;
+                const MCU_STEP: u16 = 8;
+                checker.mcus_per_row = MCU_STEP;
+                checker.mcu_rows =
+                    jdiv_round_up(checker.mcus as usize, checker.mcus_per_row as usize) as u16;
+            }
 
             *s.index_into_mut(&mut ret) = if delta_prog {
                 let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
