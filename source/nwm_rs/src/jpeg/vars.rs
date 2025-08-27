@@ -295,18 +295,18 @@ impl CompInfos {
         &mut self,
         index: usize,
         id: u8,
-        hsamp: u8,
-        vsamp: u8,
+        h_samp_exp: u8,
+        v_samp_exp: u8,
         quant: u8,
         dctbl: u8,
         actbl: u8,
     ) {
         let comp = &mut self.infos[index];
         comp.component_id = id;
-        comp.h_samp_exp = hsamp;
-        comp.v_samp_exp = vsamp;
-        comp.h_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, hsamp) };
-        comp.v_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, vsamp) };
+        comp.h_samp_exp = h_samp_exp;
+        comp.v_samp_exp = v_samp_exp;
+        comp.h_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, h_samp_exp) };
+        comp.v_samp_factor = unsafe { core::intrinsics::unchecked_shl(1, v_samp_exp) };
         comp.quant_tbl_no = quant;
         comp.dc_tbl_no = dctbl;
         comp.ac_tbl_no = actbl;
@@ -732,36 +732,117 @@ pub const fn downsample_checker_screen_dim(is_top: bool) -> usize {
     (GSP_SCREEN_WIDTH as usize + height) / DOWNSAMPLE_FACTOR
 }
 
-#[derive(ConstDefault)]
 pub union WorkerColorBufDownsample {
     pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
     pub even_odd: [u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR],
 }
 
-#[derive(ConstDefault)]
 pub struct WorkerColorBuf {
     pub buf: WorkerColorBufDownsample,
     pub ptr: *mut u8,
 }
 
-#[derive(ConstDefault, Clone, Copy)]
+#[derive(Clone, Copy)]
+pub struct WorkerBufComps<const SIZE: usize> {
+    pub buf: [u8; SIZE],
+}
+
+const fn worker_buf_comps_size(width: usize) -> usize {
+    let no_v_no_h = width * DCTSIZE * MAX_COMPONENTS;
+    let no_v_h = width * DCTSIZE + width / SAMP_FACTOR * DCTSIZE * (MAX_COMPONENTS - 1);
+    let v_h = width * SAMP_FACTOR * DCTSIZE + width / SAMP_FACTOR * DCTSIZE * (MAX_COMPONENTS - 1);
+    assert!(v_h > no_v_h);
+    assert!(v_h == no_v_no_h);
+    v_h
+}
+
+impl<const SIZE: usize> WorkerBufComps<SIZE> {
+    #[inline(always)]
+    pub fn get(&self, ci: CompIndex, h_samp: bool, v_samp: bool) -> &[u8] {
+        match (h_samp, v_samp) {
+            (true, true) => {
+                let width_dct = SIZE / MAX_COMPONENTS;
+                let y_size = width_dct * SAMP_FACTOR;
+                let u_v_size = (SIZE - y_size) / (MAX_COMPONENTS - 1);
+                match ci.get() {
+                    2 => &self.buf[y_size + u_v_size..SIZE],
+                    1 => &self.buf[y_size..y_size + u_v_size],
+                    _ => &self.buf[0..y_size],
+                }
+            }
+            (true, false) => {
+                let width_dct = SIZE / MAX_COMPONENTS;
+                let y_size = width_dct;
+                let u_v_size = width_dct / SAMP_FACTOR;
+                match ci.get() {
+                    2 => &self.buf[y_size + u_v_size..y_size + u_v_size * 2],
+                    1 => &self.buf[y_size..y_size + u_v_size],
+                    _ => &self.buf[0..y_size],
+                }
+            }
+            (false, true) => panic!(),
+            (false, false) => {
+                let width_dct: usize = SIZE / MAX_COMPONENTS;
+                let ci = ci.get() as usize;
+                unsafe { self.buf.get_unchecked(width_dct * ci..width_dct * (ci + 1)) }
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_mut(&mut self, ci: CompIndex, h_samp: bool, v_samp: bool) -> &mut [u8] {
+        match (h_samp, v_samp) {
+            (true, true) => {
+                let width_dct = SIZE / MAX_COMPONENTS;
+                let y_size = width_dct * SAMP_FACTOR;
+                let u_v_size = (SIZE - y_size) / (MAX_COMPONENTS - 1);
+                match ci.get() {
+                    2 => &mut self.buf[y_size + u_v_size..SIZE],
+                    1 => &mut self.buf[y_size..y_size + u_v_size],
+                    _ => &mut self.buf[0..y_size],
+                }
+            }
+            (true, false) => {
+                let width_dct = SIZE / MAX_COMPONENTS;
+                let y_size = width_dct;
+                let u_v_size = width_dct / SAMP_FACTOR;
+                match ci.get() {
+                    2 => &mut self.buf[y_size + u_v_size..y_size + u_v_size * 2],
+                    1 => &mut self.buf[y_size..y_size + u_v_size],
+                    _ => &mut self.buf[0..y_size],
+                }
+            }
+            (false, true) => panic!(),
+            (false, false) => {
+                let width_dct: usize = SIZE / MAX_COMPONENTS;
+                let ci = ci.get() as usize;
+                unsafe {
+                    self.buf
+                        .get_unchecked_mut(width_dct * ci..width_dct * (ci + 1))
+                }
+            }
+        }
+    }
+}
+
+pub type CompIndex = Ranged<{ MAX_COMPONENTS as u32 }>;
+
+#[derive(Clone, Copy)]
 pub struct WorkerPrepBufDownsampleQuarter {
-    pub buf: [[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER) * SAMP_FACTOR * DCTSIZE];
-        MAX_COMPONENTS],
+    pub buf:
+        WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_QUARTER)) }>,
     pub prep:
         [[u8; downsample_screen_width(RP_DOWNSAMPLE_QUARTER) * DOWNSAMPLE_FACTOR]; MAX_COMPONENTS],
 }
 
-#[derive(ConstDefault)]
 pub union WorkerPrepBufDownsample {
     pub full:
-        [[u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR * DCTSIZE]; MAX_COMPONENTS],
+        WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_NONE)) }>,
     pub quarter: WorkerPrepBufDownsampleQuarter,
-    pub even_odd: [[u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR * DCTSIZE];
-        MAX_COMPONENTS],
+    pub even_odd:
+        WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)) }>,
 }
 
-#[derive(ConstDefault)]
 pub struct WorkerBufs {
     pub color: [WorkerColorBuf; MAX_COMPONENTS],
     pub prep: WorkerPrepBufDownsample,
@@ -1008,6 +1089,7 @@ pub const fn jdiv_round_up(a: usize, b: usize) -> usize
     (a + b - 1) / b
 }
 
+#[allow(unused)]
 pub const fn jround_up(a: usize, b: usize) -> usize
 /* Compute a/b rounded up to next integer, ie, ceil(a/b) */
 /* Assumes a >= 0, b > 0 */

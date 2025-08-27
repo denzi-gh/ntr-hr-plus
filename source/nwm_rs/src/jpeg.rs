@@ -85,7 +85,7 @@ pub struct JpegSharedMut {
     pub dq_rescale_prev: RangedArray<s8, WORK_COUNT>,
     pub rp_shifts: RangedArray<[[u8; DCTSIZE2]; NUM_QUANT_TBLS], WORK_COUNT>,
     pub delta_q_cache: RangedArray<[DeltaQCache; DELTA_Q_CACHE_TOTAL as usize], WORK_COUNT>,
-    pub delta_q_cache_next: RangedArray<[u8; MAX_COMPONENTS], WORK_COUNT>,
+    pub delta_q_cache_next: RangedArray<RangedArray<u8, { MAX_COMPONENTS as u32 }>, WORK_COUNT>,
     pub delta_q_calc: [[DeltaQManager; DOWNSAMPLE_FACTOR]; SCREEN_COUNT as usize],
     pub dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
     pub dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
@@ -103,11 +103,7 @@ pub unsafe fn get_jpeg_shared() -> &'static JpegShared {
     unsafe { &(*JPEG).shared }
 }
 
-const DELTA_Q_PREV_COEFFS_WIDTH: usize = jround_up(
-    GSP_SCREEN_WIDTH as usize,
-    DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR,
-);
 const DELTA_Q_PREV_COEFFS_TOP_N: usize =
-    DELTA_Q_PREV_COEFFS_WIDTH * GSP_SCREEN_HEIGHT_TOP as usize * MAX_COMPONENTS;
+    GSP_SCREEN_WIDTH as usize * GSP_SCREEN_HEIGHT_TOP as usize * MAX_COMPONENTS;
 const DELTA_Q_PREV_COEFFS_BOT_N: usize =
-    DELTA_Q_PREV_COEFFS_WIDTH * GSP_SCREEN_HEIGHT_BOTTOM as usize * MAX_COMPONENTS;
+    GSP_SCREEN_WIDTH as usize * GSP_SCREEN_HEIGHT_BOTTOM as usize * MAX_COMPONENTS;

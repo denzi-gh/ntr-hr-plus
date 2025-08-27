@@ -19,8 +19,8 @@ pub use forward_dct::*;
 pub use pre_process::*;
 pub use write::*;
 
-const fn subsamp_constraint<const H_SAMP: bool, const V_SAMP: bool>() {
-    match (H_SAMP, V_SAMP) {
+pub const fn subsamp_constraint(h_samp: bool, v_samp: bool) {
+    match (h_samp, v_samp) {
         (true, true) => (),
         (true, false) => (),
         (false, true) => panic!(),
@@ -31,7 +31,7 @@ const fn subsamp_constraint<const H_SAMP: bool, const V_SAMP: bool>() {
 struct SubSampConst<const H_SAMP: bool, const V_SAMP: bool>;
 
 impl<const H_SAMP: bool, const V_SAMP: bool> SubSampConst<H_SAMP, V_SAMP> {
-    const ASSERT: () = subsamp_constraint::<H_SAMP, V_SAMP>();
+    const ASSERT: () = subsamp_constraint(H_SAMP, V_SAMP);
 }
 
 pub struct JpegEncode<'a, 'b> {
@@ -92,7 +92,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 };
 
                 let prev = match screen.downsample {
-                    RP_DOWNSAMPLE_EVEN_ODD => {
+                    RP_DOWNSAMPLE_CHECKER | RP_DOWNSAMPLE_EVEN_ODD => {
                         let count = (if is_top {
                             shared_mut.dq_prev_coeffs_top.len()
                         } else {
@@ -116,7 +116,37 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
-        if vss {
+        if screen.downsample == RP_DOWNSAMPLE_CHECKER {
+            let mcu_total_start =
+                self.worker.info.restart_interval * self.worker.thread_index.get() as u16;
+            let mcu_total_count = self.worker.info.restart_interval;
+
+            let mut mcu_curr_start = 0;
+            let mut mcu_curr_count = 0;
+
+            'f: for mcu_y in 0..screen.mcu_rows {
+                let params = &screen.checker.mcu_row_params[mcu_y as usize];
+                let mcu_col_count = params.mcu_col_end - params.mcu_col_start;
+
+                for mcu_i in 0..mcu_col_count {
+                    if mcu_curr_start >= mcu_total_start {
+                        let _mcu_x = params.mcu_col_start + mcu_i;
+
+                        if mcu_curr_count == j_max_half_factor(mcu_total_count as usize) as u16 {
+                            pre_progress();
+                        }
+
+                        mcu_curr_count += 1;
+
+                        if mcu_curr_count >= mcu_total_count {
+                            break 'f;
+                        }
+                    } else {
+                        mcu_curr_start += 1;
+                    }
+                }
+            }
+        } else if vss {
             // vss == true
             match screen.downsample {
                 RP_DOWNSAMPLE_QUARTER => {
@@ -451,7 +481,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 }
 
-pub const fn j_max_half_factor(_v: usize) -> usize {
-    // v / 2
-    0
+pub const fn j_max_half_factor(v: usize) -> usize {
+    v / 2
 }

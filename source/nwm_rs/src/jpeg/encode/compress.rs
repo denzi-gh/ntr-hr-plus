@@ -32,8 +32,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             self.worker.shared.delta_prog && self.worker.thread_index.get() == 0;
 
         let comp_infos = unsafe { &*screen.comp_infos };
-        for ci in 0..MAX_COMPONENTS {
-            let comp = &comp_infos.infos[ci];
+        for ci in CompIndex::all() {
+            let comp = ci.index_into(&comp_infos.infos);
 
             let div_shifts = if self.worker.shared.delta_prog {
                 unsafe {
@@ -73,7 +73,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     };
 
                     if delta_cache {
-                        for qi in cache_next_i[ci]..DELTA_Q_CACHE_COUNTS[ci] {
+                        for qi in *cache_next_i.get(&ci)..*ci.index_into(&DELTA_Q_CACHE_COUNTS) {
                             let delta_cache_i = delta_cache_start + qi;
                             let cache = unsafe { cache.get_unchecked_mut(delta_cache_i as usize) };
 
@@ -128,7 +128,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                         }
                                     }
                                 }
-                                cache_next_i[ci] = qi + 1;
+                                *cache_next_i.get_mut(&ci) = qi + 1;
                                 cache_hit = true;
                                 break;
                             }
@@ -165,7 +165,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 ypos += DCTSIZE as u16;
             }
 
-            delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
+            delta_cache_start += *ci.index_into(&DELTA_Q_CACHE_COUNTS);
         }
     }
 

@@ -10,9 +10,9 @@ pub unsafe fn forward_dct(
     rescale_prev_shr: bool,
     downsample: u8,
     input: &WorkerPrepBufDownsample,
-    ci: usize,
-    hsamp: bool,
-    vsamp: bool,
+    ci: CompIndex,
+    h_samp: bool,
+    v_samp: bool,
     output: &mut JBlock,
     ypos: u16,
     xpos: u16,
@@ -22,35 +22,35 @@ pub unsafe fn forward_dct(
     r_pshifts: &[u8; DCTSIZE2],
     next: *mut JBlock,
 ) -> QuantizeRet {
-    let hsamp = hsamp
-        && if vsamp {
-            need_subsamp_ci::<true, true>(ci as u8)
+    let samp = h_samp
+        && if v_samp {
+            need_subsamp_ci::<true, true>(ci)
         } else {
-            need_subsamp_ci::<true, false>(ci as u8)
+            need_subsamp_ci::<true, false>(ci)
         };
 
     unsafe {
         match downsample {
             RP_DOWNSAMPLE_QUARTER => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_QUARTER),
-                hsamp,
-                input.quarter.buf.get_unchecked(ci).as_ptr(),
+                samp,
+                input.quarter.buf.get(ci, h_samp, v_samp).as_ptr(),
                 ypos,
                 xpos,
                 output,
             ),
             RP_DOWNSAMPLE_EVEN_ODD => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD),
-                hsamp,
-                input.even_odd.get_unchecked(ci).as_ptr(),
+                samp,
+                input.even_odd.get(ci, h_samp, v_samp).as_ptr(),
                 ypos,
                 xpos,
                 output,
             ),
             _ => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_NONE),
-                hsamp,
-                input.full.get_unchecked(ci).as_ptr(),
+                samp,
+                input.full.get(ci, h_samp, v_samp).as_ptr(),
                 ypos,
                 xpos,
                 output,
@@ -75,13 +75,13 @@ pub unsafe fn forward_dct(
 #[inline(always)]
 unsafe fn convsamp(
     width: usize,
-    hsamp: bool,
+    h_samp: bool,
     input: *const u8,
     ypos: u16,
     xpos: u16,
     output: &mut JBlock,
 ) {
-    let width = if hsamp { width / SAMP_FACTOR } else { width };
+    let width = if h_samp { width / SAMP_FACTOR } else { width };
     unsafe {
         do_convsamp(width, input, ypos, xpos, output);
     }

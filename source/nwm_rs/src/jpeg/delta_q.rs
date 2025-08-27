@@ -146,21 +146,23 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let _need_wait_for_nwm = self.worker.thread_index.get() == 0;
 
-        for ci in 0..MAX_COMPONENTS {
-            cache_next_i[ci] = 0;
+        for ci in CompIndex::all() {
+            *cache_next_i.get_mut(&ci) = 0;
 
             let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
-            let comp = unsafe { &(*screen.comp_infos).infos[ci] };
+            let comp = unsafe { ci.index_into(&(*screen.comp_infos).infos) };
             let qni = comp.quant_tbl_no;
             let mcu_we = comp.h_samp_exp;
             let mcu_he = comp.v_samp_exp;
 
-            dq_cache_gen_unique_indices(rand32, &mut indices, DELTA_Q_CACHE_COUNTS[ci], unsafe {
+            let count = *ci.index_into(&DELTA_Q_CACHE_COUNTS);
+
+            dq_cache_gen_unique_indices(rand32, &mut indices, count, unsafe {
                 core::intrinsics::unchecked_shl(screen.mcus_per_row as u8, mcu_we + mcu_he)
             });
 
-            for qi in 0..DELTA_Q_CACHE_COUNTS[ci] {
+            for qi in 0..count {
                 let delta_cache_i = delta_cache_start + qi;
                 let blkn = indices[qi as usize];
 
@@ -240,8 +242,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 update_qnv(&mut qnv.ac, &qn.ac);
             }
 
-            *unsafe { qnc.get_unchecked_mut(qni as usize) } += DELTA_Q_CACHE_COUNTS[ci];
-            delta_cache_start += DELTA_Q_CACHE_COUNTS[ci];
+            *unsafe { qnc.get_unchecked_mut(qni as usize) } += count;
+            delta_cache_start += count;
             blkn_start += unsafe { core::intrinsics::unchecked_shl(1, mcu_we + mcu_he) };
         }
 

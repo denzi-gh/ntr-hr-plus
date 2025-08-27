@@ -4,7 +4,6 @@
 use super::*;
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
-    #[inline(always)]
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -19,7 +18,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
-    #[inline(always)]
     pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -34,7 +32,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
-    #[inline(always)]
     pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -43,7 +40,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
     }
 
-    #[inline(always)]
     pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -77,9 +73,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
 
-        for ci in 0..MAX_COMPONENTS {
-            let color = &mut self.worker.bufs.color[ci];
-            if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci as u8) {
+        for ci in CompIndex::all() {
+            let color = ci.index_into_mut(&mut self.worker.bufs.color);
+            if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
                 unsafe {
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => color.ptr = color.buf.even_odd.as_mut_ptr(),
@@ -93,10 +89,22 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let output_base = output_base * out_width;
                 let output = unsafe {
                     match downsample {
-                        RP_DOWNSAMPLE_EVEN_ODD => self.worker.bufs.prep.even_odd[ci]
+                        RP_DOWNSAMPLE_EVEN_ODD => self
+                            .worker
+                            .bufs
+                            .prep
+                            .even_odd
+                            .get_mut(ci, H_SAMP, V_SAMP)
                             .as_mut_ptr()
                             .add(output_base),
-                        _ => self.worker.bufs.prep.full[ci].as_mut_ptr().add(output_base),
+                        _ => self
+                            .worker
+                            .bufs
+                            .prep
+                            .full
+                            .get_mut(ci, H_SAMP, V_SAMP)
+                            .as_mut_ptr()
+                            .add(output_base),
                     }
                 };
                 color.ptr = output;
