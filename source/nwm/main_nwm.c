@@ -84,7 +84,7 @@ static int nwmValParamCallback(u8 *buf, int) {
 static RT_HOOK nwmRecvNotificationHook;
 static Handle *nwmSrvHandle = (Handle *)0x001547fc;
 
-void nwmPause(bool);
+void nwmPause(bool shutdown);
 void nwmUnpause();
 
 static Result nwmSrvReceiveNotification(u32 *notificationIdOut) {
@@ -112,10 +112,10 @@ static Result nwmRecvNotificationCallback(u32* notificationIdOut) {
 			nwmUnpause();
 			break;
 		case PTMNOTIFID_SLEEP_ALLOWED:
-			nwmPause(true);
+			nwmPause(false);
 			break;
 		case PTMNOTIFID_SHUTDOWN:
-			nwmPause(false);
+			nwmPause(true);
 			return -1;
 		default:
 			break;

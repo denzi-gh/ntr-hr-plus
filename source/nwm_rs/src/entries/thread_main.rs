@@ -16,7 +16,7 @@ struct ThreadsStorage<'a> {
 
 pub static mut THREAD_MAIN_HANDLE: Handle = 0;
 
-static mut RESTART_SLEEP: AtomicBool = const_default();
+static mut RESTART_SHUTDOWN: AtomicBool = const_default();
 static mut RESTART_PENDING: AtomicBool = const_default();
 static mut RESTART_READY_EVENT: Handle = const_default();
 static mut RESTART_DONE_EVENT: Handle = const_default();
@@ -163,7 +163,7 @@ fn pause() -> Option<()> {
                 ns_dbg_print!(failed, c_str!("Signal restart event"), res);
             }
 
-            if !RESTART_SLEEP.load(Ordering::Acquire) {
+            if RESTART_SHUTDOWN.load(Ordering::Acquire) {
                 return None;
             }
 
@@ -342,8 +342,8 @@ pub extern "C" fn encode_thread_main(_: *mut c_void) {
 
 #[unsafe(no_mangle)]
 #[named]
-extern "C" fn nwmPause(sleep: bool) {
-    unsafe { RESTART_SLEEP.store(sleep, Ordering::Release) };
+extern "C" fn nwmPause(shutdown: bool) {
+    unsafe { RESTART_SHUTDOWN.store(shutdown, Ordering::Release) };
     unsafe { RESTART_PENDING.store(true, Ordering::Release) };
     set_reset_threads();
     let res = unsafe { svcWaitSynchronization(RESTART_READY_EVENT, -1) };
