@@ -264,28 +264,33 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
     let init = init(&s.nwm_bufs)?;
     let core_count = init.vars.core_count.get();
     {
-        let _aux1 = if core_count >= 2 {
-            Some(JoinThread::create(CreateThread::create(
-                Some(entries::thread_aux::thread_aux),
-                1,
-                s.stacks.aux1,
-                init.vars.thread_prio as i32,
-                3,
-            )?))
-        } else {
-            None
-        };
+        let (_aux1, _aux2) = if !cfg!(feature = "o3ds") {
+            let aux1 = if core_count >= 2 {
+                Some(JoinThread::create(CreateThread::create(
+                    Some(entries::thread_aux::thread_aux),
+                    1,
+                    s.stacks.aux1,
+                    init.vars.thread_prio as i32,
+                    3,
+                )?))
+            } else {
+                None
+            };
 
-        let _aux2 = if core_count >= 3 {
-            Some(JoinThread::create(CreateThread::create(
-                Some(entries::thread_aux::thread_aux),
-                2,
-                s.stacks.aux2,
-                RP_THREAD_PRIO_MAX as s32,
-                1,
-            )?))
+            let aux2 = if core_count >= 3 {
+                Some(JoinThread::create(CreateThread::create(
+                    Some(entries::thread_aux::thread_aux),
+                    2,
+                    s.stacks.aux2,
+                    RP_THREAD_PRIO_MAX as s32,
+                    1,
+                )?))
+            } else {
+                None
+            };
+            (aux1, aux2)
         } else {
-            None
+            (None, None)
         };
 
         let _nwm = JoinThread::create(CreateThread::create(
@@ -296,7 +301,7 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
             0,
             s.stacks.nwm,
             RP_THREAD_PRIO_MIN as s32,
-            2,
+            RP_CORE_ID_MAIN,
         )?);
 
         let _screen = JoinThread::create(CreateThread::create(
@@ -304,7 +309,7 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
             0,
             s.stacks.screen,
             RP_THREAD_PRIO_MIN as s32,
-            2,
+            RP_CORE_ID_MAIN,
         )?);
 
         unsafe {

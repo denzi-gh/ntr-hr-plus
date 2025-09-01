@@ -85,7 +85,14 @@ static const u32 IoBasePdc = 0x10400000 + 0x80000000;
 #define RP_DST_PORT_DEFAULT (8001)
 #define RP_THREAD_PRIO_DEFAULT RP_THREAD_PRIO_MAX
 #define RP_CORE_COUNT_MIN (1)
+#define RP_CORE_COUNT_DEFAULT RP_CORE_COUNT_MAX
+#ifdef OLD_3DS
+#define RP_CORE_COUNT_MAX (1)
+#elif defined(NEW_3DS)
 #define RP_CORE_COUNT_MAX (3)
+#else
+#define RP_CORE_COUNT_MAX (ntrConfig->isNew3DS ? 3 : 1)
+#endif
 #define RP_QUALITY_DEFAULT (75)
 #define RP_QUALITY_MIN (10)
 #define RP_QUALITY_MAX (100)
@@ -99,7 +106,6 @@ static const u32 IoBasePdc = 0x10400000 + 0x80000000;
 #define RP_PORT_MAX (65535)
 #define RP_THREAD_PRIO_MIN (0x10)
 #define RP_THREAD_PRIO_MAX (0x3f)
-#define RP_CORE_COUNT_DEFAULT RP_CORE_COUNT_MAX
 
 #define NWM_HDR_SIZE (0x2a + 8)
 #define DATA_HDR_SIZE (4)

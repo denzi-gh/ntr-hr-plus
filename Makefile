@@ -40,7 +40,7 @@ CTRU_DIR := libctru/libctru
 CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft -fno-strict-aliasing -fshort-enums
 CFLAGS += -ffunction-sections -fdata-sections
 CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__
-LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(LIB_RS_DIR) -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
+LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
 LDLIBS := -lctru_ntr -lsysbase
 LDLIBS += -Wl,-pie
 SRC_C := $(wildcard source/*.c)
@@ -58,25 +58,33 @@ OBJ_PM := $(addprefix obj/,$(notdir $(SRC_PM_C:.c=.o)))
 SRC_GAME_C := $(wildcard source/game/*.c)
 OBJ_GAME := $(addprefix obj/,$(notdir $(SRC_GAME_C:.c=.o)))
 
-SRC_NWM_C := $(wildcard source/nwm/*.c)
-SRC_NWM_C += $(wildcard source/nwm_misc/*.c)
-SRC_NWM_X := $(wildcard source/nwm_misc/*.cpp)
+SRC_NWM_IKCP_C := source/nwm_misc/ikcp.c
+SRC_NWM_C := $(wildcard source/nwm/*.c) $(SRC_NWM_IKCP_C)
 OBJ_NWM := $(addprefix obj/,$(notdir $(SRC_NWM_C:.c=.o)))
-OBJ_NWM += $(addprefix obj/,$(notdir $(SRC_NWM_X:.cpp=.o)))
+OBJ_NWM_O3DS := $(addprefix obj/,$(notdir $(SRC_NWM_C:.c=.o3ds.o)))
+
+SRC_NWM_MISC_C += $(filter-out $(SRC_NWM_IKCP_C),$(wildcard source/nwm_misc/*.c))
+SRC_NWM_MISC_X := $(wildcard source/nwm_misc/*.cpp)
+OBJ_NWM_MISC := $(addprefix obj/,$(notdir $(SRC_NWM_MISC_C:.c=.o)))
+OBJ_NWM_MISC += $(addprefix obj/,$(notdir $(SRC_NWM_MISC_X:.cpp=.o)))
 
 OBJ := $(addprefix obj/,$(notdir $(SRC_C:.c=.o) $(SRC_S:.s=.o)))
-DEP := $(OBJ:.o=.d) $(OBJ_BOOT:.o=.d) $(OBJ_MENU:.o=.d) $(OBJ_PM:.o=.d) $(OBJ_GAME:.o=.d) $(OBJ_NWM:.o=.d)
+DEP := $(OBJ:.o=.d) $(OBJ_BOOT:.o=.d) $(OBJ_MENU:.o=.d) $(OBJ_PM:.o=.d) $(OBJ_GAME:.o=.d) $(OBJ_NWM:.o=.d) $(OBJ_NWM_O3DS:.o=.d) $(OBJ_NWM_MISC:.o=.d)
 
 NTR_BIN_BOOT := ntr.hr.boot.bin
 NTR_BIN_MENU := ntr.hr.menu.bin
 NTR_BIN_PM := ntr.hr.pm.bin
 NTR_BIN_NWM := ntr.hr.nwm.bin
+NTR_BIN_NWM_O3DS := ntr.hr.nwm.o3ds.bin
 NTR_BIN_GAME := ntr.hr.game.bin
 
 LIB_RS_DIR := target/armv6k-nintendo-3ds/release
 LIB_NWM_RS := $(LIB_RS_DIR)/libnwm_rs.a
 
-PAYLOAD_BIN := $(NTR_BIN_BOOT) $(NTR_BIN_MENU) $(NTR_BIN_PM) $(NTR_BIN_NWM) $(NTR_BIN_GAME)
+LIB_RS_DIR_O3DS := target-o3ds/armv6k-nintendo-3ds/release
+LIB_NWM_RS_O3DS := $(LIB_RS_DIR_O3DS)/libnwm_rs.a
+
+PAYLOAD_BIN := $(NTR_BIN_BOOT) $(NTR_BIN_MENU) $(NTR_BIN_PM) $(NTR_BIN_NWM) $(NTR_BIN_NWM_O3DS) $(NTR_BIN_GAME)
 PAYLOAD_TARGET_DIR := ../BootNTR-Bins/romfs
 PAYLOAD_TARGET_BIN := $(addprefix $(PAYLOAD_TARGET_DIR)/,$(PAYLOAD_BIN))
 
@@ -89,7 +97,7 @@ install: $(PAYLOAD_TARGET_BIN)
 
 .NOTPARALLEL: rs
 
-rs: $(LIB_NWM_RS)
+rs: $(LIB_NWM_RS) $(LIB_NWM_RS_O3DS)
 
 CP_CMD = @echo \* $(notdir $@) \*; $(CP) $< $@
 
@@ -114,14 +122,20 @@ bin/$(NTR_BIN_PM:.bin=.elf): $(OBJ) $(OBJ_PM) libctru_ntr.a 3ds.ld | bin
 bin/$(NTR_BIN_GAME:.bin=.elf): $(OBJ) $(OBJ_GAME) libctru_ntr.a 3ds.ld | bin
 	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3ds.ld $(LDFLAGS) $(OBJ) $(OBJ_GAME) $(LDLIBS)
 
-bin/$(NTR_BIN_NWM:.bin=.elf): $(OBJ) $(OBJ_NWM) libctru_ntr.a 3dst.ld $(LIB_NWM_RS) | bin
-	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM) $(LDLIBS) -lnwm_rs -lm
+bin/$(NTR_BIN_NWM:.bin=.elf): $(OBJ) $(OBJ_NWM) $(OBJ_NWM_MISC) libctru_ntr.a 3dst.ld $(LIB_NWM_RS) | bin
+	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM) $(OBJ_NWM_MISC) $(LDLIBS) -L$(LIB_RS_DIR) -lnwm_rs -lm
+
+bin/$(NTR_BIN_NWM_O3DS:.bin=.elf): $(OBJ) $(OBJ_NWM_O3DS) $(OBJ_NWM_MISC) libctru_ntr.a 3dst.ld $(LIB_NWM_RS_O3DS) | bin
+	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM_O3DS) $(OBJ_NWM_MISC) $(LDLIBS) -L$(LIB_RS_DIR_O3DS) -lnwm_rs -lm
 
 bin:
 	mkdir $@
 
 $(LIB_NWM_RS): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -type f)
-	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --release
+	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --target-dir $(shell realpath target) --release
+
+$(LIB_NWM_RS_O3DS): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -type f)
+	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --target-dir $(shell realpath target-o3ds) --features o3ds --release
 
 libctru_ntr.a: $(CTRU_DIR)/lib/libctru.a
 	$(CP_CMD)
@@ -145,7 +159,7 @@ obj/%.o: source/boot/%.c | obj
 	$(CC_CMD)
 
 obj/%.o: source/menu/%.c | obj
-	$(CC_CMD) -DNTR_BIN_PM=\"$(NTR_BIN_PM)\" -DNTR_BIN_NWM=\"$(NTR_BIN_NWM)\"
+	$(CC_CMD) -DNTR_BIN_PM=\"$(NTR_BIN_PM)\" -DNTR_BIN_NWM=\"$(NTR_BIN_NWM)\" -DNTR_BIN_NWM_O3DS=\"$(NTR_BIN_NWM_O3DS)\"
 
 obj/%.o: source/pm/%.c | obj
 	$(CC_CMD) -DNTR_BIN_GAME=\"$(NTR_BIN_GAME)\"
@@ -154,16 +168,19 @@ obj/%.o: source/game/%.c | obj
 	$(CC_CMD)
 
 obj/%.o: source/nwm/%.c | obj
-	$(NWM_CC_CMD)
+	$(NWM_CC_CMD) -DNEW_3DS
+
+obj/%.o3ds.o: source/nwm/%.c | obj
+	$(NWM_CC_CMD) -DOLD_3DS
 
 obj/%.o: source/nwm_misc/%.c | obj
-	$(NWM_CC_CMD)
+	$(NWM_CC_CMD) -DNEW_3DS
+
+obj/%.o3ds.o: source/nwm_misc/%.c | obj
+	$(NWM_CC_CMD) -DOLD_3DS
 
 obj/%.o: source/nwm_misc/%.cpp | obj
 	$(NWM_CXX_CMD)
-
-obj/nwm_lto.o: $(OBJ_NWM) | obj
-	$(CC) -flto $(CFLAGS) -L. -r -o $@ $^
 
 obj:
 	mkdir $@
@@ -175,4 +192,5 @@ obj:
 clean:
 	-rm *.map bin/* release/* obj/* libctru_ntr.a
 	-rm target/ -rf
+	-rm target-o3ds/ -rf
 	$(MAKE) -C $(CTRU_DIR) clean

@@ -124,7 +124,13 @@ fn main() {
             "-DARM11",
             "-D__3DS__",
             "-fshort-enums",
-        ])
+        ]);
+    let bindings = if cfg!(feature = "o3ds") {
+        bindings.clang_arg("-DOLD_3DS")
+    } else {
+        bindings.clang_arg("-DNEW_3DS")
+    };
+    let bindings = bindings
         .parse_callbacks(Box::new(Callback::new()))
         .generate()
         .expect("unable to generate bindings");

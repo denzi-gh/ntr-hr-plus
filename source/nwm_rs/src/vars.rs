@@ -6,6 +6,8 @@ mod ranged;
 pub use gpu::*;
 pub use ranged::*;
 
+pub const RP_CORE_ID_MAIN: s32 = if cfg!(feature = "o3ds") { 1 } else { 2 };
+
 pub const FRAME_TIME_MAX_F: u32 = 4;
 pub const FRAME_TIME_FACTOR: u32 = 3;
 

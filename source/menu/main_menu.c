@@ -9,6 +9,7 @@
 #include "3ds/services/gspgpu.h"
 #include "3ds/srv.h"
 #include "3ds/ipc.h"
+#include "main.h"
 
 #include <memory.h>
 
@@ -568,6 +569,11 @@ enum {
 	(entries[v] = (cpuClockLocked && cpuClockLockValue == (v) ? t CPU_MODE_ENTRY_LOCKED_TEXT : selected == (v) ? t CPU_MODE_ENTRY_SELECTED_TEXT : t))
 
 static void ntrCPUModeMenu() {
+	if (!ntrConfig->isNew3DS) {
+		showMsg("CPU mode is available on New 3DS only.");
+		return;
+	}
+
 	char const *entries[CPU_MODE_ENTRIES_COUNT];
 	int selected;
 	if (cpuClockLocked) {
@@ -1010,7 +1016,11 @@ void mainThread(void *) {
 	if (ret != 0)
 		goto final;
 
-	ret = loadPayloadBin(NTR_BIN_NWM);
+	if (ntrConfig->isNew3DS) {
+		ret = loadPayloadBin(NTR_BIN_NWM);
+	} else  {
+		ret = loadPayloadBin(NTR_BIN_NWM_O3DS);
+	}
 	if (ret != 0) {
 		showDbg("Loading nwm payload failed.");
 		goto final;

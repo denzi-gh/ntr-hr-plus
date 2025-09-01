@@ -19,7 +19,7 @@ impl<const NB: u32, const NE: u32> IRangedIter<NB, NE> {
 
 impl<const NB: u32, const NE: u32> Iterator for IRangedIter<NB, NE>
 where
-    [(); (NE > NB) as usize - 1]:,
+    [(); (NE >= NB) as usize - 1]:,
 {
     type Item = IRanged<NB, NE>;
 
@@ -39,7 +39,7 @@ where
 
 impl<const NB: u32, const NE: u32> IRanged<NB, NE>
 where
-    [(); (NE > NB) as usize - 1]:,
+    [(); (NE >= NB) as usize - 1]:,
 {
     pub fn atomic(&mut self) -> &mut AtomicU32 {
         AtomicU32::from_mut(&mut self.i)

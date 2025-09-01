@@ -45,7 +45,7 @@ impl Impl {
             Some(entries::thread_main::encode_thread_main),
             0,
             RP_THREAD_PRIO_DEFAULT as s32,
-            2,
+            RP_CORE_ID_MAIN,
         );
     }
 

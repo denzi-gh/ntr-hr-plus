@@ -20,4 +20,4 @@ const-default = { path = "../../const_default", version = "1.0.0", features = [
 bindgen = "0.72.0"
 
 [features]
-img_diff_dbg = []
+o3ds = []

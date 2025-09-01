@@ -3,6 +3,7 @@
 
 #include "3ds/ipc.h"
 #include "3ds/services/hid.h"
+#include "main.h"
 #include "rp.h"
 #include "sys/socket.h"
 #include "netinet/in.h"
@@ -670,11 +671,6 @@ static int remotePlayApply(RP_CONFIG *config) {
 }
 
 int remotePlayMenu(u32 localaddr) {
-	if (!ntrConfig->isNew3DS) {
-		showDbg("Remote Play is available on New 3DS only.");
-		return 0;
-	}
-
 	u32 select = 0;
 	RP_CONFIG config = *rpConfig;
 	u8 *dstAddr4 = (u8 *)&config.dstAddr;
@@ -1053,11 +1049,6 @@ static u32 rpGetNwmRemotePC(NS_CONFIG *cfg, Handle hProcess) {
 }
 
 int rpStartupFromMenu(RP_CONFIG *config) {
-	if (!ntrConfig->isNew3DS) {
-		showDbg("Remote Play is available on New 3DS only.");
-		return -1;
-	}
-
 	rpClampParamsInMenu(config);
 
 	if (ATSR(&rpStarted)) {
@@ -1096,7 +1087,7 @@ final:
 	if (ret != 0) {
 		showDbg("Starting remote play failed: %08"PRIx32". Retry maybe...", ret);
 		ACR(&rpStarted);
-	} else {
+	} else if (ntrConfig->isNew3DS) {
 		nsDbgPrint("Locking CPU clock to 804 MHz and L2 cache to enabled...\n");
 		setCpuClockLock(3, 1);
 	}
