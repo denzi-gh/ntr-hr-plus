@@ -568,8 +568,17 @@ static int remotePlayAdvMenu(RP_CONFIG *config) {
 							int downsample = config->screens[screen_index].downsample;
 							if (keys == KEY_X)
 								downsample = rpConfig->screens[screen_index].downsample;
-							else
-								menu_adjust_value_with_key(&downsample, keys, 1, 1);
+							else {
+								int ret = menu_adjust_value_with_key(&downsample, keys, 1, 1);
+								// unimplemented
+								if (downsample == RP_DOWNSAMPLE_CHECKER) {
+									if (ret < 0) {
+										--downsample;
+									} else if (ret > 0) {
+										++downsample;
+									}
+								}
+							}
 
 							downsample = CWRAP(downsample, RP_DOWNSAMPLE_MIN, RP_DOWNSAMPLE_MAX);
 
