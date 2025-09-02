@@ -112,7 +112,10 @@ int plgEnsurePoolSize(u32 size) {
 	u32 ret, outAddr = 0, addr;
 	addr = plgPoolEnd;
 	size = end - plgPoolEnd;
-	ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
+	if (ntrConfig->memMode)
+		ret = svcControlMemoryEx(&outAddr, addr, addr, size, MEMOP_ALLOC | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
+	else
+		ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
 	if (ret != 0 || outAddr != addr) {
 		showDbg("Failed to extend memory from pool at addr %08"PRIx32": %08"PRIx32"\n", addr, ret);
 		return -1;
@@ -142,7 +145,10 @@ u32 plgRequestMemoryFromPool(u32 size, int pool) {
 		u32 ret, outAddr = 0, addr;
 		addr = plgMemoryPoolEnd;
 		size = rtAlignToPageSize(size);
-		ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
+		if (ntrConfig->memMode)
+			ret = svcControlMemoryEx(&outAddr, addr, addr, size, MEMOP_ALLOC | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
+		else
+			ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
 		if (ret != 0 || outAddr != addr) {
 			showDbg("Failed to allocate memory from pool for plugin at addr %08"PRIx32" for size %08"PRIx32": %08"PRIx32"\n", addr, size, ret);
 			return 0;
@@ -162,7 +168,10 @@ u32 plgRequestMemoryFromPool(u32 size, int pool) {
 		u32 ret, outAddr = 0, addr;
 		size = rtAlignToPageSize(size);
 		addr = plgMemoryPoolBegin - size;
-		ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
+		if (ntrConfig->memMode)
+			ret = svcControlMemoryEx(&outAddr, addr, addr, size, MEMOP_ALLOC | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
+		else
+			ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
 		if (ret != 0 || outAddr != addr) {
 			showDbg("Failed to allocate memory from pool for payload at addr %08"PRIx32" for size %08"PRIx32": %08"PRIx32"\n", addr, size, ret);
 			return 0;

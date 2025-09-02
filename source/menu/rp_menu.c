@@ -254,6 +254,9 @@ static const char *getReliableStreamName(enum ReliableStream reliableStream) {
 }
 
 static const char *getReliableStreamDesc(enum ReliableStream reliableStream) {
+	if (!ntrConfig->isNew3DS) {
+		return "Reliable Stream is New 3DS only.\n";
+	}
 	switch (reliableStream) {
 		default:
         case ReliableStreamNone:
@@ -895,7 +898,11 @@ int remotePlayMenu(u32 localaddr) {
 				} else {
 					int options = getReliableStreamFromFlag(dstFlag);
 					menu_adjust_value_with_key(&options, keys, 1, 1);
-					options = CWRAP(options, ReliableStreamMin, ReliableStreamMax);
+					if (!ntrConfig->isNew3DS) {
+						options = ReliableStreamNone;
+					} else {
+						options = CWRAP(options, ReliableStreamMin, ReliableStreamMax);
+					}
 					dstFlag = getFlagFromReliableStream(options);
 				}
 
@@ -994,10 +1001,14 @@ static void rpClampParamsInMenu(RP_CONFIG *config) {
 	}
 
 	int dstFlag = config->dstPort & 0xffff0000;
-	enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
-	if (ALC(&nfcPatched) && reliableStream != ReliableStreamNone) {
-		showMsg("NFC patch is applied, Reliable Stream\nwill be disabled for compatibility.");
+	if (!ntrConfig->isNew3DS) {
 		dstFlag = getFlagFromReliableStream(ReliableStreamNone);
+	} else {
+		enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
+		if (ALC(&nfcPatched) && reliableStream != ReliableStreamNone) {
+			showMsg("NFC patch is applied, Reliable Stream\nwill be disabled for compatibility.");
+			dstFlag = getFlagFromReliableStream(ReliableStreamNone);
+		}
 	}
 	config->dstPort = CLAMP(config->dstPort & 0xffff, RP_PORT_MIN, RP_PORT_MAX) | dstFlag;
 

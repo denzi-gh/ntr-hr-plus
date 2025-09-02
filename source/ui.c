@@ -42,7 +42,8 @@ void __attribute__((weak)) showMsgRaw2(const char *title, const char *msg) {
 	cmdbuf[3] = IPC_Desc_StaticBuffer(strlen(msg) + 1, 1);
 	cmdbuf[4] = (u32)msg;
 
-	s32 ret = svcSendSyncRequest(menuGetPortHandle());
+	Handle hClient = menuGetPortHandle();
+	s32 ret = hClient ? svcSendSyncRequest(hClient) : -1;
 	if (ret != 0) {
 		disp(100, DBG_CL_MSG);
 		svcSleepThread(1000000000);

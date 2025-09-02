@@ -18,16 +18,26 @@ u32 hasDirectScreenAccess;
 u32 bottomFB;
 u32 bottomFBRender;
 u32 bottomFBBackup;
+u32 directRender;
 
 int initDirectScreenAccess(void) {
-	bottomFBRender = plgRequestMemory(BOTTOM_UI_FRAME_SIZE);
-	if (!bottomFBRender)
-		return -1;
-	bottomFBBackup = plgRequestMemory(BOTTOM_UI_FRAME_SIZE);
-	if (!bottomFBBackup)
-		return -1;
+	directRender = ntrConfig->memMode;
+
+	if (!directRender) {
+		bottomFBRender = plgRequestMemory(BOTTOM_UI_FRAME_SIZE);
+		if (!bottomFBRender)
+			return -1;
+		bottomFBBackup = plgRequestMemory(BOTTOM_UI_FRAME_SIZE);
+		if (!bottomFBBackup)
+			return -1;
+	}
 
 	bottomFB = 0x1848F000 | 0x80000000; // From Luma3DS
+
+	if (directRender) {
+		bottomFBRender = bottomFB;
+	}
+
 	ASL(&hasDirectScreenAccess, 1);
 	return 0;
 }
@@ -54,7 +64,8 @@ void blank(void) {
 }
 
 void updateScreen(void) {
-	memcpy_ctr((void *)bottomFB, (void *)BOTTOM_FRAME, BOTTOM_UI_FRAME_SIZE);
+	if (!directRender)
+		memcpy_ctr((void *)bottomFB, (void *)BOTTOM_FRAME, BOTTOM_UI_FRAME_SIZE);
 	REG(GPU_FB_BOTTOM_ADDR_1) = bottomFB & ~0x80000000;
 	REG(GPU_FB_BOTTOM_ADDR_2) = bottomFB & ~0x80000000;
 	REG(GPU_FB_BOTTOM_FMT) = 0x00080300 | BOTTOM_UI_FORMAT;
@@ -113,11 +124,13 @@ static void unlockGameProcess(void) {
 }
 
 static void backupVRAMBuffer(void) {
-	memcpy_ctr((void *)bottomFBBackup, (void *)bottomFB, BOTTOM_UI_FRAME_SIZE);
+	if (!directRender)
+		memcpy_ctr((void *)bottomFBBackup, (void *)bottomFB, BOTTOM_UI_FRAME_SIZE);
 }
 
 static void restoreVRAMBuffer(void) {
-	memcpy_ctr((void *)bottomFB, (void *)bottomFBBackup, BOTTOM_UI_FRAME_SIZE);
+	if (!directRender)
+		memcpy_ctr((void *)bottomFB, (void *)bottomFBBackup, BOTTOM_UI_FRAME_SIZE);
 }
 
 void acquireVideo(void) {

@@ -121,8 +121,8 @@ static const u32 IoBasePdc = 0x10400000 + 0x80000000;
 #define STACK_SIZE (0x4000)
 #define RP_THREAD_STACK_SIZE (0x10000)
 
-#define DBG_CL_FATAL (0x10000ff)
-#define DBG_CL_MSG (DBG_CL_FATAL)
+#define DBG_CL_FATAL (0x100007f)
+#define DBG_CL_MSG (0x100ffff)
 #define DBG_CL_INFO (0x1ff0000)
 #define DBG_CL_USE_DBG (0x17f7f7f)
 #define DBG_CL_USE_DBG_FAIL (0xff00ff)

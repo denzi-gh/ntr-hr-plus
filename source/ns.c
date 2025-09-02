@@ -1,4 +1,3 @@
-#include "constants.h"
 #include "global.h"
 
 #include "3ds/services/soc.h"
@@ -139,7 +138,7 @@ void __attribute__((weak)) nsDbgPrintVerboseVA(const char *file_name, int line_n
 		cmdbuf[3] = IPC_Desc_StaticBuffer(strlen(msg) + 1, 1);
 		cmdbuf[4] = (u32)msg;
 
-		svcSendSyncRequest(menuGetPortHandle());
+		svcSendSyncRequest(hClient);
 	}
 }
 
@@ -186,7 +185,10 @@ u32 nsAttachProcess(Handle hProcess, u32 remotePC, NS_CONFIG *cfg, int thumbR3) 
 
 	totalSize = size + offset;
 
-	ret = mapRemoteMemory(hProcess, baseAddr, totalSize, MEMOP_ALLOC);
+	if (cfg->ntrConfig.memMode)
+		ret = mapRemoteMemoryInLoader(hProcess, baseAddr, totalSize, MEMOP_ALLOC);
+	else
+		ret = mapRemoteMemory(hProcess, baseAddr, totalSize, MEMOP_ALLOC);
 	if (ret != 0) {
 		showDbg("mapRemoteMemory failed: %08"PRIx32, ret);
 	}
@@ -277,7 +279,11 @@ lock_final:
 	return 0;
 
 final:;
-	s32 res = mapRemoteMemory(hProcess, baseAddr, totalSize, MEMOP_FREE);
+	s32 res;
+	if (cfg->ntrConfig.memMode)
+		res = mapRemoteMemoryInLoader(hProcess, baseAddr, totalSize, MEMOP_FREE);
+	else
+		res = mapRemoteMemory(hProcess, baseAddr, totalSize, MEMOP_FREE);;
 	if (res != 0) {
 		nsDbgPrint("mapRemoteMemory free failed: %08"PRIx32"\n", res);
 	}
@@ -461,7 +467,10 @@ int nsStartup(void) {
 	s32 ret, res;
 	u32 outAddr = 0;
 
-	ret = svcControlMemory(&outAddr, base, base, bufferSize, MEMOP_ALLOC, MEMPERM_READWRITE);
+	if (ntrConfig->memMode)
+		ret = svcControlMemoryEx(&outAddr, base, base, bufferSize, MEMOP_ALLOC | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
+	else
+		ret = svcControlMemory(&outAddr, base, base, bufferSize, MEMOP_ALLOC, MEMPERM_READWRITE);
 	if (ret != 0 || outAddr != base) {
 		showDbg("svcControlMemory alloc failed: %08"PRIx32, ret);
 		goto fail;
@@ -507,7 +516,10 @@ fail_soc:
 	}
 
 fail_alloc:
-	res = svcControlMemory(&outAddr, base, base, bufferSize, MEMOP_FREE, 0);
+	if (ntrConfig->memMode)
+		res = svcControlMemoryEx(&outAddr, base, base, bufferSize, MEMOP_FREE | NTR_LOADER_REGION, 0, true);
+	else
+		res = svcControlMemory(&outAddr, base, base, bufferSize, MEMOP_FREE, 0);
 	if (res != 0) {
 		nsDbgPrint("svcControlMemory free failed: %08"PRIx32"\n", res);
 	}
