@@ -3,6 +3,7 @@
 
 use super::*;
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(Copy, Clone)]
 pub union WorkderDstUser {
     pub none_info: *const entries::thread_nwm::NwmThreadInfo,
@@ -12,13 +13,19 @@ pub union WorkderDstUser {
 #[derive(Clone, ConstDefault)]
 pub struct WorkerDst {
     pub blkn: u16,
+    #[cfg(not(feature = "o3ds"))]
     pub s: ScreenIndex,
+    #[cfg(not(feature = "o3ds"))]
     pub w: WorkIndex,
     pub dst: *mut u8,
     pub free_in_bytes: u16,
+    #[cfg(not(feature = "o3ds"))]
     pub user: WorkderDstUser,
+    #[cfg(not(feature = "o3ds"))]
     pub rel_stream: bool,
+    #[cfg(not(feature = "o3ds"))]
     pub delta_prog: bool,
+    #[allow(unused)]
     pub even_odd: bool,
 }
 
@@ -71,19 +78,29 @@ impl WorkerDst {
 
     fn flush(&mut self) -> bool {
         unsafe {
+            #[cfg(not(feature = "o3ds"))]
             self.dq_update_size(entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32);
             self.blkn = 0;
-            entries::thread_nwm::rp_send_buffer(self, false, self.rel_stream)
+            #[cfg(not(feature = "o3ds"))]
+            let ret = entries::thread_nwm::rp_send_buffer(self, false, self.rel_stream);
+            #[cfg(feature = "o3ds")]
+            let ret = entries::thread_nwm::rp_send_buffer(self, false);
+            ret
         }
     }
 
     pub fn term(&mut self) -> bool {
         unsafe {
+            #[cfg(not(feature = "o3ds"))]
             self.dq_update_size(
                 entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32 - self.free_in_bytes as u32,
             );
             self.blkn = 0;
-            entries::thread_nwm::rp_send_buffer(self, true, self.rel_stream)
+            #[cfg(not(feature = "o3ds"))]
+            let ret = entries::thread_nwm::rp_send_buffer(self, true, self.rel_stream);
+            #[cfg(feature = "o3ds")]
+            let ret = entries::thread_nwm::rp_send_buffer(self, true);
+            ret
         }
     }
 
@@ -92,6 +109,7 @@ impl WorkerDst {
         self.dst = dst;
     }
 
+    #[cfg(not(feature = "o3ds"))]
     fn dq_update_size(&mut self, size: u32) {
         if self.delta_prog {
             let comp_size = unsafe {
@@ -108,6 +126,7 @@ impl WorkerDst {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(Copy, Clone, ConstDefault)]
 pub struct ArqRpHdr {
     pub w: WorkIndex,
@@ -118,15 +137,18 @@ const _ARQ_RP_HDR_SIZE_ASSERT: () = {
     assert!(mem::size_of::<u16>() == ARQ_DATA_HDR_SIZE as usize);
 };
 
+#[cfg(not(feature = "o3ds"))]
 const _ARQ_RP_W_SIZE_ASSERT: () = {
     assert!(WORK_COUNT - 1 <= ((1 << entries::work_thread::RP_KCP_HDR_W_NBITS) - 1));
 };
 
 // We store RP_CORE_COUNT_MAX as a special value to indicate term packet
+#[cfg(not(feature = "o3ds"))]
 const _ARQ_RP_T_SIZE_ASSERT: () = {
     assert!(RP_CORE_COUNT_MAX <= ((1 << entries::work_thread::RP_KCP_HDR_T_NBITS) - 1));
 };
 
+#[cfg(not(feature = "o3ds"))]
 impl ArqRpHdr {
     pub unsafe fn write_hdr(&self, dst: *mut u8) {
         let hdr = (self.w.get() as u16) << (PID_NBITS + CID_NBITS)

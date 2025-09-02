@@ -12,6 +12,7 @@ pub struct EncodeBuffer<'a, 'b, 'c, const N: usize> {
     pub base: EncodeBufferBase<'a, N>,
     pub state: &'b mut HuffState,
     pub dst: &'c mut WorkerDst,
+    #[cfg(not(feature = "o3ds"))]
     pub rel_stream: bool,
 }
 
@@ -23,7 +24,7 @@ where
         state: &'b mut HuffState,
         dst: &'a mut WorkerDst,
         buf: &'d mut [u8; N],
-        rel_stream: bool,
+        #[cfg(not(feature = "o3ds"))] rel_stream: bool,
     ) -> Self {
         if dst.free_in_bytes < N as u16 {
             EncodeBuffer {
@@ -31,6 +32,7 @@ where
                 base: EncodeBufferBase::Local(buf),
                 state,
                 dst,
+                #[cfg(not(feature = "o3ds"))]
                 rel_stream,
             }
         } else {
@@ -39,6 +41,7 @@ where
                 base: EncodeBufferBase::Dst,
                 state,
                 dst,
+                #[cfg(not(feature = "o3ds"))]
                 rel_stream,
             }
         }
@@ -57,7 +60,12 @@ where
 
     pub unsafe fn emit_byte(&mut self, b: u8) {
         unsafe {
-            if self.rel_stream {
+            #[cfg(not(feature = "o3ds"))]
+            let rel_stream = self.rel_stream;
+            #[cfg(feature = "o3ds")]
+            let rel_stream = false;
+
+            if rel_stream {
                 *self.buf = b;
                 self.buf = self.buf.add(1);
             } else {
@@ -70,7 +78,12 @@ where
 
     unsafe fn flush(&mut self) {
         unsafe {
-            if !self.rel_stream && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
+            #[cfg(not(feature = "o3ds"))]
+            let rel_stream = self.rel_stream;
+            #[cfg(feature = "o3ds")]
+            let rel_stream = false;
+
+            if !rel_stream && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
                 self.emit_byte((self.state.c >> 24) as u8);
                 self.emit_byte((self.state.c >> 16) as u8);
                 self.emit_byte((self.state.c >> 8) as u8);

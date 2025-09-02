@@ -570,7 +570,7 @@ enum {
 
 static void ntrCPUModeMenu() {
 	if (!ntrConfig->isNew3DS) {
-		showMsg("CPU mode is available on New 3DS only.");
+		showMsg("CPU mode is New 3DS only.");
 		return;
 	}
 
@@ -704,7 +704,7 @@ static void showMainMenu(void) {
 
 			case MENU_ENTRY_QTM_PATCH:
 				if (!ntrConfig->isNew3DS) {
-					showMsg("QTM patch is available on New 3DS only.");
+					showMsg("QTM patch is New 3DS only.");
 				} else {
 					releaseVideo();
 					rpDoQTMPatchAndToggle();

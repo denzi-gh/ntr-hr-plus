@@ -8,9 +8,13 @@ impl JpegSharedMut {
         unsafe {
             ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
         }
-        self.rand32 = Rand32::new(get_system_tick().get() as u64);
+        #[cfg(not(feature = "o3ds"))]
+        {
+            self.rand32 = Rand32::new(get_system_tick().get() as u64);
+        }
     }
 
+    #[cfg(not(feature = "o3ds"))]
     fn init(&mut self, delta_prog: bool, params: [(usize, f32); RP_SCREEN_COUNT as usize]) {
         if delta_prog {
             self.compressed_size = const_default();
@@ -43,14 +47,19 @@ impl JpegShared {
     fn init(
         &mut self,
         quality: [u32; RP_SCREEN_COUNT as usize],
-        rel_stream: bool,
-        delta_prog: bool,
-        core_count: CoreCount,
+        #[cfg(not(feature = "o3ds"))] rel_stream: bool,
+        #[cfg(not(feature = "o3ds"))] delta_prog: bool,
+        #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
-        self.rel_stream = rel_stream;
-        self.delta_prog = delta_prog;
+        #[cfg(not(feature = "o3ds"))]
+        {
+            self.rel_stream = rel_stream;
+            self.delta_prog = delta_prog;
+        }
+        #[cfg(feature = "o3ds")]
+        let delta_prog = false;
 
         self.quality = quality;
         for s in ScreenIndex::all() {
@@ -66,6 +75,7 @@ impl JpegShared {
                     .set_divisors(&screen.quant_tbls, &mut screen.div_shifts);
             }
 
+            #[cfg(not(feature = "o3ds"))]
             if delta_prog {
                 const QOS_ADJ_B: f32 = u8::BITS as f32;
                 const QOS_MIN_F: f32 = 0.625f32;
@@ -83,6 +93,7 @@ impl JpegShared {
             }
         }
 
+        #[cfg(not(feature = "o3ds"))]
         if delta_prog {
             for s in 1..RP_SCREEN_COUNT as usize {
                 self.screens[s].quant_tbls = self.screens[RP_SCREEN_TOP as usize].quant_tbls;
@@ -104,11 +115,20 @@ impl JpegShared {
             }
         }
 
-        self.core_count = core_count;
+        #[cfg(not(feature = "o3ds"))]
+        {
+            self.core_count = core_count;
+        }
         self.last_restart_range = if delta_prog { 64 } else { 32 };
-        self.set_comp_infos(hq, downsample, delta_prog)
+        self.set_comp_infos(
+            hq,
+            downsample,
+            #[cfg(not(feature = "o3ds"))]
+            delta_prog,
+        )
     }
 
+    #[cfg(not(feature = "o3ds"))]
     fn once_delta_q_tbls(&mut self) {
         for d in (0..DELTA_Q_COUNT as usize).rev() {
             let f = DELTA_Q_MAX / DELTA_Q_COUNT as f32 * d as f32;
@@ -140,6 +160,7 @@ impl JpegShared {
             ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
         }
         self.jpeg_tbls = JpegTbls::once();
+        #[cfg(not(feature = "o3ds"))]
         self.once_delta_q_tbls();
     }
 
@@ -147,7 +168,7 @@ impl JpegShared {
         &mut self,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
-        delta_prog: bool,
+        #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
 
@@ -252,41 +273,49 @@ impl JpegShared {
                     jdiv_round_up(checker.mcus as usize, checker.mcus_per_row as usize) as u16;
             }
 
-            *s.index_into_mut(&mut ret) = if delta_prog {
-                let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
-                for ci in 0..MAX_COMPONENTS {
-                    let comp = &comp_infos.infos[ci];
-                    let mcu_we = comp.h_samp_exp;
-                    let mcu_he = comp.v_samp_exp;
+            #[cfg(not(feature = "o3ds"))]
+            {
+                *s.index_into_mut(&mut ret) = if delta_prog {
+                    let mut qf: [u16; NUM_QUANT_TBLS] = const_default();
+                    for ci in 0..MAX_COMPONENTS {
+                        let comp = &comp_infos.infos[ci];
+                        let mcu_we = comp.h_samp_exp;
+                        let mcu_he = comp.v_samp_exp;
 
-                    qf[comp.quant_tbl_no as usize] += 1 << mcu_we + mcu_he;
-                }
-                const QF_F: [f32; NUM_QUANT_TBLS] = [1.25f32, 2f32 / 3f32];
-                let qf = {
-                    let mut ret: [f32; NUM_QUANT_TBLS] = const_default();
-                    for i in 0..NUM_QUANT_TBLS {
-                        ret[i] = qf[i] as f32 * QF_F[i];
+                        qf[comp.quant_tbl_no as usize] += 1 << mcu_we + mcu_he;
                     }
-                    ret
-                };
-                screen.delta_q_params.qf = qf;
-                let qt = {
-                    let mut qt = 0f32;
-                    for i in 0..NUM_QUANT_TBLS {
-                        qt += screen.delta_q_params.qf[i];
-                    }
-                    qt
-                };
-                let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
-                let q_steps = q_step.0 + q_step.1;
-                let q_steps_i = 1f32 / q_steps;
-                screen.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
+                    const QF_F: [f32; NUM_QUANT_TBLS] = [1.25f32, 2f32 / 3f32];
+                    let qf = {
+                        let mut ret: [f32; NUM_QUANT_TBLS] = const_default();
+                        for i in 0..NUM_QUANT_TBLS {
+                            ret[i] = qf[i] as f32 * QF_F[i];
+                        }
+                        ret
+                    };
+                    screen.delta_q_params.qf = qf;
+                    let qt = {
+                        let mut qt = 0f32;
+                        for i in 0..NUM_QUANT_TBLS {
+                            qt += screen.delta_q_params.qf[i];
+                        }
+                        qt
+                    };
+                    let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
+                    let q_steps = q_step.0 + q_step.1;
+                    let q_steps_i = 1f32 / q_steps;
+                    screen.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
 
-                screen.delta_q_params.m = (MIN_DCT_COMP_SIZE * screen.max_blocks_in_mcu) as f32;
+                    screen.delta_q_params.m = (MIN_DCT_COMP_SIZE * screen.max_blocks_in_mcu) as f32;
 
-                (screen.max_blocks_in_mcu, q_steps)
-            } else {
-                (0, 0f32)
+                    (screen.max_blocks_in_mcu, q_steps)
+                } else {
+                    (0, 0f32)
+                };
+            }
+
+            #[cfg(feature = "o3ds")]
+            {
+                *s.index_into_mut(&mut ret) = (0, 0f32);
             }
         }
         ret
@@ -300,77 +329,93 @@ impl Jpeg {
     }
 
     #[named]
+    #[allow(unused_macros)]
     pub fn init(
         &mut self,
         quality: [u32; RP_SCREEN_COUNT as usize],
-        core_count: CoreCount,
+        #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
-        rel_stream: bool,
-        delta_prog: bool,
+        #[cfg(not(feature = "o3ds"))] rel_stream: bool,
+        #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> Option<()> {
-        let shared_mut_params = self
-            .shared
-            .init(quality, rel_stream, delta_prog, core_count, hq, downsample);
-        self.shared_mut.init(delta_prog, shared_mut_params);
+        let shared_mut_params = self.shared.init(
+            quality,
+            #[cfg(not(feature = "o3ds"))]
+            rel_stream,
+            #[cfg(not(feature = "o3ds"))]
+            delta_prog,
+            #[cfg(not(feature = "o3ds"))]
+            core_count,
+            hq,
+            downsample,
+        );
+        #[cfg(feature = "o3ds")]
+        {
+            let _ = shared_mut_params;
+        };
+        #[cfg(not(feature = "o3ds"))]
+        {
+            self.shared_mut.init(delta_prog, shared_mut_params);
 
-        for w in WorkIndex::all() {
-            let sem = self.shared.work_sem.get_mut(&w);
-            if *sem > 0 {
-                unsafe {
-                    let _ = svcCloseHandle(*sem);
+            for w in WorkIndex::all() {
+                let sem = self.shared.work_sem.get_mut(&w);
+                if *sem > 0 {
+                    unsafe {
+                        let _ = svcCloseHandle(*sem);
+                    }
+                    *sem = 0;
                 }
-                *sem = 0;
-            }
 
-            let res = unsafe { svcCreateSemaphore(sem, 0, core_count.get() as i32 - 1) };
-            if res != 0 {
-                ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
-                return None;
-            }
-            self.shared_mut
-                .work_inited
-                .get_mut(&w)
-                .store(false, Ordering::Release);
-            self.shared_mut
-                .work_sem_count
-                .get_mut(&w)
-                .store(core_count.get() as u8, Ordering::Release);
-        }
-        for s in ScreenIndex::all() {
-            let sem = self.shared.screen_sem.get_mut(&s);
-            if *sem > 0 {
-                unsafe {
-                    let _ = svcCloseHandle(*sem);
+                let res = unsafe { svcCreateSemaphore(sem, 0, core_count.get() as i32 - 1) };
+                if res != 0 {
+                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
+                    return None;
                 }
-                *sem = 0;
+                self.shared_mut
+                    .work_inited
+                    .get_mut(&w)
+                    .store(false, Ordering::Release);
+                self.shared_mut
+                    .work_sem_count
+                    .get_mut(&w)
+                    .store(core_count.get() as u8, Ordering::Release);
+            }
+            for s in ScreenIndex::all() {
+                let sem = self.shared.screen_sem.get_mut(&s);
+                if *sem > 0 {
+                    unsafe {
+                        let _ = svcCloseHandle(*sem);
+                    }
+                    *sem = 0;
+                }
+
+                let res = unsafe { svcCreateSemaphore(sem, 1, 1) };
+                if res != 0 {
+                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg screen_sem"), res);
+                    return None;
+                }
+
+                self.shared_mut
+                    .screen_bool
+                    .get_mut(&s)
+                    .store(false, Ordering::Release);
+                *self.shared_mut.last_restart_interval.get_mut(&s) = 0;
             }
 
-            let res = unsafe { svcCreateSemaphore(sem, 1, 1) };
-            if res != 0 {
-                ns_dbg_print!(create_semaphore_failed, c_str!("jpeg screen_sem"), res);
-                return None;
+            unsafe {
+                ptr::write_bytes(
+                    self.shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
+                    0,
+                    self.shared_mut.dq_prev_coeffs_top.len(),
+                );
+
+                ptr::write_bytes(
+                    self.shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
+                    0,
+                    self.shared_mut.dq_prev_coeffs_bot.len(),
+                );
             }
-
-            self.shared_mut
-                .screen_bool
-                .get_mut(&s)
-                .store(false, Ordering::Release);
-            *self.shared_mut.last_restart_interval.get_mut(&s) = 0;
-        }
-
-        unsafe {
-            ptr::write_bytes(
-                self.shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
-                0,
-                self.shared_mut.dq_prev_coeffs_top.len(),
-            );
-
-            ptr::write_bytes(
-                self.shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
-                0,
-                self.shared_mut.dq_prev_coeffs_bot.len(),
-            );
         }
 
         Some(())

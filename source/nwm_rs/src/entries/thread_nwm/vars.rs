@@ -1,15 +1,22 @@
 use super::*;
 
 pub static mut RELIABLE_STREAM_CB: *mut rp_cb = const_default();
+#[cfg(not(feature = "o3ds"))]
 pub static mut RELIABLE_STREAM_CB_LOCK: Handle = 0;
+#[cfg(not(feature = "o3ds"))]
 pub static mut RELIABLE_STREAM_CB_EVT: Handle = 0;
+#[cfg(not(feature = "o3ds"))]
 pub static mut RELIABLE_STREAM_CB_INITED: AtomicBool = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub static mut SEG_MEM_SEM: Handle = 0;
+#[cfg(not(feature = "o3ds"))]
 pub static mut SEG_MEM_LOCK: Handle = 0;
+#[cfg(not(feature = "o3ds"))]
 pub static mut SEG_MEM_TERM_SEM: Handle = 0;
 
 #[named]
+#[allow(unused_macros)]
 pub unsafe fn once_reliable_stream_cb() -> Option<()> {
     unsafe {
         if let Some(m) = request_mem_from_pool::<{ mem::size_of::<rp_cb>() }>() {
@@ -20,22 +27,26 @@ pub unsafe fn once_reliable_stream_cb() -> Option<()> {
             return None;
         }
 
-        let res = svcCreateMutex(&mut RELIABLE_STREAM_CB_LOCK, false);
-        if res != 0 {
-            ns_dbg_print!(failed, c_str!("Create nwm mutex"), res);
-            return None;
+        #[cfg(not(feature = "o3ds"))]
+        {
+            let res = svcCreateMutex(&mut RELIABLE_STREAM_CB_LOCK, false);
+            if res != 0 {
+                ns_dbg_print!(failed, c_str!("Create nwm mutex"), res);
+                return None;
+            }
+            let res = create_event(&mut RELIABLE_STREAM_CB_EVT);
+            if res != 0 {
+                ns_dbg_print!(failed, c_str!("Create nwm recv event"), res);
+                return None;
+            }
+            RELIABLE_STREAM_CB_INITED.store(true, Ordering::Release);
         }
-        let res = create_event(&mut RELIABLE_STREAM_CB_EVT);
-        if res != 0 {
-            ns_dbg_print!(failed, c_str!("Create nwm recv event"), res);
-            return None;
-        }
-        RELIABLE_STREAM_CB_INITED.store(true, Ordering::Release);
     }
     Some(())
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn init_reliable_stream_cb(qos: u32) -> Option<()> {
     unsafe {
         let syn = &mut (*RELIABLE_STREAM_CB);
@@ -85,20 +96,34 @@ pub unsafe fn init_ov_stats() {
             0,
             mem::size_of_val(&*config_consts::OV_STATS),
         );
-        (*config_consts::OV_STATS).kcp_mode = match entries::thread_nwm::get_reliable_stream() {
-            entries::thread_nwm::ReliableStream::None => 0,
-            entries::thread_nwm::ReliableStream::KCP => {
-                if entries::thread_nwm::get_reliable_stream_delta_prog() {
-                    2
-                } else {
-                    1
+        #[cfg(not(feature = "o3ds"))]
+        {
+            (*config_consts::OV_STATS).kcp_mode = match entries::thread_nwm::get_reliable_stream() {
+                entries::thread_nwm::ReliableStream::None => 0,
+                entries::thread_nwm::ReliableStream::KCP => {
+                    #[cfg(not(feature = "o3ds"))]
+                    if entries::thread_nwm::get_reliable_stream_delta_prog() {
+                        2
+                    } else {
+                        1
+                    }
+
+                    #[cfg(feature = "o3ds")]
+                    {
+                        1
+                    }
                 }
-            }
-        };
+            };
+        }
+        #[cfg(feature = "o3ds")]
+        {
+            (*config_consts::OV_STATS).kcp_mode = 0;
+        }
     }
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn init_seg_mem_handles(qos: u32) -> Option<()> {
     unsafe {
         let res = svcCreateSemaphore(
@@ -130,6 +155,7 @@ pub unsafe fn init_seg_mem_handles(qos: u32) -> Option<()> {
     Some(())
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn cleanup_seg_mem_handles() {
     unsafe {
         let _ = svcCloseHandle(SEG_MEM_TERM_SEM);
@@ -146,6 +172,7 @@ pub fn get_current_nwm_hdr() -> *mut NwmHdr {
     unsafe { &mut CURRENT_NWM_HDR }
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut KCP_CONV: u8 = 0;
 #[unsafe(export_name = "rp_max_qos")]
 static mut MAX_QOS: u32 = const_default();
@@ -153,6 +180,7 @@ static mut MAX_QOS: u32 = const_default();
 #[unsafe(export_name = "rp_current_qos")]
 static mut CURRENT_QOS: AtomicU32 = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_delta_q_qos() -> u32 {
     unsafe { CURRENT_QOS.load(Ordering::Acquire) }
 }
@@ -164,6 +192,7 @@ extern "C" fn rp_set_qos(qos: u32) {
 
 #[named]
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 extern "C" fn rp_udp_output(buf: *mut u8, len: s32, tick: *mut u32, kcp: *mut ikcpcb) -> s32 {
     if len > PACKET_SIZE as s32 {
         ns_dbg_print!(failed, c_str!("Nwm output packet len overflow"), len);
@@ -211,6 +240,7 @@ extern "C" fn rp_udp_output(buf: *mut u8, len: s32, tick: *mut u32, kcp: *mut ik
     return len;
 }
 
+#[cfg(not(feature = "o3ds"))]
 unsafe fn rp_recv_data_buf()
 -> Option<&'static mut [[c_char; RP_RECV_PACKET_SIZE as usize]; RP_RECV_BUF_N as usize]> {
     if !unsafe { RELIABLE_STREAM_CB_INITED.load(Ordering::Acquire) } {
@@ -223,6 +253,7 @@ unsafe fn rp_recv_data_buf()
 
 #[named]
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 extern "C" fn nsControlRecv(fd: c_int) -> c_int {
     let recv_bufs = if let Some(dst) = unsafe { rp_recv_data_buf() } {
         dst
@@ -296,6 +327,7 @@ extern "C" fn nsControlRecv(fd: c_int) -> c_int {
 
 #[named]
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 extern "C" fn ikcp_seg_data_buf_malloc() -> *mut c_char {
     if let Some(dst) = loop {
         if unsafe { CUR_SEG_MEM_COUNT } == SEND_CUR_BUFS_COUNT {
@@ -321,6 +353,7 @@ extern "C" fn ikcp_seg_data_buf_malloc() -> *mut c_char {
 
 #[named]
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 extern "C" fn ikcp_seg_data_buf_free(dst: *const c_char) {
     let cb = unsafe { &mut *RELIABLE_STREAM_CB };
     if unsafe {
@@ -338,13 +371,16 @@ extern "C" fn ikcp_seg_data_buf_free(dst: *const c_char) {
 }
 
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 extern "C" fn rp_seg_data_buf_free(data_buf: *const c_char) {
     unsafe { rp_data_buf_free(data_buf.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize) as *mut _) }
 }
 
+#[cfg(not(feature = "o3ds"))]
 const RP_KCP_TIMEOUT_TICK: s32 = 2 * SYSCLOCK_ARM11 as s32;
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 unsafe fn do_kcp_thread_nwm() -> bool {
     if let Some(mut lock) = NwmCbLock::lock(cname!()) {
         let mut dst = mem::MaybeUninit::uninit();
@@ -545,6 +581,7 @@ unsafe fn do_kcp_thread_nwm() -> bool {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub extern "C" fn kcp_thread_nwm(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
@@ -553,6 +590,7 @@ pub extern "C" fn kcp_thread_nwm(_: *mut c_void) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[named]
 pub extern "C" fn thread_nwm(_: *mut c_void) {
     unsafe {
@@ -570,6 +608,7 @@ pub extern "C" fn thread_nwm(_: *mut c_void) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[named]
 fn nwm_ready_acquire(w: WorkIndex) -> bool {
     let need_syn = unsafe { NWM_NEED_SYN.get_mut(&w) };
@@ -588,12 +627,14 @@ fn nwm_ready_acquire(w: WorkIndex) -> bool {
     true
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn data_buffer_filled(dinfo: &DataInfo) -> (bool, *mut u8, u32) {
     let flag = dinfo.flag.load(Ordering::Acquire);
     let pos = dinfo.pos.load(Ordering::Acquire);
     (dinfo.send_pos < pos || flag > 0, pos, flag)
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn send_next_buffer() -> bool {
     let work_index = unsafe { NWM_WORK_INDEX };
     let mut thread_index = unsafe { NWM_THREAD_INDEX };
@@ -626,6 +667,7 @@ fn send_next_buffer() -> bool {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn do_send_next_buffer(w: &mut WorkIndex, t: ThreadIndex, pos: *mut u8, flag: u32) -> bool {
     let curr_tick = get_system_tick().get() as u32;
     let next_tick = unsafe { RP_OUTPUT_NEXT_TICK };
@@ -651,6 +693,7 @@ fn do_send_next_buffer(w: &mut WorkIndex, t: ThreadIndex, pos: *mut u8, flag: u3
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn nwm_send_next_buffer(
     w: &mut WorkIndex,
     t: ThreadIndex,
@@ -849,6 +892,7 @@ unsafe fn ip_checksum(data: *mut u8, mut length: usize) -> u16 {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
     let mut nwm_lock = if let Some(l) = NwmCbLock::lock(cname!()) {
         l
@@ -902,40 +946,54 @@ unsafe fn init_min_send_interval(qos: u32) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut NWM_WORK_INDEX: WorkIndex = WorkIndex::init(0);
+#[cfg(not(feature = "o3ds"))]
 static mut NWM_THREAD_INDEX: ThreadIndex = ThreadIndex::init(0);
 
+#[cfg(not(feature = "o3ds"))]
 static mut NWM_NEED_SYN: RangedArray<bool, WORK_COUNT> = const_default();
-static mut RP_OUTPUT_NEXT_TICK: u32 = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut CUR_SEG_MEM_COUNT: u32 = 0;
 
-pub unsafe fn init(dst_flags: u32, qos: u32) -> Option<()> {
+static mut RP_OUTPUT_NEXT_TICK: u32 = const_default();
+
+pub unsafe fn init(#[cfg(not(feature = "o3ds"))] dst_flags: u32, qos: u32) -> Option<()> {
     unsafe {
+        #[cfg(not(feature = "o3ds"))]
         init_reliable_stream(dst_flags, qos)?;
         init_min_send_interval(qos);
 
-        for i in WorkIndex::all() {
-            *NWM_NEED_SYN.get_mut(&i) = true;
-        }
-        NWM_WORK_INDEX = WorkIndex::init(0);
-        NWM_THREAD_INDEX = ThreadIndex::init(0);
+        #[cfg(not(feature = "o3ds"))]
+        {
+            for i in WorkIndex::all() {
+                *NWM_NEED_SYN.get_mut(&i) = true;
+            }
+            NWM_WORK_INDEX = WorkIndex::init(0);
+            NWM_THREAD_INDEX = ThreadIndex::init(0);
 
+            RP_OUTPUT_NEXT_TICK = get_system_tick().get() as u32 + MIN_SEND_INTERVAL_TICK;
+            CUR_SEG_MEM_COUNT = 0;
+        }
         RP_OUTPUT_NEXT_TICK = get_system_tick().get() as u32 + MIN_SEND_INTERVAL_TICK;
-        CUR_SEG_MEM_COUNT = 0;
     }
 
     Some(())
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(PartialEq, Eq)]
 pub enum ReliableStream {
     None,
     KCP,
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut RELIABLE_STREAM: AtomicBool = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut RELIABLE_STREAM_DELTA_PROG: AtomicBool = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub fn get_reliable_stream() -> ReliableStream {
     if unsafe { RELIABLE_STREAM.load(Ordering::Acquire) } {
         ReliableStream::KCP
@@ -944,10 +1002,12 @@ pub fn get_reliable_stream() -> ReliableStream {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn get_reliable_stream_delta_prog() -> bool {
     unsafe { RELIABLE_STREAM_DELTA_PROG.load(Ordering::Acquire) }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(ConstDefault)]
 pub struct DataInfo {
     pub send_pos: *mut u8,
@@ -955,6 +1015,7 @@ pub struct DataInfo {
     pub flag: AtomicU32,
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(ConstDefault)]
 pub struct NwmThreadInfo {
     pub buf: *mut u8,
@@ -962,15 +1023,21 @@ pub struct NwmThreadInfo {
     pub info: DataInfo,
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub type NwmWorkInfo = RangedArray<NwmThreadInfo, RP_CORE_COUNT_MAX>;
+#[cfg(not(feature = "o3ds"))]
 pub type NwmInfo = RangedArray<NwmWorkInfo, WORK_COUNT>;
+#[cfg(not(feature = "o3ds"))]
 static mut NWM_INFOS: NwmInfo = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut PACKET_DATA_SIZE: usize = 0;
 
+#[cfg(not(feature = "o3ds"))]
 pub fn get_packet_data_size() -> usize {
     unsafe { PACKET_DATA_SIZE }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub const fn get_packet_data_size_v(rel_stream: bool) -> usize {
     if rel_stream {
         get_packet_data_size_const::<true>()
@@ -979,6 +1046,7 @@ pub const fn get_packet_data_size_v(rel_stream: bool) -> usize {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub const fn get_packet_data_size_const<const REL_STREAM: bool>() -> usize {
     if REL_STREAM {
         PACKET_DATA_SIZE_KCP
@@ -987,15 +1055,18 @@ pub const fn get_packet_data_size_const<const REL_STREAM: bool>() -> usize {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 const PACKET_DATA_SIZE_COMPAT: usize = {
     let size = (PACKET_SIZE - DATA_HDR_SIZE) as usize;
     assert!(size % mem::size_of::<usize>() == 0);
     size
 };
 
+#[cfg(not(feature = "o3ds"))]
 pub const PACKET_DATA_SIZE_KCP: usize =
     (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize;
 
+#[cfg(not(feature = "o3ds"))]
 unsafe fn set_packet_data_size() {
     unsafe {
         PACKET_DATA_SIZE = match get_reliable_stream() {
@@ -1005,32 +1076,43 @@ unsafe fn set_packet_data_size() {
     }
 }
 
-pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_count: CoreCount) {
+#[cfg(not(feature = "o3ds"))]
+pub unsafe fn init_nwm_infos(
+    #[cfg(not(feature = "o3ds"))] nwm_bufs: &entries::thread_main::NwmBufs,
+    core_count: CoreCount,
+) {
     unsafe {
-        let hdr_size = (NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + mem::size_of::<usize>()
-            - 1)
-            / mem::size_of::<usize>()
-            * mem::size_of::<usize>();
         let packet_data_size = PACKET_DATA_SIZE;
         for i in WorkIndex::all() {
             for j in ThreadIndex::up_to(&thread_index_last(core_count)) {
                 let ninfo = NWM_INFOS.get_mut(&i).get_mut(&j);
                 let buf_size = (entries::thread_main::NWM_BUFFER_SIZE / core_count.get() as usize
-                    - hdr_size)
+                    - RP_CB_HDR_SIZE)
                     / packet_data_size
                     * packet_data_size
-                    + hdr_size;
+                    + RP_CB_HDR_SIZE;
                 let buf = nwm_bufs.get(&i).add(j.get() as usize * buf_size);
 
-                ninfo.buf = buf.add(hdr_size);
+                ninfo.buf = buf.add(RP_CB_HDR_SIZE);
                 ninfo.buf_packet_last = buf.add(buf_size as usize - packet_data_size);
             }
         }
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn nwm_info(work_index: WorkIndex) -> &'static mut NwmWorkInfo {
     unsafe { NWM_INFOS.get_mut(&work_index) }
+}
+
+const RP_CB_HDR_SIZE: usize =
+    (NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + mem::size_of::<usize>() - 1)
+        / mem::size_of::<usize>()
+        * mem::size_of::<usize>();
+
+#[cfg(feature = "o3ds")]
+pub unsafe fn nwm_info() -> *mut u8 {
+    unsafe { (*RELIABLE_STREAM_CB).buf.as_mut_ptr().add(RP_CB_HDR_SIZE) }
 }
 
 #[derive(ConstDefault)]
@@ -1044,6 +1126,7 @@ impl DataHdr {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 fn nwm_done_release(w: &mut WorkIndex) {
     unsafe {
         release_sem(
@@ -1058,6 +1141,7 @@ fn nwm_done_release(w: &mut WorkIndex) {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool) -> bool {
     unsafe {
         if wait_syn(
@@ -1090,7 +1174,16 @@ pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool) -> bool
     }
 }
 
+#[cfg(feature = "o3ds")]
+pub unsafe fn nwm_start_frame(frame_id: u8, is_top: bool) {
+    unsafe {
+        let hdr = DATA_BUF_HDRS.get_mut(&WorkIndex::init(0));
+        *hdr = DataHdr::init(frame_id, is_top);
+    }
+}
+
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn nwm_ready_release(w: &WorkIndex) {
     unsafe {
         release_sem(
@@ -1101,9 +1194,11 @@ pub unsafe fn nwm_ready_release(w: &WorkIndex) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(PartialEq, Eq)]
 pub struct NwmCbLock(CName);
 
+#[cfg(not(feature = "o3ds"))]
 impl NwmCbLock {
     pub fn lock(cname: CName) -> Option<Self> {
         nwm_cb_lock()?;
@@ -1115,12 +1210,14 @@ impl NwmCbLock {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 impl Drop for NwmCbLock {
     fn drop(&mut self) {
         unsafe { nwm_cb_unlock(self.0) };
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[named]
 fn nwm_cb_lock() -> Option<()> {
     wait_syn(
@@ -1131,6 +1228,7 @@ fn nwm_cb_lock() -> Option<()> {
     Some(())
 }
 
+#[cfg(not(feature = "o3ds"))]
 unsafe fn nwm_cb_unlock(cname: CName) {
     unsafe {
         release_mutex(
@@ -1143,13 +1241,17 @@ unsafe fn nwm_cb_unlock(cname: CName) {
 
 static mut RP_FRAME_COMPRESSED_SIZE: [AtomicU32; WORK_COUNT as usize] = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub const JPEG_COMP_COUNT_SIZE_NBITS: u32 = 19;
+#[cfg(not(feature = "o3ds"))]
 pub const JPEG_COMP_COUNT_BLKN_NBITS: u32 = 13;
 
+#[cfg(not(feature = "o3ds"))]
 const _JPEG_COMP_COUNT_NBITS_ASSERT: () = {
     assert!(JPEG_COMP_COUNT_SIZE_NBITS + JPEG_COMP_COUNT_BLKN_NBITS <= u32::BITS);
 };
 
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16) {
     let mut curr = comp_size.load(Ordering::Acquire);
     loop {
@@ -1169,6 +1271,7 @@ pub fn rp_dq_update_size(comp_size: &mut AtomicU32, size: u32, blkn: u16) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_update_size(w: WorkIndex, size: u32) {
     unsafe {
         RP_FRAME_COMPRESSED_SIZE
@@ -1177,6 +1280,7 @@ pub fn rp_update_size(w: WorkIndex, size: u32) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_get_size(w: WorkIndex) -> u32 {
     unsafe {
         RP_FRAME_COMPRESSED_SIZE
@@ -1193,7 +1297,42 @@ pub fn rp_clear_size(w: WorkIndex) {
     }
 }
 
+#[cfg(feature = "o3ds")]
+pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
+    let mut size = RP_CB_PACKET_SIZE as usize;
+    const TERM_FLAG: u8 = 0x10;
+    if term {
+        size -= dst.free_in_bytes as usize;
+    }
+
+    let data_buf = dst.dst;
+    let packet_buf = unsafe { data_buf.sub(DATA_HDR_SIZE as usize) };
+    let data_buf_hdr = unsafe { DATA_BUF_HDRS.get_mut(&WorkIndex::init(0)) };
+    unsafe {
+        ptr::copy(
+            data_buf_hdr.0.as_ptr(),
+            packet_buf as *mut u8,
+            DATA_HDR_SIZE as usize,
+        );
+    }
+    if term {
+        unsafe { *packet_buf.add(1) |= TERM_FLAG };
+    }
+    data_buf_hdr.0[3] += 1;
+
+    let packet_size = size as u32 + DATA_HDR_SIZE;
+    if unsafe { rp_output(packet_buf, packet_size as usize) }.is_none() {
+        return false;
+    }
+
+    dst.dst = unsafe { nwm_info() };
+    dst.free_in_bytes = RP_CB_PACKET_SIZE as u16;
+
+    true
+}
+
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool, rel_stream: bool) -> bool {
     let rp_packet_data_size = get_packet_data_size_v(rel_stream);
     let mut size = rp_packet_data_size;
@@ -1276,6 +1415,7 @@ pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool, rel_stream: 
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn rp_data_buf_malloc() -> Option<*mut c_char> {
     unsafe {
         wait_syn(cname!(), SEG_MEM_SEM, c_str!("SEG_MEM_SEM"))?;
@@ -1284,6 +1424,7 @@ pub unsafe fn rp_data_buf_malloc() -> Option<*mut c_char> {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 unsafe fn rp_data_buf_free(dst: *const ::libc::c_char) {
     unsafe {
         entries::work_thread::rp_term_data_buf_free_base(dst);
@@ -1291,6 +1432,7 @@ unsafe fn rp_data_buf_free(dst: *const ::libc::c_char) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_data_buf_data(dst: *mut c_char) -> *mut c_char {
     unsafe { dst.add((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE + ARQ_DATA_HDR_SIZE) as usize) }
 }

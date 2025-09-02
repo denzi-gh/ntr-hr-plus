@@ -8,13 +8,16 @@ pub use ranged::*;
 
 pub const RP_CORE_ID_MAIN: s32 = if cfg!(feature = "o3ds") { 1 } else { 2 };
 
+#[allow(unused)]
 macro_rules! rp_need_core_syn {
     () => {
-        !cfg!(feature = "o3ds") && core_count_in_use().get() != RP_CORE_COUNT_MIN
+        core_count_in_use().get() != RP_CORE_COUNT_MIN
     };
 }
 
+#[allow(unused)]
 pub const FRAME_TIME_MAX_F: u32 = 4;
+#[allow(unused)]
 pub const FRAME_TIME_FACTOR: u32 = 3;
 
 pub mod config_consts {
@@ -26,6 +29,7 @@ pub mod config_consts {
     pub const RP_CONFIG: *mut RP_CONFIG =
         (NS_CONFIG_ADDR as usize + mem::offset_of!(NS_CONFIG, rpConfig)) as *mut RP_CONFIG;
 
+    #[allow(unused)]
     pub const RP_CONFIG_U32_COUNT: usize = mem::size_of::<RP_CONFIG>() / mem::size_of::<u32>();
 
     pub const NTR_CONFIG: *mut NTR_CONFIG =
@@ -126,6 +130,7 @@ pub const fn img_buffer_size(is_top: bool) -> usize {
         }) as usize
 }
 
+#[allow(unused)]
 #[derive(ConstDefault)]
 pub struct WorkHandles {
     pub nwm_ready: Handle,
@@ -136,18 +141,23 @@ pub struct WorkHandles {
     pub work_done: Handle,
 }
 
+#[allow(unused)]
 type WorksHandles = RangedArray<WorkHandles, WORK_COUNT>;
 
+#[allow(unused)]
 #[derive(ConstDefault)]
 pub struct ThreadHandles {
     pub thread_ready: Handle,
     pub work_ready: Handle,
 }
 
+#[allow(unused)]
 type ThreadsHandles = RangedArray<ThreadHandles, RP_CORE_COUNT_MAX>;
 
+#[allow(unused)]
 type ScreensHandles = RangedArray<Handle, SCREEN_COUNT>;
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(ConstDefault)]
 pub struct SynHandles {
     pub works: WorksHandles,
@@ -158,6 +168,7 @@ pub struct SynHandles {
     pub screens_port_ready: ScreensHandles,
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub static mut SYN_HANDLES: SynHandles = const_default();
 
 pub fn thread_index_last(core_count: CoreCount) -> ThreadIndex {
@@ -165,6 +176,7 @@ pub fn thread_index_last(core_count: CoreCount) -> ThreadIndex {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn init_syn_handles(core_count: CoreCount) -> Option<()> {
     unsafe {
         for i in ScreenIndex::all() {
@@ -232,6 +244,7 @@ pub unsafe fn init_syn_handles(core_count: CoreCount) -> Option<()> {
     Some(())
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn cleanup_syn_handles(core_count: CoreCount) {
     unsafe {
         for j in ThreadIndex::up_to(&thread_index_last(core_count)) {

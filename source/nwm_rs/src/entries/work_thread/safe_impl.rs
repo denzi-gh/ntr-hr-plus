@@ -5,7 +5,7 @@ pub fn send_frame(impl_: Impl) -> Option<()> {
         Ok(work) => {
             let mut work = work;
             loop {
-                let blit_init = work.init_bctx();
+                let blit_init = work.init_bctx()?;
                 let sync = blit_init.sync();
                 work = match sync.skip_frame() {
                     Ok(frame) => break frame.frame_release(),

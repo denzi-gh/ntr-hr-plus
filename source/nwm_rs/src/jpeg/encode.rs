@@ -49,6 +49,7 @@ fn get_bpp_for_format(c: ColorSpace) -> u8 {
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
     #[named]
+    #[allow(unused_macros)]
     pub fn encode<F, G>(
         &mut self,
         src: &[u8],
@@ -61,18 +62,24 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     {
         let bpp = get_bpp_for_format(self.worker.info.color_space);
         let is_top = self.worker.info.is_top;
+        #[cfg(not(feature = "o3ds"))]
         let w = self.worker.info.work_index;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.shared.screens);
         let pitch = screen.width as usize * bpp as usize;
+        #[allow(unused)]
         let mcus = screen.mcus;
 
+        #[cfg(not(feature = "o3ds"))]
         if !self.worker.shared.rel_stream && self.worker.thread_index.get() == 0 {
             self.write_headers();
         }
+        #[cfg(feature = "o3ds")]
+        self.write_headers();
 
         self.reset_mcu();
 
+        #[cfg(not(feature = "o3ds"))]
         let prev = unsafe {
             if self.worker.shared.delta_prog {
                 if src.len() == 0 {
@@ -156,7 +163,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunks) in src_chunks.clone().enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 /* Pre-process */
@@ -174,7 +183,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
                     if let Some(rem) = src_chunks.into_remainder() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             n,
                             |this| {
                                 /* Pre-process */
@@ -196,7 +207,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunks) in src_chunks.enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 /* Pre-process */
@@ -219,7 +232,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunks) in src_chunks.enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 /* Pre-process */
@@ -252,7 +267,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 pre_process(this, chunk);
@@ -280,7 +297,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 pre_process(this, chunk);
@@ -306,7 +325,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let n = src_chunks.len();
                     for (i, chunk) in src_chunks.enumerate() {
                         self.process(
+                            #[cfg(not(feature = "o3ds"))]
                             prev,
+                            #[cfg(not(feature = "o3ds"))]
                             i,
                             |this| {
                                 pre_process(this, chunk);
@@ -326,7 +347,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         self.flush_mcu();
 
+        #[cfg(not(feature = "o3ds"))]
         let mut delta_q = 0;
+        #[cfg(not(feature = "o3ds"))]
         if !self.worker.shared.rel_stream {
             if self.worker.thread_index == thread_index_last(self.worker.shared.core_count) {
                 self.write_trailer();
@@ -334,9 +357,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 self.write_rst();
             }
         }
+        #[cfg(feature = "o3ds")]
+        self.write_trailer();
 
         self.write_term();
 
+        #[cfg(not(feature = "o3ds"))]
         if self.worker.shared.delta_prog {
             unsafe {
                 let shared_mut = &mut *self.worker.shared_mut.cell;
@@ -367,11 +393,20 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
 
-        Some(JpegDqRet { delta_q, mcus })
+        #[cfg(not(feature = "o3ds"))]
+        let ret = Some(JpegDqRet { delta_q, mcus });
+        #[cfg(feature = "o3ds")]
+        let ret = Some(JpegDqRet {});
+        ret
     }
 
-    fn process<F, G>(&mut self, prev: *mut JBlock, row_i: usize, do_pre_process: F, do_progress: G)
-    where
+    fn process<F, G>(
+        &mut self,
+        #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+        #[cfg(not(feature = "o3ds"))] row_i: usize,
+        do_pre_process: F,
+        do_progress: G,
+    ) where
         F: FnOnce(&mut Self) -> bool,
         G: FnOnce(),
     {
@@ -379,10 +414,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             return;
         }
 
+        #[cfg(not(feature = "o3ds"))]
         let is_top = self.worker.info.is_top;
+        #[cfg(not(feature = "o3ds"))]
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
 
         /* Compress and encode */
+        #[cfg(not(feature = "o3ds"))]
         self.do_process(
             if self.worker.shared.delta_prog {
                 unsafe { prev.add(row_i * screen.mcus_per_row * screen.max_blocks_in_mcu) }
@@ -392,15 +430,25 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             row_i as u8,
         );
 
+        #[cfg(feature = "o3ds")]
+        self.do_process();
+
         do_progress();
     }
 
     #[named]
-    fn do_process(&mut self, prev: *mut JBlock, row_i: u8) {
+    #[allow(unused_macros)]
+    fn do_process(
+        &mut self,
+        #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+        #[cfg(not(feature = "o3ds"))] row_i: u8,
+    ) {
+        #[cfg(not(feature = "o3ds"))]
         let mut delta_cache = false;
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
         for mcu_col_num in 0..screen.mcus_per_row {
+            #[cfg(not(feature = "o3ds"))]
             if self.worker.shared.delta_prog {
                 let s = is_top_index(self.worker.info.is_top);
                 let w = self.worker.info.work_index;
@@ -481,6 +529,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             } else {
                 self.compress(mcu_col_num, ptr::null_mut(), false, false, false);
             }
+
+            #[cfg(feature = "o3ds")]
+            self.compress(mcu_col_num);
 
             self.encode_mcu();
         }

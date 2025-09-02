@@ -17,10 +17,6 @@
 #![feature(strict_provenance_atomic_ptr)]
 #![allow(static_mut_refs)]
 
-use dbg::*;
-use fix::*;
-use utils::*;
-use vars::*;
 use ::libc::*;
 use const_default::{ConstDefault, const_default};
 use core::ops::*;
@@ -32,8 +28,13 @@ use core::{
     mem, ptr, slice,
 };
 use ctru::*;
+use dbg::*;
+use fix::*;
 use function_name::named;
+#[cfg(not(feature = "o3ds"))]
 use oorandom::Rand32;
+use utils::*;
+use vars::*;
 
 #[allow(unused)]
 #[allow(clippy::all)]

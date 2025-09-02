@@ -58,12 +58,12 @@ OBJ_PM := $(addprefix obj/,$(notdir $(SRC_PM_C:.c=.o)))
 SRC_GAME_C := $(wildcard source/game/*.c)
 OBJ_GAME := $(addprefix obj/,$(notdir $(SRC_GAME_C:.c=.o)))
 
-SRC_NWM_IKCP_C := source/nwm_misc/ikcp.c
-SRC_NWM_C := $(wildcard source/nwm/*.c) $(SRC_NWM_IKCP_C)
+SRC_NWM_MISC_O3DS_C :=
+SRC_NWM_C := $(wildcard source/nwm/*.c) $(SRC_NWM_MISC_O3DS_C)
 OBJ_NWM := $(addprefix obj/,$(notdir $(SRC_NWM_C:.c=.o)))
 OBJ_NWM_O3DS := $(addprefix obj/,$(notdir $(SRC_NWM_C:.c=.o3ds.o)))
 
-SRC_NWM_MISC_C += $(filter-out $(SRC_NWM_IKCP_C),$(wildcard source/nwm_misc/*.c))
+SRC_NWM_MISC_C += $(filter-out $(SRC_NWM_MISC_O3DS_C),$(wildcard source/nwm_misc/*.c))
 SRC_NWM_MISC_X := $(wildcard source/nwm_misc/*.cpp)
 OBJ_NWM_MISC := $(addprefix obj/,$(notdir $(SRC_NWM_MISC_C:.c=.o)))
 OBJ_NWM_MISC += $(addprefix obj/,$(notdir $(SRC_NWM_MISC_X:.cpp=.o)))
@@ -125,8 +125,8 @@ bin/$(NTR_BIN_GAME:.bin=.elf): $(OBJ) $(OBJ_GAME) libctru_ntr.a 3ds.ld | bin
 bin/$(NTR_BIN_NWM:.bin=.elf): $(OBJ) $(OBJ_NWM) $(OBJ_NWM_MISC) libctru_ntr.a 3dst.ld $(LIB_NWM_RS) | bin
 	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM) $(OBJ_NWM_MISC) $(LDLIBS) -L$(LIB_RS_DIR) -lnwm_rs -lm
 
-bin/$(NTR_BIN_NWM_O3DS:.bin=.elf): $(OBJ) $(OBJ_NWM_O3DS) $(OBJ_NWM_MISC) libctru_ntr.a 3dst.ld $(LIB_NWM_RS_O3DS) | bin
-	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM_O3DS) $(OBJ_NWM_MISC) $(LDLIBS) -L$(LIB_RS_DIR_O3DS) -lnwm_rs -lm
+bin/$(NTR_BIN_NWM_O3DS:.bin=.elf): $(OBJ) $(OBJ_NWM_O3DS) libctru_ntr.a 3dst.ld $(LIB_NWM_RS_O3DS) | bin
+	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM_O3DS) $(LDLIBS) -L$(LIB_RS_DIR_O3DS) -lnwm_rs -lm
 
 bin:
 	mkdir $@

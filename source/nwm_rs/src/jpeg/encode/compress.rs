@@ -7,11 +7,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn compress(
         &mut self,
         mcu_col_num: usize,
-        prev: *mut JBlock,
-        delta_cache: bool,
-        rescale_prev: bool,
-        rescale_prev_shr: bool,
+        #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+        #[cfg(not(feature = "o3ds"))] delta_cache: bool,
+        #[cfg(not(feature = "o3ds"))] rescale_prev: bool,
+        #[cfg(not(feature = "o3ds"))] rescale_prev_shr: bool,
     ) {
+        #[cfg(not(feature = "o3ds"))]
         let w = self.worker.info.work_index;
         let mut blkn = 0;
         let is_top = self.worker.info.is_top;
@@ -20,14 +21,21 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
+        #[cfg(not(feature = "o3ds"))]
         let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
 
+        #[cfg(not(feature = "o3ds"))]
         let cache = shared_mut.delta_q_cache.get_mut(&w);
+        #[cfg(not(feature = "o3ds"))]
         let cache_next_i = shared_mut.delta_q_cache_next.get_mut(&w);
+        #[cfg(not(feature = "o3ds"))]
         let delta_q = *shared_mut.work_delta_q.get(&w) as usize;
+        #[cfg(not(feature = "o3ds"))]
         let delta_q0 = unsafe { self.worker.shared.delta_q0_tbls.get_unchecked(delta_q) };
+        #[cfg(not(feature = "o3ds"))]
         let mut delta_cache_start = 0;
 
+        #[cfg(not(feature = "o3ds"))]
         let _need_wait_for_nwm =
             self.worker.shared.delta_prog && self.worker.thread_index.get() == 0;
 
@@ -35,6 +43,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         for ci in CompIndex::all() {
             let comp = ci.index_into(&comp_infos.infos);
 
+            #[cfg(not(feature = "o3ds"))]
             let div_shifts = if self.worker.shared.delta_prog {
                 unsafe {
                     self.worker
@@ -46,7 +55,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             } else {
                 unsafe { screen.div_shifts.get_unchecked(comp.quant_tbl_no as usize) }
             };
+            #[cfg(feature = "o3ds")]
+            let div_shifts = unsafe { screen.div_shifts.get_unchecked(comp.quant_tbl_no as usize) };
 
+            #[cfg(not(feature = "o3ds"))]
             let rp_shifts = unsafe {
                 shared_mut
                     .rp_shifts
@@ -64,14 +76,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             for _ in 0..mcu_height {
                 let mut xpos = xpos;
                 for _ in 0..mcu_width {
+                    #[cfg(not(feature = "o3ds"))]
                     let mut cache_hit = false;
+                    #[cfg(feature = "o3ds")]
+                    let cache_hit = false;
                     let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
+                    #[cfg(not(feature = "o3ds"))]
                     let prev = if self.worker.shared.delta_prog {
                         unsafe { prev.add(blkn as usize) }
                     } else {
                         ptr::null_mut()
                     };
 
+                    #[cfg(not(feature = "o3ds"))]
                     if delta_cache {
                         for qi in *cache_next_i.get(&ci)..*ci.index_into(&DELTA_Q_CACHE_COUNTS) {
                             let delta_cache_i = delta_cache_start + qi;
@@ -138,9 +155,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     if !cache_hit {
                         unsafe {
                             forward_dct(
+                                #[cfg(not(feature = "o3ds"))]
                                 self.worker.shared.delta_prog,
+                                #[cfg(not(feature = "o3ds"))]
                                 true,
+                                #[cfg(not(feature = "o3ds"))]
                                 rescale_prev,
+                                #[cfg(not(feature = "o3ds"))]
                                 rescale_prev_shr,
                                 screen.downsample,
                                 &self.worker.bufs.prep,
@@ -152,8 +173,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                 xpos,
                                 div_parts.get_unchecked(comp.quant_tbl_no as usize),
                                 div_shifts,
+                                #[cfg(not(feature = "o3ds"))]
                                 prev,
+                                #[cfg(not(feature = "o3ds"))]
                                 rp_shifts,
+                                #[cfg(not(feature = "o3ds"))]
                                 ptr::null_mut(),
                             );
                         }
@@ -165,7 +189,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 ypos += DCTSIZE as u16;
             }
 
-            delta_cache_start += *ci.index_into(&DELTA_Q_CACHE_COUNTS);
+            #[cfg(not(feature = "o3ds"))]
+            {
+                delta_cache_start += *ci.index_into(&DELTA_Q_CACHE_COUNTS);
+            }
         }
     }
 
@@ -181,42 +208,66 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let mcu_width = comp.h_samp_factor;
             let mcu_height = comp.v_samp_factor;
 
-            let dc_tbl = if self.worker.shared.delta_prog {
-                unsafe {
-                    self.worker
-                        .shared
-                        .jpeg_tbls
-                        .dq_entropy_tbls
-                        .dc_derived_tbls
-                        .get_unchecked(comp.dc_tbl_no as usize)
-                }
-            } else {
-                unsafe {
-                    self.worker
-                        .shared
-                        .jpeg_tbls
-                        .entropy_tbls
-                        .dc_derived_tbls
-                        .get_unchecked(comp.dc_tbl_no as usize)
-                }
+            #[cfg(not(feature = "o3ds"))]
+            let (dc_tbl, ac_tbl) = {
+                let dc_tbl = if self.worker.shared.delta_prog {
+                    unsafe {
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .dq_entropy_tbls
+                            .dc_derived_tbls
+                            .get_unchecked(comp.dc_tbl_no as usize)
+                    }
+                } else {
+                    unsafe {
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .entropy_tbls
+                            .dc_derived_tbls
+                            .get_unchecked(comp.dc_tbl_no as usize)
+                    }
+                };
+                let ac_tbl = if self.worker.shared.delta_prog {
+                    unsafe {
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .dq_entropy_tbls
+                            .ac_derived_tbls
+                            .get_unchecked(comp.ac_tbl_no as usize)
+                    }
+                } else {
+                    unsafe {
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .entropy_tbls
+                            .ac_derived_tbls
+                            .get_unchecked(comp.ac_tbl_no as usize)
+                    }
+                };
+                (dc_tbl, ac_tbl)
             };
-            let ac_tbl = if self.worker.shared.delta_prog {
+
+            #[cfg(feature = "o3ds")]
+            let (dc_tbl, ac_tbl) = {
                 unsafe {
-                    self.worker
-                        .shared
-                        .jpeg_tbls
-                        .dq_entropy_tbls
-                        .ac_derived_tbls
-                        .get_unchecked(comp.ac_tbl_no as usize)
-                }
-            } else {
-                unsafe {
-                    self.worker
-                        .shared
-                        .jpeg_tbls
-                        .entropy_tbls
-                        .ac_derived_tbls
-                        .get_unchecked(comp.ac_tbl_no as usize)
+                    (
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .entropy_tbls
+                            .dc_derived_tbls
+                            .get_unchecked(comp.dc_tbl_no as usize),
+                        self.worker
+                            .shared
+                            .jpeg_tbls
+                            .entropy_tbls
+                            .ac_derived_tbls
+                            .get_unchecked(comp.ac_tbl_no as usize),
+                    )
                 }
             };
 
@@ -257,7 +308,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         const BUFSIZE: usize = DCTSIZE2 * 8;
 
         let mut localbuf: [u8; BUFSIZE] = const_default();
-        let mut buf = EncodeBuffer::init(state, dst, &mut localbuf, dst.rel_stream);
+        let mut buf = EncodeBuffer::init(
+            state,
+            dst,
+            &mut localbuf,
+            #[cfg(not(feature = "o3ds"))]
+            dst.rel_stream,
+        );
 
         let (val1, bits, b0) = {
             let val = block[0] as i32 - last_dc_val as i32;

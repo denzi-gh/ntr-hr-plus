@@ -41,16 +41,19 @@ impl<const NB: u32, const NE: u32> IRanged<NB, NE>
 where
     [(); (NE >= NB) as usize - 1]:,
 {
+    #[allow(unused)]
     pub fn atomic(&mut self) -> &mut AtomicU32 {
         AtomicU32::from_mut(&mut self.i)
     }
 
+    #[allow(unused)]
     pub fn get_atomic(&mut self) -> Self {
         Self {
             i: self.atomic().load(Ordering::Acquire),
         }
     }
 
+    #[allow(unused)]
     pub fn set_atomic(&mut self, i: u32) {
         assert!(i >= NB && i <= NE);
         self.atomic().store(i, Ordering::Release)
@@ -86,6 +89,7 @@ where
         self.next_wrapped_n(&Self::end())
     }
 
+    #[allow(unused)]
     pub fn prev_wrapped(&mut self) {
         self.prev_wrapped_n(&Self::end())
     }
@@ -98,6 +102,7 @@ where
         unsafe { Self::init_unchecked(NE) }
     }
 
+    #[allow(unused)]
     pub fn prev_wrapped_n(&mut self, e: &IRanged<NB, NE>) {
         if *self == Self::beg() {
             *self = *e;
@@ -143,10 +148,12 @@ impl<T, const N: u32> RangedArray<T, N>
 where
     [(); N as usize]:,
 {
+    #[allow(unused)]
     pub fn arr(&mut self) -> &mut [T; N as usize] {
         &mut self.a
     }
 
+    #[allow(unused)]
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.a.as_mut_ptr()
     }

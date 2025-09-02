@@ -7,7 +7,8 @@ pub struct Impl {
 
 impl Impl {
     pub fn work_ready_acquire(self) -> core::result::Result<WorkReady, WorkOtherReady> {
-        unsafe {
+        #[cfg(not(feature = "o3ds"))]
+        return unsafe {
             if !rp_need_core_syn!()
                 || !SYN_HANDLES
                     .works
@@ -19,6 +20,11 @@ impl Impl {
             } else {
                 Err(WorkOtherReady(self))
             }
+        };
+
+        #[cfg(feature = "o3ds")]
+        {
+            return Ok(WorkReady(self));
         }
     }
 
@@ -46,16 +52,22 @@ pub unsafe fn init(
         LAST_SCREEN_LAST_ROW = 0;
 
         for i in ScreenIndex::all() {
-            FRAME_TIMES
-                .get_mut(&i)
-                .store(SYSCLOCK_ARM11, Ordering::Release);
-
             *CURRENT_FRAME_IDS.get_mut(&i) = 0;
-            *LAST_FRAME_TIMINGS.get_mut(&i) = get_system_tick().get() as u32;
+
+            #[cfg(not(feature = "o3ds"))]
+            {
+                FRAME_TIMES
+                    .get_mut(&i)
+                    .store(SYSCLOCK_ARM11, Ordering::Release);
+                *LAST_FRAME_TIMINGS.get_mut(&i) = get_system_tick().get() as u32;
+            }
         }
 
         TERM_DSTS = const_default();
-        TERM_INFOS = const_default();
+        #[cfg(not(feature = "o3ds"))]
+        {
+            TERM_INFOS = const_default();
+        }
         JPEG_QUALITY = quality;
         JPEG_CHROMA_SS = chroma_ss;
         JPEG_DOWNSAMPLE = downsample;
@@ -64,12 +76,15 @@ pub unsafe fn init(
 }
 
 static mut CURRENT_FRAME_IDS: RangedArray<u8, SCREEN_COUNT> = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut LAST_FRAME_TIMINGS: RangedArray<u32, SCREEN_COUNT> = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut FRAME_TIMES: RangedArray<AtomicU32, SCREEN_COUNT> = const_default();
 static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
 static mut LAST_SCREEN_LAST_ROW: u32 = const_default();
 static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub fn get_frame_time(s: ScreenIndex) -> &'static mut AtomicU32 {
     unsafe { FRAME_TIMES.get_mut(&s) }
 }
@@ -77,26 +92,39 @@ pub fn get_frame_time(s: ScreenIndex) -> &'static mut AtomicU32 {
 pub struct WorkReady(Impl);
 
 impl WorkReady {
-    pub fn init_bctx(self) -> BlitCtxInit {
+    pub fn init_bctx(self) -> Option<BlitCtxInit> {
+        #[cfg(feature = "o3ds")]
+        entries::thread_screen::thread_ready_acquire()?;
+
         let bctx = self.0.bctx_mut();
         let work_ready = unsafe { ptr::read_volatile(&self.0.work_ready_params()) };
 
         unsafe {
             *bctx = BlitCtx {
                 format: work_ready.format & 0xf,
+                #[cfg(not(feature = "o3ds"))]
                 src: entries::thread_screen::img_info(work_ready.is_top),
+                #[cfg(feature = "o3ds")]
+                src: entries::thread_screen::img_info(),
                 frame_id: *CURRENT_FRAME_IDS.get(&is_top_index(work_ready.is_top)),
                 is_top: work_ready.is_top,
                 i_start: const_default(),
                 i_count: const_default(),
+                #[cfg(not(feature = "o3ds"))]
                 should_capture: AtomicBool::new(false),
             };
         }
 
+        #[cfg(not(feature = "o3ds"))]
         let format_changed = self.format_changed(bctx.is_top, bctx.format);
-        BlitCtxInit(self, format_changed)
+        Some(BlitCtxInit(
+            self,
+            #[cfg(not(feature = "o3ds"))]
+            format_changed,
+        ))
     }
 
+    #[cfg(not(feature = "o3ds"))]
     fn format_changed(&self, is_top: bool, format: u32) -> bool {
         let blit_format = unsafe { BLIT_FORMATS.get_mut(&is_top_index(is_top)) };
         if *blit_format == format {
@@ -108,10 +136,11 @@ impl WorkReady {
     }
 }
 
-pub struct BlitCtxInit(WorkReady, bool);
+pub struct BlitCtxInit(WorkReady, #[cfg(not(feature = "o3ds"))] bool);
 
 impl BlitCtxInit {
     #[named]
+    #[cfg(not(feature = "o3ds"))]
     fn dma_sync(&self) {
         if wait_syn_once(cname!(), self.0.0.work_ready_params().dma, c_str!("dma")).is_none() {
             return;
@@ -125,14 +154,20 @@ impl BlitCtxInit {
     }
 
     pub fn sync(self) -> WorkSync {
+        #[cfg(not(feature = "o3ds"))]
         self.dma_sync();
-        WorkSync(self.0, self.1)
+        WorkSync(
+            self.0,
+            #[cfg(not(feature = "o3ds"))]
+            self.1,
+        )
     }
 }
 
-pub struct WorkSync(WorkReady, bool);
+pub struct WorkSync(WorkReady, #[cfg(not(feature = "o3ds"))] bool);
 
 impl WorkSync {
+    #[cfg(not(feature = "o3ds"))]
     pub fn skip_frame(self) -> core::result::Result<WorkFrame, WorkSkipFrame> {
         let is_top = self.0.0.bctx().is_top;
         let is_top_index = is_top_index(is_top);
@@ -186,6 +221,12 @@ impl WorkSync {
         }
     }
 
+    #[cfg(feature = "o3ds")]
+    pub fn skip_frame(self) -> core::result::Result<WorkFrame, WorkSkipFrame> {
+        Ok(WorkFrame(self.0))
+    }
+
+    #[cfg(not(feature = "o3ds"))]
     fn frame_changed(&self) -> bool {
         let bctx = self.0.0.bctx();
         let src_len = bctx.src_len();
@@ -200,26 +241,38 @@ impl WorkSync {
     }
 }
 
-pub struct WorkSkipFrame(WorkReady);
+pub struct WorkSkipFrame(#[cfg(not(feature = "o3ds"))] WorkReady);
 
 impl WorkSkipFrame {
     pub fn skip_frame_release(self) -> Option<WorkReady> {
-        unsafe {
-            entries::thread_screen::skip_frame_release(
-                self.0.0.w,
-                entries::thread_screen::SkipFrameParams::SkipFrame(self.0.0.t),
-            );
-            entries::thread_screen::thread_ready_acquire(&self.0.0.t)?;
+        #[cfg(not(feature = "o3ds"))]
+        {
+            unsafe {
+                entries::thread_screen::skip_frame_release(
+                    self.0.0.w,
+                    entries::thread_screen::SkipFrameParams::SkipFrame(self.0.0.t),
+                );
+                entries::thread_screen::thread_ready_acquire(&self.0.0.t)?;
+            }
+            return Some(self.0);
         }
-        Some(self.0)
+        #[cfg(feature = "o3ds")]
+        {
+            return None;
+        }
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub struct WorkFrame(WorkReady, u32, u32);
+
+#[cfg(feature = "o3ds")]
+pub struct WorkFrame(WorkReady);
 
 impl WorkFrame {
     pub fn frame_release(self) -> Option<WorkAcquire> {
         let bctx = self.0.0.bctx();
+        #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_reliable_stream() == entries::thread_nwm::ReliableStream::None {
             if !unsafe {
                 entries::thread_nwm::nwm_done_acquire(self.0.0.w, bctx.frame_id, bctx.is_top)
@@ -231,7 +284,13 @@ impl WorkFrame {
             }
         }
 
+        #[cfg(feature = "o3ds")]
         unsafe {
+            entries::thread_nwm::nwm_start_frame(bctx.frame_id, bctx.is_top);
+        }
+
+        unsafe {
+            #[cfg(not(feature = "o3ds"))]
             entries::thread_screen::img_info_next(bctx.is_top);
             *CURRENT_FRAME_IDS.get_mut(&is_top_index(bctx.is_top)) += 1;
         }
@@ -240,6 +299,7 @@ impl WorkFrame {
             return None;
         }
 
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             *LAST_FRAME_TIMINGS.get_mut(&is_top_index(bctx.is_top)) = self.1;
         }
@@ -248,7 +308,9 @@ impl WorkFrame {
     }
 
     #[named]
+    #[allow(unused_macros)]
     fn work_ready_release(self) -> Option<WorkAcquire> {
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             entries::thread_screen::skip_frame_release(
                 self.0.0.w,
@@ -258,6 +320,7 @@ impl WorkFrame {
             entries::thread_screen::work_done_flag_release(self.0.0.w);
         }
 
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             let bctx = self.0.0.bctx();
 
@@ -279,6 +342,7 @@ impl WorkFrame {
             }
         }
 
+        #[cfg(not(feature = "o3ds"))]
         if rp_need_core_syn!() {
             for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
                 if j != self.0.0.t {
@@ -411,6 +475,7 @@ impl WorkFrame {
             },
             restart_interval: restart_interval as u16,
             work_index: w,
+            #[cfg(not(feature = "o3ds"))]
             core_count,
             even_odd,
         };
@@ -432,6 +497,7 @@ impl WorkFrame {
             };
         }
 
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             *TERM_INFOS.get_mut(&w) = TermInfo {
                 is_top: bctx.is_top,
@@ -448,65 +514,83 @@ impl WorkFrame {
     }
 }
 
-pub struct WorkOtherReady(Impl);
+pub struct WorkOtherReady(#[cfg(not(feature = "o3ds"))] Impl);
 
 impl WorkOtherReady {
     #[named]
+    #[allow(unused_macros)]
     pub fn acquire(self) -> Option<WorkAcquire> {
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             wait_syn(
                 cname!(),
                 SYN_HANDLES.threads.get(&self.0.t).work_ready,
                 c_str!("work_ready"),
             )?;
-            Some(WorkAcquire(self.0))
-        }
+            return Some(WorkAcquire(self.0));
+        };
+
+        #[cfg(feature = "o3ds")]
+        return None;
     }
 }
 
 pub struct WorkAcquire(Impl);
 
-pub struct JpegRet(Impl, jpeg::JpegDqRet);
+pub struct JpegRet(
+    #[cfg(not(feature = "o3ds"))] Impl,
+    #[cfg(not(feature = "o3ds"))] jpeg::JpegDqRet,
+);
 
 impl Drop for JpegRet {
     #[named]
+    #[allow(unused_macros)]
     fn drop(&mut self) {
-        let w = self.0.w;
-        let bctx = self.0.bctx();
-        let syn = unsafe { SYN_HANDLES.works.get(&w) };
+        #[cfg(not(feature = "o3ds"))]
+        {
+            let w = self.0.w;
+            let bctx = self.0.bctx();
+            let syn = unsafe { SYN_HANDLES.works.get(&w) };
 
-        let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
-        let core_count = core_count_in_use();
-        if f == core_count.get() - 1 {
-            entries::thread_screen::reset_no_skip_frame(bctx.is_top);
+            let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
+            let core_count = core_count_in_use();
+            if f == core_count.get() - 1 {
+                entries::thread_screen::reset_no_skip_frame(bctx.is_top);
 
-            if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
-                set_reset_threads();
-            }
+                #[cfg(not(feature = "o3ds"))]
+                if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
+                    set_reset_threads();
+                }
 
-            let s = is_top_index(bctx.is_top);
-            if !entries::thread_nwm::get_reliable_stream_delta_prog() {
-                let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
-                    / self.1.mcus as f32;
+                let s = is_top_index(bctx.is_top);
+
+                #[cfg(not(feature = "o3ds"))]
+                let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
+                #[cfg(feature = "o3ds")]
+                let delta_prog = false;
+                if !delta_prog {
+                    let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
+                        / self.1.mcus as f32;
+                    unsafe {
+                        (*config_consts::OV_STATS).s[s.get() as usize].comp_size =
+                            (comp_size * 1000f32) as s32
+                    };
+                }
                 unsafe {
-                    (*config_consts::OV_STATS).s[s.get() as usize].comp_size =
-                        (comp_size * 1000f32) as s32
-                };
-            }
-            unsafe {
-                (*config_consts::OV_STATS).s[s.get() as usize].frame_time =
-                    FRAME_TIMES.get(&s).load(Ordering::Acquire);
-            }
+                    (*config_consts::OV_STATS).s[s.get() as usize].frame_time =
+                        FRAME_TIMES.get(&s).load(Ordering::Acquire);
+                }
 
-            syn.work_done_count.store(0, Ordering::Release);
-            syn.work_ready_flag.store(false, Ordering::Release);
+                syn.work_done_count.store(0, Ordering::Release);
+                syn.work_ready_flag.store(false, Ordering::Release);
 
-            unsafe {
-                release_sem(
-                    cname!(),
-                    SYN_HANDLES.works.get(&w).work_done,
-                    c_str!("work_done"),
-                );
+                unsafe {
+                    release_sem(
+                        cname!(),
+                        SYN_HANDLES.works.get(&w).work_done,
+                        c_str!("work_done"),
+                    );
+                }
             }
         }
     }
@@ -515,6 +599,7 @@ impl Drop for JpegRet {
 static mut TERM_DSTS: RangedArray<RangedArray<*mut u8, RP_CORE_COUNT_MAX>, WORK_COUNT> =
     const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
     let d = unsafe { TERM_DSTS.get_mut(&w).get_mut(&t) };
     if *d == ptr::null_mut() {
@@ -525,6 +610,7 @@ pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
         return true;
@@ -726,12 +812,17 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
     true
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub const RP_KCP_HDR_W_NBITS: u32 = 1;
+#[cfg(not(feature = "o3ds"))]
 pub const RP_KCP_HDR_T_NBITS: u32 = 2;
+#[cfg(not(feature = "o3ds"))]
 const RP_KCP_HDR_SIZE_NBITS: u32 = 11;
+#[cfg(not(feature = "o3ds"))]
 const RP_KCP_HDR_RC_NBITS: u32 = 5;
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn rp_term_data_buf_malloc() -> Option<*mut c_char> {
     wait_syn(
         cname!(),
@@ -761,6 +852,7 @@ pub unsafe fn rp_term_data_buf_malloc() -> Option<*mut c_char> {
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 #[unsafe(no_mangle)]
 pub unsafe fn rp_term_data_buf_free_base(dst: *const ::libc::c_char) -> bool {
     if wait_syn(
@@ -790,6 +882,7 @@ pub unsafe fn rp_term_data_buf_free_base(dst: *const ::libc::c_char) -> bool {
     ret
 }
 
+#[cfg(not(feature = "o3ds"))]
 #[unsafe(no_mangle)]
 unsafe fn rp_term_data_buf_free(dst: *const ::libc::c_char) -> bool {
     unsafe { rp_term_data_buf_free_base(dst.sub((NWM_HDR_SIZE + ARQ_OVERHEAD_SIZE) as usize)) }
@@ -797,6 +890,7 @@ unsafe fn rp_term_data_buf_free(dst: *const ::libc::c_char) -> bool {
 
 #[named]
 #[unsafe(no_mangle)]
+#[cfg(not(feature = "o3ds"))]
 unsafe fn rp_term_notify() {
     unsafe {
         release_sem(
@@ -842,48 +936,78 @@ impl WorkAcquire {
         };
 
         let pre_progress = || {
+            #[cfg(not(feature = "o3ds"))]
             capture_screen(&mut bctx.should_capture);
         };
 
         let progress = || {};
 
+        #[cfg(not(feature = "o3ds"))]
         let s = is_top_index(bctx.is_top);
         let mut worker = unsafe { (*jpeg::JPEG).get_worker(w, t) };
 
-        let (user, dst) = match entries::thread_nwm::get_reliable_stream() {
-            entries::thread_nwm::ReliableStream::None => {
-                let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
-                (
-                    jpeg::WorkderDstUser {
-                        none_info: ninfo as *const _,
-                    },
-                    ninfo.info.pos.load(Ordering::Acquire),
-                )
-            }
-            entries::thread_nwm::ReliableStream::KCP => {
-                let dst = if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
-                    entries::thread_nwm::rp_data_buf_data(dst)
-                } else {
-                    return None;
-                };
-                let hdr = jpeg::ArqRpHdr { w, t };
+        #[cfg(not(feature = "o3ds"))]
+        let dst = {
+            let (user, dst) = match entries::thread_nwm::get_reliable_stream() {
+                entries::thread_nwm::ReliableStream::None => {
+                    let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
+                    (
+                        jpeg::WorkderDstUser {
+                            none_info: ninfo as *const _,
+                        },
+                        ninfo.info.pos.load(Ordering::Acquire),
+                    )
+                }
+                entries::thread_nwm::ReliableStream::KCP => {
+                    let dst =
+                        if let Some(dst) = unsafe { entries::thread_nwm::rp_data_buf_malloc() } {
+                            entries::thread_nwm::rp_data_buf_data(dst)
+                        } else {
+                            return None;
+                        };
+                    let hdr = jpeg::ArqRpHdr { w, t };
 
-                (jpeg::WorkderDstUser { kcp_hdr: hdr }, dst)
-            }
+                    (jpeg::WorkderDstUser { kcp_hdr: hdr }, dst)
+                }
+            };
+
+            let dst = unsafe {
+                (*jpeg::JPEG).worker_dst(
+                    #[cfg(not(feature = "o3ds"))]
+                    s,
+                    w,
+                    dst,
+                    user,
+                )
+            };
+            dst
         };
 
-        let dst = unsafe { (*jpeg::JPEG).worker_dst(s, w, dst, user) };
+        #[cfg(feature = "o3ds")]
+        let dst = {
+            let dst = unsafe { entries::thread_nwm::nwm_info() };
+            let dst = unsafe { (*jpeg::JPEG).worker_dst(dst) };
+            dst
+        };
 
         let jpeg_ret = worker.encode(dst, src, pre_progress, progress)?;
+        #[cfg(feature = "o3ds")]
+        let _ = jpeg_ret;
 
         if reset_threads() {
             return None;
         }
 
-        Some(JpegRet(self.0, jpeg_ret))
+        Some(JpegRet(
+            #[cfg(not(feature = "o3ds"))]
+            self.0,
+            #[cfg(not(feature = "o3ds"))]
+            jpeg_ret,
+        ))
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn capture_screen(should_capture: &mut AtomicBool) {
     if should_capture.swap(true, Ordering::AcqRel) == false {
         unsafe {
@@ -897,6 +1021,7 @@ fn capture_screen(should_capture: &mut AtomicBool) {
 pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
     let mut work_index = WorkIndex::init(0);
     loop {
+        #[cfg(not(feature = "o3ds"))]
         entries::thread_screen::thread_ready_acquire(&t)?;
         safe_impl::send_frame(Impl { w: work_index, t })?;
         work_index.next_wrapped();
@@ -914,6 +1039,7 @@ pub struct BlitCtx {
     pub i_start: RowIndices,
     pub i_count: RowIndices,
 
+    #[cfg(not(feature = "o3ds"))]
     pub should_capture: AtomicBool,
 }
 
@@ -953,9 +1079,11 @@ impl BlitCtx {
 }
 
 static mut BLIT_CTXES: RangedArray<BlitCtx, WORK_COUNT> = const_default();
+#[cfg(not(feature = "o3ds"))]
 static mut BLIT_FORMATS: RangedArray<u32, SCREEN_COUNT> = const_default();
 
 #[derive(ConstDefault, Clone, Copy)]
+#[cfg(not(feature = "o3ds"))]
 pub struct TermInfo {
     pub is_top: bool,
     pub core_count: CoreCount,
@@ -964,6 +1092,7 @@ pub struct TermInfo {
     pub even_odd: bool,
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();

@@ -16,6 +16,7 @@ pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 #[derive(ConstDefault)]
 pub struct JpegWorker<'a> {
     pub shared: &'a JpegShared,
+    #[cfg(not(feature = "o3ds"))]
     pub shared_mut: JpegSharedMutCell,
     pub bufs: &'a mut WorkerBufs,
     pub info: &'a CInfo,
@@ -26,6 +27,7 @@ pub struct JpegWorker<'a> {
 
 pub type LastDcVals = [s16; MAX_COMPONENTS];
 
+#[cfg(not(feature = "o3ds"))]
 pub struct JpegSharedMutCell {
     pub cell: *mut JpegSharedMut,
 }
@@ -52,6 +54,7 @@ pub struct CInfo {
     pub color_space: ColorSpace,
     pub restart_interval: u16,
     pub work_index: WorkIndex,
+    #[cfg(not(feature = "o3ds"))]
     pub core_count: CoreCount,
     pub even_odd: bool,
 }
@@ -68,6 +71,7 @@ impl Jpeg {
     ) -> JpegWorker<'a> {
         JpegWorker {
             shared: &self.shared,
+            #[cfg(not(feature = "o3ds"))]
             shared_mut: JpegSharedMutCell {
                 cell: &mut self.shared_mut,
             },
@@ -81,21 +85,32 @@ impl Jpeg {
 
     pub fn worker_dst(
         &self,
-        s: ScreenIndex,
-        w: WorkIndex,
+        #[cfg(not(feature = "o3ds"))] s: ScreenIndex,
+        #[cfg(not(feature = "o3ds"))] w: WorkIndex,
         dst: *mut u8,
-        user: WorkderDstUser,
+        #[cfg(not(feature = "o3ds"))] user: WorkderDstUser,
     ) -> WorkerDst {
         WorkerDst {
             blkn: 0,
+            #[cfg(not(feature = "o3ds"))]
             s,
+            #[cfg(not(feature = "o3ds"))]
             w,
             dst: dst as *mut u8,
+            #[cfg(not(feature = "o3ds"))]
             free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
+            #[cfg(feature = "o3ds")]
+            free_in_bytes: RP_CB_PACKET_SIZE as u16,
+            #[cfg(not(feature = "o3ds"))]
             user,
+            #[cfg(not(feature = "o3ds"))]
             rel_stream: self.shared.rel_stream,
+            #[cfg(not(feature = "o3ds"))]
             delta_prog: self.shared.delta_prog,
+            #[cfg(not(feature = "o3ds"))]
             even_odd: w.index_into(&self.info).even_odd,
+            #[cfg(feature = "o3ds")]
+            even_odd: WorkIndex::init(0).index_into(&self.info).even_odd,
         }
     }
 }

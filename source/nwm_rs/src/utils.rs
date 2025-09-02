@@ -4,6 +4,7 @@ pub const fn htons(v: u16) -> u16 {
     v.to_be()
 }
 
+#[allow(unused)]
 pub const fn ntohs(v: u16) -> u16 {
     v.swap_bytes()
 }
@@ -160,6 +161,7 @@ pub fn is_top_index(is_top: bool) -> ScreenIndex {
 pub struct CreateThread<'a>(Handle, PhantomData<&'a ()>);
 
 impl<'a> CreateThread<'a> {
+    #[allow(unused)]
     pub fn create<'b: 'a, const N: usize>(
         f: ThreadFunc,
         a: u32,
@@ -190,9 +192,11 @@ impl<'a> Drop for CreateThread<'a> {
     }
 }
 
+#[allow(unused)]
 pub struct JoinThread<'a>(CreateThread<'a>);
 
 impl<'a> JoinThread<'a> {
+    #[allow(unused)]
     pub fn create(t: CreateThread<'a>) -> Self {
         Self(t)
     }
@@ -212,6 +216,7 @@ pub fn create_event(h: &mut Handle) -> Result {
 }
 
 #[must_use]
+#[allow(unused)]
 pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> {
     while !reset_threads() {
         let ret = wait_syn_ns(cname, h, syn_name, THREAD_WAIT_NS)?;
@@ -223,6 +228,7 @@ pub fn wait_syn(cname: CName, h: Handle, syn_name: *const c_char) -> Option<()> 
 }
 
 #[must_use]
+#[cfg(not(feature = "o3ds"))]
 pub fn wait_syn_once(cname: CName, h: Handle, syn_name: *const c_char) -> Option<bool> {
     wait_syn_ns(cname, h, syn_name, THREAD_WAIT_NS)
 }
@@ -249,6 +255,7 @@ pub fn wait_syn_ns(
     Some(true)
 }
 
+#[allow(unused)]
 pub unsafe fn release_mutex(cname: CName, h: Handle, syn_name: *const c_char) {
     let res = unsafe { svcReleaseMutex(h) };
     if res != 0 {
@@ -256,10 +263,12 @@ pub unsafe fn release_mutex(cname: CName, h: Handle, syn_name: *const c_char) {
     }
 }
 
+#[allow(unused)]
 pub unsafe fn release_sem(cname: CName, h: Handle, syn_name: *const c_char) {
     unsafe { release_sem_count(cname, h, syn_name, 1) }
 }
 
+#[allow(unused)]
 pub unsafe fn release_sem_count(
     cname: CName,
     h: Handle,
@@ -273,6 +282,7 @@ pub unsafe fn release_sem_count(
     }
 }
 
+#[allow(unused)]
 pub fn unchecked_div(a: u64, b: u64) -> u64 {
     unsafe { core::intrinsics::unchecked_div(a, b) }
 }

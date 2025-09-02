@@ -1,18 +1,28 @@
 use super::*;
 
+#[cfg(not(feature = "o3ds"))]
 pub type ImgWorkIndex = Ranged<IMG_WORK_COUNT>;
+#[cfg(not(feature = "o3ds"))]
 pub type ImgBufs = RangedArray<*mut u8, IMG_WORK_COUNT>;
+#[cfg(not(feature = "o3ds"))]
 pub const IMG_WORK_COUNT: u32 = 2;
 
+#[cfg(not(feature = "o3ds"))]
 #[derive(ConstDefault)]
 pub struct ImgInfo {
     pub bufs: ImgBufs,
     pub index: ImgWorkIndex,
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub type ImgInfos = RangedArray<ImgInfo, SCREEN_COUNT>;
+#[cfg(not(feature = "o3ds"))]
 pub static mut IMG_INFOS: ImgInfos = const_default();
 
+#[cfg(feature = "o3ds")]
+pub static mut IMG_INFO: *mut u8 = const_default();
+
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn once_img_infos() -> Option<()> {
     for i in ScreenIndex::all() {
         let is_top = if i.get() == 0 { true } else { false };
@@ -25,6 +35,18 @@ pub unsafe fn once_img_infos() -> Option<()> {
                 return None;
             }
         }
+    }
+    Some(())
+}
+
+#[cfg(feature = "o3ds")]
+pub unsafe fn once_img_infos() -> Option<()> {
+    if let Some(m) = request_mem_from_pool_vsize(img_buffer_size(true)) {
+        unsafe {
+            IMG_INFO = m.as_mut_ptr();
+        }
+    } else {
+        return None;
     }
     Some(())
 }
@@ -44,20 +66,27 @@ type FrameQueues = RangedArray<u32, SCREEN_COUNT>;
 
 static mut CONFIG: Config = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 const FRAME_TIMING_FACTOR_DQ: u32 = 2;
+#[cfg(not(feature = "o3ds"))]
 pub fn frame_timing_allowance() -> u32 {
     unsafe { CONFIG.frame_timing_allowance }
 }
 
 #[derive(ConstDefault)]
 pub struct Params {
+    #[cfg(not(feature = "o3ds"))]
     work_index: WorkIndex,
+    #[cfg(not(feature = "o3ds"))]
     thread_index: ThreadIndex,
 
     work_ready: WorkReady,
+
+    #[cfg(not(feature = "o3ds"))]
     skip_frames: SkipFrames,
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn work_index_next_wrapped() {
     unsafe {
         let mut w = PARAMS.work_index.get_atomic();
@@ -74,18 +103,23 @@ pub fn close_handles() {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut PORT_GAME_PID: AtomicU32 = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub fn set_port_game_pid(v: u32) {
     unsafe { PORT_GAME_PID.store(v, Ordering::Release) }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn port_game_pid() -> u32 {
     unsafe { PORT_GAME_PID.load(Ordering::Acquire) }
 }
 
+#[cfg(not(feature = "o3ds"))]
 static mut NO_SKIP_FRAMES: RangedArray<AtomicBool, SCREEN_COUNT> = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub fn reset_no_skip_frame(is_top: bool) {
     unsafe {
         NO_SKIP_FRAMES
@@ -94,6 +128,7 @@ pub fn reset_no_skip_frame(is_top: bool) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn set_no_skip_frame(is_top: bool) {
     unsafe {
         NO_SKIP_FRAMES
@@ -102,6 +137,7 @@ pub fn set_no_skip_frame(is_top: bool) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn no_skip_frame(is_top: bool) -> bool {
     unsafe {
         NO_SKIP_FRAMES
@@ -126,12 +162,14 @@ pub unsafe fn once_screen_handles() -> Option<()> {
     Some(())
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn thread_screen_loop() -> Option<()> {
     loop {
         safe_impl::thread_screen(Impl(()))?
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub extern "C" fn thread_screen(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
@@ -140,6 +178,7 @@ pub extern "C" fn thread_screen(_: *mut c_void) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn set_no_skip_frames() {
     set_no_skip_frame(true);
     set_no_skip_frame(false);
@@ -156,6 +195,8 @@ pub unsafe fn init(mode: u32) {
     conf.priority_is_top = is_top;
     conf.priority_factor = factor;
     conf.priority_factor_scaled = fix(factor as c_double);
+
+    #[cfg(not(feature = "o3ds"))]
     set_no_skip_frames();
 
     for i in ScreenIndex::all() {
@@ -163,13 +204,17 @@ pub unsafe fn init(mode: u32) {
         *conf.frame_queues.get_mut(&i) = conf.priority_factor_scaled;
     }
 
-    let params = unsafe { &mut PARAMS };
-    for i in WorkIndex::all() {
-        *params.skip_frames.get_mut(&i) = false;
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let params = unsafe { &mut PARAMS };
+        for i in WorkIndex::all() {
+            *params.skip_frames.get_mut(&i) = false;
+        }
+        params.work_index = WorkIndex::init(0);
+        params.thread_index = ThreadIndex::init(0);
     }
-    params.work_index = WorkIndex::init(0);
-    params.thread_index = ThreadIndex::init(0);
 
+    #[cfg(not(feature = "o3ds"))]
     for i in WorkIndex::all() {
         unsafe {
             SYN_HANDLES
@@ -180,17 +225,28 @@ pub unsafe fn init(mode: u32) {
         };
     }
 
-    conf.frame_timing_allowance = if entries::thread_nwm::get_reliable_stream_delta_prog() {
-        SYSCLOCK_ARM11 / FRAME_TIMING_FACTOR_DQ
-    } else {
-        SYSCLOCK_ARM11
-    };
+    #[cfg(not(feature = "o3ds"))]
+    {
+        conf.frame_timing_allowance = if entries::thread_nwm::get_reliable_stream_delta_prog() {
+            SYSCLOCK_ARM11 / FRAME_TIMING_FACTOR_DQ
+        } else {
+            SYSCLOCK_ARM11
+        }
+    }
+
+    #[cfg(feature = "o3ds")]
+    {
+        conf.frame_timing_allowance = SYSCLOCK_ARM11
+    }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub struct Impl(());
 
+#[cfg(not(feature = "o3ds"))]
 impl Impl {
     #[named]
+    #[cfg(not(feature = "o3ds"))]
     pub fn screen_ready_acquire(self) -> Option<ScreenReady> {
         wait_syn(
             cname!(),
@@ -202,10 +258,13 @@ impl Impl {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub struct ScreenReady(());
 
+#[cfg(not(feature = "o3ds"))]
 impl ScreenReady {
     #[named]
+    #[cfg(not(feature = "o3ds"))]
     pub fn work_done_acquire(self) -> Option<WorkDone> {
         unsafe {
             let w = PARAMS.work_index.get_atomic();
@@ -222,6 +281,7 @@ impl ScreenReady {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn work_done_flag_release(w: WorkIndex) {
     unsafe {
         let w = SYN_HANDLES.works.get_mut(&w);
@@ -229,8 +289,10 @@ pub unsafe fn work_done_flag_release(w: WorkIndex) {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub struct WorkDone(());
 
+#[cfg(not(feature = "o3ds"))]
 impl WorkDone {
     pub fn do_screen<'a>(&'a self) -> Screen<'a> {
         return Screen(PhantomData);
@@ -241,40 +303,56 @@ impl WorkDone {
 pub struct WorkReadyParams {
     pub is_top: bool,
     pub format: u32,
+    #[cfg(not(feature = "o3ds"))]
     pub dma: Handle,
 }
 
 type WorkReady = RangedArray<WorkReadyParams, WORK_COUNT>;
+#[cfg(not(feature = "o3ds"))]
 type SkipFrames = RangedArray<bool, WORK_COUNT>;
 
 #[named]
-fn thread_ready_release(is_top: bool, format: u32, work_index: WorkIndex, dma: Handle) {
+#[allow(unused_macros)]
+fn thread_ready_release(
+    is_top: bool,
+    format: u32,
+    #[cfg(not(feature = "o3ds"))] work_index: WorkIndex,
+    #[cfg(not(feature = "o3ds"))] dma: Handle,
+) {
     unsafe {
+        #[cfg(feature = "o3ds")]
+        let work_index = WorkIndex::init(0);
+
         *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
             is_top,
             format,
+            #[cfg(not(feature = "o3ds"))]
             dma,
         };
 
-        if *PARAMS.skip_frames.get(&work_index) {
-            release_sem(
-                cname!(),
-                SYN_HANDLES.threads.get(&PARAMS.thread_index).thread_ready,
-                c_str!("thread_ready"),
-            );
-        } else {
-            for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
+        #[cfg(not(feature = "o3ds"))]
+        {
+            if *PARAMS.skip_frames.get(&work_index) {
                 release_sem(
                     cname!(),
-                    SYN_HANDLES.threads.get(&j).thread_ready,
+                    SYN_HANDLES.threads.get(&PARAMS.thread_index).thread_ready,
                     c_str!("thread_ready"),
                 );
+            } else {
+                for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
+                    release_sem(
+                        cname!(),
+                        SYN_HANDLES.threads.get(&j).thread_ready,
+                        c_str!("thread_ready"),
+                    );
+                }
             }
         }
     }
 }
 
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub fn thread_ready_acquire(t: &ThreadIndex) -> Option<()> {
     unsafe {
         wait_syn(
@@ -287,16 +365,24 @@ pub fn thread_ready_acquire(t: &ThreadIndex) -> Option<()> {
     }
 }
 
+#[cfg(feature = "o3ds")]
+pub fn thread_ready_acquire() -> Option<()> {
+    safe_impl::thread_screen()
+}
+
 #[named]
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn screen_ready_release() {
     unsafe { release_sem(cname!(), SYN_HANDLES.screen_ready, c_str!("screen_ready")) }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub enum SkipFrameParams {
     Frame,
     SkipFrame(ThreadIndex),
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn skip_frame_release(work_index: WorkIndex, skip_frame: SkipFrameParams) {
     unsafe {
         match skip_frame {
@@ -321,7 +407,13 @@ impl Screen<'_> {
         unsafe { &mut CONFIG }
     }
 
+    #[cfg(feature = "o3ds")]
+    pub fn screen() -> Self {
+        Self(PhantomData)
+    }
+
     #[named]
+    #[cfg(not(feature = "o3ds"))]
     pub fn screen_port_sync(&self, is_top: bool, wait: bool) -> bool {
         unsafe {
             let res = svcWaitSynchronization(
@@ -342,6 +434,7 @@ impl Screen<'_> {
     }
 
     #[named]
+    #[cfg(not(feature = "o3ds"))]
     pub fn screens_ports_sync(&self) -> Option<bool> {
         unsafe {
             let mut out = mem::MaybeUninit::uninit();
@@ -470,11 +563,23 @@ impl Drop for ScreenParamsLock {
 
 pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
     if let Some(lock) = screen_params_lock() {
+        #[cfg(not(feature = "o3ds"))]
         let w = unsafe { PARAMS.work_index };
 
+        #[cfg(not(feature = "o3ds"))]
         let img = unsafe { img_info(is_top) } as u32;
 
-        if capture_screen(lock.param(), is_top, screen_info, img, w) {
+        #[cfg(feature = "o3ds")]
+        let img = unsafe { img_info() } as u32;
+
+        if capture_screen(
+            lock.param(),
+            is_top,
+            screen_info,
+            img,
+            #[cfg(not(feature = "o3ds"))]
+            w,
+        ) {
             true
         } else {
             false
@@ -484,16 +589,24 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
     }
 }
 
+#[cfg(feature = "o3ds")]
+pub unsafe fn img_info() -> *mut u8 {
+    unsafe { IMG_INFO }
+}
+
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn img_info_next(is_top: bool) {
     let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
     iinfo.index.next_wrapped();
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub unsafe fn img_info(is_top: bool) -> *mut u8 {
     let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
     *iinfo.bufs.get(&iinfo.index)
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn img_info_prev(is_top: bool) -> *const u8 {
     let iinfo = unsafe { IMG_INFOS.get_mut(&is_top_index(is_top)) };
     let mut index = iinfo.index;
@@ -506,9 +619,12 @@ fn capture_screen(
     is_top: bool,
     screen_info: &ScreenInfo,
     dst: u32,
-    w: WorkIndex,
+    #[cfg(not(feature = "o3ds"))] w: WorkIndex,
 ) -> bool {
     unsafe {
+        #[cfg(feature = "o3ds")]
+        let w = WorkIndex::init(0);
+
         let phys = screen_info.src as u32;
 
         let format = screen_info.format & 0xf;
@@ -627,12 +743,20 @@ fn capture_screen(
             return false;
         }
 
+        #[cfg(not(feature = "o3ds"))]
         send_overlay_stats(&mut params.overlay);
 
         let dma = dma.assume_init();
         *params.dmas.get_mut(&w) = dma;
 
-        thread_ready_release(is_top, screen_info.format, w, dma);
+        thread_ready_release(
+            is_top,
+            screen_info.format,
+            #[cfg(not(feature = "o3ds"))]
+            w,
+            #[cfg(not(feature = "o3ds"))]
+            dma,
+        );
 
         true
     }
@@ -647,6 +771,7 @@ fn close_game_handle(params: &mut ScreenParams) {
         params.game_fcram_base = 0;
         params.game_pid = 0;
 
+        #[cfg(not(feature = "o3ds"))]
         set_no_skip_frames();
     }
     close_overlay_handle(&mut params.overlay);
@@ -737,6 +862,7 @@ fn get_game_handle(params: &mut ScreenParams) -> Handle {
     params.game_handle
 }
 
+#[cfg(not(feature = "o3ds"))]
 fn send_overlay_stats(params: &mut OverlayParams) {
     if unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats == 0 } {
         close_overlay_handle(params);

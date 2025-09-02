@@ -189,7 +189,11 @@ enum {
 // #define RP_DELTA_Q_COEFS_COUNT (3)
 
 #define NWM_HEAP_SIZE (0x4000)
+#ifdef NEW_3DS
 #define NWM_WORK_COUNT (2)
+#elif defined(OLD_3DS)
+#define NWM_WORK_COUNT (1)
+#endif
 #define NWM_THREAD_WAIT_NS (100000000)
 
 #define RP_COMPRESSED_SIZE_MAX (0x30000)

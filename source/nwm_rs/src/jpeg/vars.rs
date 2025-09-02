@@ -136,6 +136,7 @@ impl HuffTbls {
         );
     }
 
+    #[cfg(not(feature = "o3ds"))]
     pub fn once_dq(&mut self) {
         let mut freq: [u16; 257] = const_default();
 
@@ -864,9 +865,11 @@ pub const M_APP0: u8 = 0xe0;
 pub const M_DQT: u8 = 0xdb;
 pub const M_SOF0: u8 = 0xc0;
 pub const M_DHT: u8 = 0xc4;
+#[cfg(not(feature = "o3ds"))]
 pub const M_DRI: u8 = 0xdd;
 pub const M_SOS: u8 = 0xda;
 pub const M_EOI: u8 = 0xd9;
+#[cfg(not(feature = "o3ds"))]
 pub const M_RST0: u8 = 0xd0;
 
 /*
@@ -887,7 +890,9 @@ pub const M_RST0: u8 = 0xd0;
 pub struct JpegTbls {
     pub huff_tbls: HuffTbls,
     pub entropy_tbls: EntropyTbls,
+    #[cfg(not(feature = "o3ds"))]
     pub dq_huff_tbls: HuffTbls,
+    #[cfg(not(feature = "o3ds"))]
     pub dq_entropy_tbls: EntropyTbls,
     pub color_conv_tbls: ColorConvTabs,
     pub comp_infos_420: CompInfos,
@@ -900,7 +905,9 @@ impl JpegTbls {
         let mut tbls: Self = const_default();
         tbls.huff_tbls.once();
         tbls.entropy_tbls.set_entropy_tbls(&tbls.huff_tbls, false);
+        #[cfg(not(feature = "o3ds"))]
         tbls.dq_huff_tbls.once_dq();
+        #[cfg(not(feature = "o3ds"))]
         tbls.dq_entropy_tbls
             .set_entropy_tbls(&tbls.dq_huff_tbls, true);
         tbls.color_conv_tbls.once();
@@ -916,6 +923,8 @@ pub const JPEG_NATURAL_ORDER: [u8; DCTSIZE2] = [
     13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59,
     52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
+
+#[cfg(not(feature = "o3ds"))]
 pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
     #![allow(unused_assignments)]
 

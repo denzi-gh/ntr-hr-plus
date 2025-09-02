@@ -20,6 +20,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             self.write_dht(i as usize, false);
             self.write_dht(i as usize, true);
         }
+        #[cfg(not(feature = "o3ds"))]
         if self.worker.shared.core_count.get() > 1 {
             self.write_dri();
         }
@@ -125,6 +126,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+    #[cfg(not(feature = "o3ds"))]
     pub fn write_dri(&mut self) {
         self.write_marker(M_DRI);
         self.write_2bytes(4); /* fixed length */
@@ -190,6 +192,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+    #[cfg(not(feature = "o3ds"))]
     pub fn write_rst(&mut self) {
         self.write_marker(M_RST0 + self.worker.thread_index.get() as u8);
     }
@@ -217,6 +220,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             &mut self.worker.huff_state,
             &mut self.dst,
             &mut localbuf,
+            #[cfg(not(feature = "o3ds"))]
             self.worker.shared.rel_stream,
         );
 

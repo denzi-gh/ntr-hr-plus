@@ -4,10 +4,10 @@
 use super::*;
 
 pub unsafe fn forward_dct(
-    delta_prog: bool,
-    update_prev: bool,
-    rescale_prev: bool,
-    rescale_prev_shr: bool,
+    #[cfg(not(feature = "o3ds"))] delta_prog: bool,
+    #[cfg(not(feature = "o3ds"))] update_prev: bool,
+    #[cfg(not(feature = "o3ds"))] rescale_prev: bool,
+    #[cfg(not(feature = "o3ds"))] rescale_prev_shr: bool,
     downsample: u8,
     input: &WorkerPrepBufDownsample,
     ci: CompIndex,
@@ -18,9 +18,9 @@ pub unsafe fn forward_dct(
     xpos: u16,
     div_parts: &[DivisorPart; DCTSIZE2],
     div_shifts: &[u8; DCTSIZE2],
-    prev: *mut JBlock,
-    r_pshifts: &[u8; DCTSIZE2],
-    next: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] r_pshifts: &[u8; DCTSIZE2],
+    #[cfg(not(feature = "o3ds"))] next: *mut JBlock,
 ) -> QuantizeRet {
     let samp = h_samp
         && if v_samp {
@@ -58,15 +58,22 @@ pub unsafe fn forward_dct(
         }
 
         do_forward_dct(
+            #[cfg(not(feature = "o3ds"))]
             delta_prog,
+            #[cfg(not(feature = "o3ds"))]
             update_prev,
+            #[cfg(not(feature = "o3ds"))]
             rescale_prev,
+            #[cfg(not(feature = "o3ds"))]
             rescale_prev_shr,
             output,
             div_parts,
             div_shifts,
+            #[cfg(not(feature = "o3ds"))]
             prev,
+            #[cfg(not(feature = "o3ds"))]
             r_pshifts,
+            #[cfg(not(feature = "o3ds"))]
             next,
         )
     }
@@ -88,19 +95,22 @@ unsafe fn convsamp(
 }
 
 unsafe fn do_forward_dct(
-    delta_prog: bool,
-    update_prev: bool,
-    rescale_prev: bool,
-    rescale_prev_shr: bool,
+    #[cfg(not(feature = "o3ds"))] delta_prog: bool,
+    #[cfg(not(feature = "o3ds"))] update_prev: bool,
+    #[cfg(not(feature = "o3ds"))] rescale_prev: bool,
+    #[cfg(not(feature = "o3ds"))] rescale_prev_shr: bool,
     output: &mut JBlock,
     div_parts: &[DivisorPart; DCTSIZE2],
     div_shifts: &[u8; DCTSIZE2],
-    prev: *mut JBlock,
-    r_pshifts: &[u8; DCTSIZE2],
-    next: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] r_pshifts: &[u8; DCTSIZE2],
+    #[cfg(not(feature = "o3ds"))] next: *mut JBlock,
 ) -> QuantizeRet {
     fdct_ifast(output);
-    quantize(
+    #[cfg(feature = "o3ds")]
+    let ret = do_quantize::<false, false, false, false>(output, div_parts, div_shifts);
+    #[cfg(not(feature = "o3ds"))]
+    let ret = quantize(
         delta_prog,
         update_prev,
         rescale_prev,
@@ -111,7 +121,8 @@ unsafe fn do_forward_dct(
         prev,
         r_pshifts,
         next,
-    )
+    );
+    ret
 }
 
 #[inline(always)]
@@ -254,6 +265,7 @@ fn fdct_ifast(inout: &mut JBlock) {
 }
 
 #[inline(always)]
+#[cfg(not(feature = "o3ds"))]
 fn quantize(
     delta_q: bool,
     update_prev: bool,
@@ -286,6 +298,7 @@ fn quantize(
 }
 
 #[inline(always)]
+#[cfg(not(feature = "o3ds"))]
 fn do_quantize_delta_q(
     update_prev: bool,
     rescale_prev: bool,
@@ -323,6 +336,7 @@ fn do_quantize_delta_q(
 }
 
 #[inline(always)]
+#[cfg(not(feature = "o3ds"))]
 fn do_quantize_update_prev<const UPDATE_PREV: bool>(
     rescale_prev: bool,
     rescale_prev_shr: bool,
@@ -360,10 +374,13 @@ fn do_quantize<
     inout: &mut JBlock,
     div_parts: &[DivisorPart; DCTSIZE2],
     div_shifts: &[u8; DCTSIZE2],
-    prev: *mut JBlock,
-    rp_shifts: &[u8; DCTSIZE2],
-    next: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] prev: *mut JBlock,
+    #[cfg(not(feature = "o3ds"))] rp_shifts: &[u8; DCTSIZE2],
+    #[cfg(not(feature = "o3ds"))] next: *mut JBlock,
 ) -> QuantizeRet {
+    #[cfg(feature = "o3ds")]
+    let ret = QuantizeRet();
+    #[cfg(not(feature = "o3ds"))]
     let mut ret = {
         let count = const_default::<QuantizeCounts>();
         QuantizeRet {
@@ -384,6 +401,7 @@ fn do_quantize<
         let product = unsafe { core::intrinsics::unchecked_shr(product, shift) };
         temp = (product as i16 ^ sign1) - sign1;
 
+        #[cfg(not(feature = "o3ds"))]
         if DELTA_Q {
             if UPDATE_PREV {
                 unsafe {
@@ -424,6 +442,7 @@ pub fn jpeg_nbits_nonzero(x: i32) -> u8 {
 }
 
 #[inline(always)]
+#[cfg(not(feature = "o3ds"))]
 pub fn rescale_prev<const RESCALE_PREV: bool, const RESCALE_PREV_SHR: bool>(
     c: JCoef,
     s: u8,

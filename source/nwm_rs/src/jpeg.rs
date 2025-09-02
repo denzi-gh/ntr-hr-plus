@@ -3,6 +3,7 @@
 
 #![allow(unused_imports)]
 
+#[cfg(not(feature = "o3ds"))]
 mod delta_q;
 mod encode;
 mod init;
@@ -10,7 +11,11 @@ mod vars;
 mod worker;
 mod worker_dst;
 
+#[cfg(feature = "o3ds")]
+pub struct QuantizeRet();
+
 use crate::*;
+#[cfg(not(feature = "o3ds"))]
 pub use delta_q::*;
 pub use encode::*;
 pub use init::*;
@@ -19,7 +24,9 @@ pub use worker::*;
 pub use worker_dst::*;
 
 pub struct JpegDqRet {
+    #[cfg(not(feature = "o3ds"))]
     pub delta_q: u8,
+    #[cfg(not(feature = "o3ds"))]
     pub mcus: u16,
 }
 
@@ -37,6 +44,28 @@ pub struct CheckerParams {
     pub mcu_row_params: [McuRowParams; jdiv_round_up(downsample_checker_screen_dim(true), DCTSIZE)],
 }
 
+#[cfg(feature = "o3ds")]
+pub struct JpegScreenShared {
+    comp_infos: *const CompInfos,
+    pub max_h_samp_factor: usize,
+    pub max_v_samp_factor: usize,
+    pub max_blocks_in_mcu: usize,
+    pub mcu_row_size: usize,
+    pub mcu_col_size: usize,
+    pub mcus_per_row: usize,
+    pub mcu_rows: u16,
+    pub mcus: u16,
+    pub downsample: u8,
+    pub width: u16,
+    pub height: u16,
+    pub checker: CheckerParams,
+
+    quant_tbls: QuantTbls,
+    divisors: Divisors,
+    div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+}
+
+#[cfg(not(feature = "o3ds"))]
 pub struct JpegScreenShared {
     comp_infos: *const CompInfos,
     pub max_h_samp_factor: usize,
@@ -59,6 +88,15 @@ pub struct JpegScreenShared {
     qos_adj: f32,
 }
 
+#[cfg(feature = "o3ds")]
+pub struct JpegShared {
+    pub quality: [u32; RP_SCREEN_COUNT as usize],
+    pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
+    pub last_restart_range: u32,
+    pub jpeg_tbls: JpegTbls,
+}
+
+#[cfg(not(feature = "o3ds"))]
 pub struct JpegShared {
     pub rel_stream: bool,
     pub delta_prog: bool,
@@ -74,6 +112,10 @@ pub struct JpegShared {
     pub screen_sem: RangedArray<Handle, SCREEN_COUNT>,
 }
 
+#[cfg(feature = "o3ds")]
+pub struct JpegSharedMut();
+
+#[cfg(not(feature = "o3ds"))]
 pub struct JpegSharedMut {
     pub compressed_size: RangedArray<[AtomicU32; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
     pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
@@ -103,7 +145,9 @@ pub unsafe fn get_jpeg_shared() -> &'static JpegShared {
     unsafe { &(*JPEG).shared }
 }
 
+#[cfg(not(feature = "o3ds"))]
 const DELTA_Q_PREV_COEFFS_TOP_N: usize =
     GSP_SCREEN_WIDTH as usize * GSP_SCREEN_HEIGHT_TOP as usize * MAX_COMPONENTS;
+#[cfg(not(feature = "o3ds"))]
 const DELTA_Q_PREV_COEFFS_BOT_N: usize =
     GSP_SCREEN_WIDTH as usize * GSP_SCREEN_HEIGHT_BOTTOM as usize * MAX_COMPONENTS;

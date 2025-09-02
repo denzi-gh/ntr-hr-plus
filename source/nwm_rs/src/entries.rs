@@ -1,5 +1,7 @@
+#[cfg(not(feature = "o3ds"))]
 pub mod handle_port;
 pub mod start_up;
+#[cfg(not(feature = "o3ds"))]
 pub mod thread_aux;
 pub mod thread_main;
 pub mod thread_nwm;

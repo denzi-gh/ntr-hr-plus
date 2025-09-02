@@ -1,5 +1,6 @@
 use crate::*;
 
+#[cfg(not(feature = "o3ds"))]
 struct ThreadsStacks<'a> {
     aux1: &'a mut StackRegion<{ RP_THREAD_STACK_SIZE as usize }>,
     aux2: &'a mut StackRegion<{ RP_THREAD_STACK_SIZE as usize }>,
@@ -7,11 +8,16 @@ struct ThreadsStacks<'a> {
     screen: &'a mut StackRegion<{ STACK_SIZE as usize }>,
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub type NwmBufs = RangedArray<*mut u8, WORK_COUNT>;
 
 struct ThreadsStorage<'a> {
+    #[cfg(not(feature = "o3ds"))]
     stacks: ThreadsStacks<'a>,
+    #[cfg(not(feature = "o3ds"))]
     nwm_bufs: NwmBufs,
+    #[cfg(feature = "o3ds")]
+    phantom: PhantomData<&'a ()>,
 }
 
 pub static mut THREAD_MAIN_HANDLE: Handle = 0;
@@ -21,6 +27,7 @@ static mut RESTART_PENDING: AtomicBool = const_default();
 static mut RESTART_READY_EVENT: Handle = const_default();
 static mut RESTART_DONE_EVENT: Handle = const_default();
 
+#[cfg(not(feature = "o3ds"))]
 pub const NWM_BUFFER_SIZE: usize =
     (SEND_BUFS_SIZE / WORK_COUNT) as usize / mem::size_of::<usize>() * mem::size_of::<usize>();
 
@@ -55,22 +62,31 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
         return None;
     }
 
-    let gf256_ctx_mem = request_mem_from_pool::<{ mem::size_of::<gf256_ctx>() }>()?;
-    unsafe { GF256Ctx = gf256_ctx_mem.to_ptr() as *mut gf256_ctx };
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let gf256_ctx_mem = request_mem_from_pool::<{ mem::size_of::<gf256_ctx>() }>()?;
+        unsafe { GF256Ctx = gf256_ctx_mem.to_ptr() as *mut gf256_ctx };
 
-    if unsafe { fecal_init_(FECAL_VERSION as i32) } != 0 {
-        ns_dbg_print!(failed, c_str!("FEC-AL init"), res);
-        return None;
+        if unsafe { fecal_init_(FECAL_VERSION as i32) } != 0 {
+            ns_dbg_print!(failed, c_str!("FEC-AL init"), res);
+            return None;
+        }
+
+        let fecal_encoder_mem =
+            request_mem_from_pool_vsize(unsafe { fecal_encoder_size() } as usize)?;
+        unsafe { rp_kcp_fecal_encoder = fecal_encoder_mem.as_mut_ptr() as *mut _ };
     }
 
-    let fecal_encoder_mem = request_mem_from_pool_vsize(unsafe { fecal_encoder_size() } as usize)?;
-    unsafe { rp_kcp_fecal_encoder = fecal_encoder_mem.as_mut_ptr() as *mut _ };
-
-    unsafe { rp_svc_increase_limits() };
+    #[cfg(not(feature = "o3ds"))]
+    unsafe {
+        rp_svc_increase_limits()
+    };
 
     unsafe { entries::thread_nwm::once_reliable_stream_cb() }?;
 
+    #[cfg(not(feature = "o3ds"))]
     let mut nwm_bufs: NwmBufs = const_default();
+    #[cfg(not(feature = "o3ds"))]
     unsafe {
         let cb = &mut *entries::thread_nwm::RELIABLE_STREAM_CB;
 
@@ -89,27 +105,35 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
 
     unsafe { entries::thread_screen::once_screen_handles() }?;
 
+    #[cfg(not(feature = "o3ds"))]
     let aux1_stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
+    #[cfg(not(feature = "o3ds"))]
     let aux2_stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
+    #[cfg(not(feature = "o3ds"))]
     let nwm_stack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
+    #[cfg(not(feature = "o3ds"))]
     let screen_stack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
 
-    let mut svc_thread: Handle = 0;
-    let res = create_thread_from_pool::<{ SMALL_STACK_SIZE as usize }>(
-        &mut svc_thread,
-        Some(handlePortThread),
-        SVC_PORT_NWM.as_ptr() as u32,
-        0x10,
-        1,
-    )
-    .0;
-    if res != 0 {
-        ns_dbg_print!(failed, c_str!("Create remote play service thread"), res);
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let mut svc_thread: Handle = 0;
+        let res = create_thread_from_pool::<{ SMALL_STACK_SIZE as usize }>(
+            &mut svc_thread,
+            Some(handlePortThread),
+            SVC_PORT_NWM.as_ptr() as u32,
+            0x10,
+            1,
+        )
+        .0;
+        if res != 0 {
+            ns_dbg_print!(failed, c_str!("Create remote play service thread"), res);
+        }
     }
 
     ns_dbg_print!(mem_usage, unsafe { plgGetMemoryUsage() });
 
-    Some(ThreadsStorage {
+    #[cfg(not(feature = "o3ds"))]
+    return Some(ThreadsStorage {
         stacks: ThreadsStacks {
             aux1: stack_region_from_mem_region(aux1_stack),
             aux2: stack_region_from_mem_region(aux2_stack),
@@ -117,9 +141,15 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
             screen: stack_region_from_mem_region(screen_stack),
         },
         nwm_bufs,
-    })
+    });
+
+    #[cfg(feature = "o3ds")]
+    return Some(ThreadsStorage {
+        phantom: PhantomData,
+    });
 }
 
+#[cfg(not(feature = "o3ds"))]
 struct InitVars {
     core_count: CoreCount,
     thread_prio: u32,
@@ -127,22 +157,29 @@ struct InitVars {
 }
 
 struct Init {
+    #[cfg(not(feature = "o3ds"))]
     vars: InitVars,
 }
 
 impl Init {
-    fn init(vars: InitVars) -> Option<Self> {
+    fn init(#[cfg(not(feature = "o3ds"))] vars: InitVars) -> Option<Self> {
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             init_syn_handles(vars.core_count)?;
             entries::thread_nwm::init_seg_mem_handles(vars.qos)?;
         }
 
-        Some(Init { vars })
+        #[cfg(not(feature = "o3ds"))]
+        return Some(Init { vars });
+
+        #[cfg(feature = "o3ds")]
+        return Some(Init {});
     }
 }
 
 impl Drop for Init {
     fn drop(&mut self) {
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             entries::thread_nwm::cleanup_seg_mem_handles();
             cleanup_syn_handles(self.vars.core_count);
@@ -177,11 +214,12 @@ fn pause() -> Option<()> {
 }
 
 #[named]
-fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
+fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
     clear_reset_threads();
 
     unsafe {
         set_core_count_in_use(RP_CONFIG.core_count().load(Ordering::Acquire));
+        #[cfg(not(feature = "o3ds"))]
         let core_count = core_count_in_use();
 
         let dst_port = RP_CONFIG.dst_port().load(Ordering::Acquire);
@@ -194,7 +232,11 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
         }
 
         let qos = RP_CONFIG.qos().load(Ordering::Acquire);
-        entries::thread_nwm::init(dst_flags, qos)?;
+        entries::thread_nwm::init(
+            #[cfg(not(feature = "o3ds"))]
+            dst_flags,
+            qos,
+        )?;
 
         let mode = RP_CONFIG.mode().load(Ordering::Acquire);
         entries::thread_screen::init(mode);
@@ -205,6 +247,7 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
             ns_dbg_print!(failed, c_str!("Set thread priority"), res);
         }
 
+        #[cfg(not(feature = "o3ds"))]
         entries::thread_nwm::init_reliable_stream_cb(qos)?;
 
         let jpeg = &mut *jpeg::JPEG;
@@ -217,24 +260,19 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
                 .chroma_ss(ScreenIndex::init(RP_SCREEN_BOT as u32))
                 .load(Ordering::Acquire),
         ];
-        let downsample = if entries::thread_nwm::get_reliable_stream()
-            == entries::thread_nwm::ReliableStream::None
-        {
-            [0, 0]
-        } else {
-            [
-                RP_CONFIG
-                    .downsample(ScreenIndex::init(RP_SCREEN_TOP as u32))
-                    .load(Ordering::Acquire),
-                RP_CONFIG
-                    .downsample(ScreenIndex::init(RP_SCREEN_BOT as u32))
-                    .load(Ordering::Acquire),
-            ]
-        };
+        let downsample = [
+            RP_CONFIG
+                .downsample(ScreenIndex::init(RP_SCREEN_TOP as u32))
+                .load(Ordering::Acquire),
+            RP_CONFIG
+                .downsample(ScreenIndex::init(RP_SCREEN_BOT as u32))
+                .load(Ordering::Acquire),
+        ];
         let quality = [
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
         ];
+        #[cfg(not(feature = "o3ds"))]
         jpeg.init(
             quality,
             core_count,
@@ -243,56 +281,68 @@ fn init(nwm_bufs: &NwmBufs) -> Option<Init> {
             entries::thread_nwm::get_reliable_stream() != entries::thread_nwm::ReliableStream::None,
             entries::thread_nwm::get_reliable_stream_delta_prog(),
         )?;
+
+        #[cfg(feature = "o3ds")]
+        jpeg.init(quality, chroma_ss, downsample)?;
         entries::work_thread::init(quality, chroma_ss, downsample);
 
+        #[cfg(not(feature = "o3ds"))]
         entries::thread_nwm::init_nwm_infos(nwm_bufs, core_count);
 
         entries::thread_nwm::init_ov_stats();
 
-        Init::init(InitVars {
+        #[cfg(not(feature = "o3ds"))]
+        return Init::init(InitVars {
             core_count,
             thread_prio,
             qos,
-        })
+        });
+
+        #[cfg(feature = "o3ds")]
+        return Init::init();
     }
 }
 
 #[named]
-fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
+fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> Option<()> {
     pause()?;
 
-    let init = init(&s.nwm_bufs)?;
+    let init = init(
+        #[cfg(not(feature = "o3ds"))]
+        &s.nwm_bufs,
+    )?;
+    #[cfg(feature = "o3ds")]
+    let _ = init;
+    #[cfg(not(feature = "o3ds"))]
     let core_count = init.vars.core_count.get();
     {
-        let (_aux1, _aux2) = if !cfg!(feature = "o3ds") {
-            let aux1 = if core_count >= 2 {
-                Some(JoinThread::create(CreateThread::create(
-                    Some(entries::thread_aux::thread_aux),
-                    1,
-                    s.stacks.aux1,
-                    init.vars.thread_prio as i32,
-                    3,
-                )?))
-            } else {
-                None
-            };
-
-            let aux2 = if core_count >= 3 {
-                Some(JoinThread::create(CreateThread::create(
-                    Some(entries::thread_aux::thread_aux),
-                    2,
-                    s.stacks.aux2,
-                    RP_THREAD_PRIO_MAX as s32,
-                    1,
-                )?))
-            } else {
-                None
-            };
-            (aux1, aux2)
+        #[cfg(not(feature = "o3ds"))]
+        let _aux1 = if core_count >= 2 {
+            Some(JoinThread::create(CreateThread::create(
+                Some(entries::thread_aux::thread_aux),
+                1,
+                s.stacks.aux1,
+                init.vars.thread_prio as i32,
+                3,
+            )?))
         } else {
-            (None, None)
+            None
         };
 
+        #[cfg(not(feature = "o3ds"))]
+        let _aux2 = if core_count >= 3 {
+            Some(JoinThread::create(CreateThread::create(
+                Some(entries::thread_aux::thread_aux),
+                2,
+                s.stacks.aux2,
+                RP_THREAD_PRIO_MAX as s32,
+                1,
+            )?))
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "o3ds"))]
         let _nwm = JoinThread::create(CreateThread::create(
             Some(match entries::thread_nwm::get_reliable_stream() {
                 entries::thread_nwm::ReliableStream::None => entries::thread_nwm::thread_nwm,
@@ -304,6 +354,7 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
             RP_CORE_ID_MAIN,
         )?);
 
+        #[cfg(not(feature = "o3ds"))]
         let _screen = JoinThread::create(CreateThread::create(
             Some(entries::thread_screen::thread_screen),
             0,
@@ -312,6 +363,7 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
             RP_CORE_ID_MAIN,
         )?);
 
+        #[cfg(not(feature = "o3ds"))]
         unsafe {
             rp_svc_print_limits();
         }
@@ -327,9 +379,13 @@ fn main(_impl_: Impl, s: &mut ThreadsStorage) -> Option<()> {
     Some(())
 }
 
-fn main_loop(s: &mut ThreadsStorage) -> Option<()> {
+fn main_loop(#[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> Option<()> {
     loop {
-        main(Impl(()), s)?
+        main(
+            Impl(()),
+            #[cfg(not(feature = "o3ds"))]
+            s,
+        )?
     }
 }
 
@@ -337,8 +393,13 @@ fn main_loop(s: &mut ThreadsStorage) -> Option<()> {
 pub extern "C" fn encode_thread_main(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
+        #[cfg(not(feature = "o3ds"))]
         if let Some(mut storage) = once() {
             main_loop(&mut storage);
+        }
+        #[cfg(feature = "o3ds")]
+        if let Some(_) = once() {
+            main_loop();
         }
         ns_dbg_print!(msg, c_str!("Nwm main loop exited"));
         svcExitThread()
