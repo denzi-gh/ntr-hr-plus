@@ -28,10 +28,12 @@ static int initNSConfig(void) {
 	return 0;
 }
 
+int ntr_loader_region;
 void loadParams(NTR_CONFIG *ntrCfg) {
 	KProcessHandleDataOffset = ntrCfg->KProcessHandleDataOffset;
 	KProcessPIDOffset = ntrCfg->KProcessPIDOffset;
 	KProcessCodesetOffset = ntrCfg->KProcessCodesetOffset;
+	ntr_loader_region = ntrCfg->memMode ? MEMOP_REGION_BASE : MEMOP_REGION_SYSTEM;
 }
 
 void _ReturnToUser(void);
@@ -147,7 +149,7 @@ u32 plgRequestMemoryFromPool(u32 size, int pool) {
 		}
 
 		plgMemoryPoolEnd += size;
-		// if (getCurrentProcessId() == 0x1a) {
+		// if (getCurrentProcessId() == RP_NWM_PROCESS) {
 		// 	showDbg("total size %"PRIx32" end addr %"PRIx32, plgMemoryPoolEnd - PLG_MEM_ADDR, plgMemoryPoolEnd);
 		// }
 

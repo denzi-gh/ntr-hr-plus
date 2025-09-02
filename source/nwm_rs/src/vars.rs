@@ -8,6 +8,12 @@ pub use ranged::*;
 
 pub const RP_CORE_ID_MAIN: s32 = if cfg!(feature = "o3ds") { 1 } else { 2 };
 
+macro_rules! rp_need_core_syn {
+    () => {
+        !cfg!(feature = "o3ds") && core_count_in_use().get() != RP_CORE_COUNT_MIN
+    };
+}
+
 pub const FRAME_TIME_MAX_F: u32 = 4;
 pub const FRAME_TIME_FACTOR: u32 = 3;
 

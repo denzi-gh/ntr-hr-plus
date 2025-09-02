@@ -47,11 +47,12 @@ mod ctru {
 
 #[macro_use]
 mod dbg;
+#[macro_use]
+mod vars;
 mod entries;
 mod fix;
 mod jpeg;
 mod utils;
-mod vars;
 
 #[panic_handler]
 fn panic(panic_info: &PanicInfo) -> ! {

@@ -479,7 +479,7 @@ int nsStartup(void) {
 	u32 affinity = RP_THREAD_PRIO_MIN;
 	if (nsConfig->initMode == NS_INITMODE_FROMHOOK) {
 		listenPort = NS_HOOK_LISTEN_PORT + getCurrentProcessId();
-		if (getCurrentProcessId() != 0x1a) { // except for nwm process
+		if (getCurrentProcessId() != RP_NWM_PROCESS) { // except for nwm process
 			affinity = RP_THREAD_PRIO_MAX;
 		}
 	}

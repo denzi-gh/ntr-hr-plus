@@ -8,11 +8,12 @@ pub struct Impl {
 impl Impl {
     pub fn work_ready_acquire(self) -> core::result::Result<WorkReady, WorkOtherReady> {
         unsafe {
-            if !SYN_HANDLES
-                .works
-                .get_mut(&self.w)
-                .work_ready_flag
-                .swap(true, Ordering::AcqRel)
+            if !rp_need_core_syn!()
+                || !SYN_HANDLES
+                    .works
+                    .get_mut(&self.w)
+                    .work_ready_flag
+                    .swap(true, Ordering::AcqRel)
             {
                 Ok(WorkReady(self))
             } else {
@@ -278,14 +279,16 @@ impl WorkFrame {
             }
         }
 
-        for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
-            if j != self.0.0.t {
-                unsafe {
-                    release_sem(
-                        cname!(),
-                        SYN_HANDLES.threads.get(&j).work_ready,
-                        c_str!("work_ready"),
-                    );
+        if rp_need_core_syn!() {
+            for j in ThreadIndex::up_to(&thread_index_last(core_count_in_use())) {
+                if j != self.0.0.t {
+                    unsafe {
+                        release_sem(
+                            cname!(),
+                            SYN_HANDLES.threads.get(&j).work_ready,
+                            c_str!("work_ready"),
+                        );
+                    }
                 }
             }
         }

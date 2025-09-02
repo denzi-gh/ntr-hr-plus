@@ -7,5 +7,6 @@ void startupInit(void);
 void loadParams(NTR_CONFIG *ntrCfg);
 void initSharedFunc(void);
 int plgLoaderInfoAlloc(void);
+extern int ntr_loader_region;
 
 #endif

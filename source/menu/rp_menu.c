@@ -157,7 +157,7 @@ static void tryInitRemotePlay(u32 dstAddr) {
 	u32 controlCount = 10;
 	s32 ret;
 	Handle hProcess;
-	u32 pid = 0x1a; // nwm process
+	u32 pid = RP_NWM_PROCESS; // nwm process
 	ret = svcOpenProcess(&hProcess, pid);
 	if (ret != 0) {
 		showDbg("Open remote play process failed: %08"PRIx32, ret);
@@ -1057,7 +1057,7 @@ int rpStartupFromMenu(RP_CONFIG *config) {
 	}
 
 	Handle hProcess;
-	u32 pid = 0x1a; // nwm process
+	u32 pid = RP_NWM_PROCESS; // nwm process
 	s32 ret = svcOpenProcess(&hProcess, pid);
 	if (ret != 0) {
 		showDbg("Open nwm process failed: %08"PRIx32, ret);
@@ -1070,6 +1070,7 @@ int rpStartupFromMenu(RP_CONFIG *config) {
 	u32 remotePC = rpGetNwmRemotePC(&cfg, hProcess);
 
 	if (!remotePC) {
+		showDbg("Unable to get nwm remote pc.");
 		ret = -1;
 		goto final;
 	}

@@ -351,15 +351,17 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         .get_mut(&w)
                         .store(false, Ordering::Release);
 
-                    let b = shared_mut.screen_bool.get_mut(&s);
-                    if b.swap(true, Ordering::AcqRel) {
-                        b.store(false, Ordering::Release);
-                    } else {
-                        release_sem(
-                            cname!(),
-                            *self.worker.shared.screen_sem.get(&s),
-                            c_str!("screen_sem"),
-                        );
+                    if rp_need_core_syn!() {
+                        let b = shared_mut.screen_bool.get_mut(&s);
+                        if b.swap(true, Ordering::AcqRel) {
+                            b.store(false, Ordering::Release);
+                        } else {
+                            release_sem(
+                                cname!(),
+                                *self.worker.shared.screen_sem.get(&s),
+                                c_str!("screen_sem"),
+                            );
+                        }
                     }
                 }
             }
@@ -407,28 +409,32 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 if row_i == 0 && mcu_col_num == 0 {
                     if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
                         let last_restart_interval = shared_mut.last_restart_interval.get_mut(&s);
-                        let b = shared_mut.screen_bool.get(&s);
-                        let need_sync = self.worker.info.restart_interval != *last_restart_interval;
 
-                        let need_sync = if !need_sync {
-                            b.swap(true, Ordering::AcqRel)
-                        } else {
-                            need_sync
-                        };
+                        if rp_need_core_syn!() {
+                            let b = shared_mut.screen_bool.get(&s);
+                            let need_sync =
+                                self.worker.info.restart_interval != *last_restart_interval;
 
-                        if need_sync {
-                            if wait_syn(
-                                cname!(),
-                                *self.worker.shared.screen_sem.get(&s),
-                                c_str!("screen_sem"),
-                            )
-                            .is_none()
-                            {
-                                return;
+                            let need_sync = if !need_sync {
+                                b.swap(true, Ordering::AcqRel)
+                            } else {
+                                need_sync
+                            };
+
+                            if need_sync {
+                                if wait_syn(
+                                    cname!(),
+                                    *self.worker.shared.screen_sem.get(&s),
+                                    c_str!("screen_sem"),
+                                )
+                                .is_none()
+                                {
+                                    return;
+                                }
+
+                                b.store(false, Ordering::Release);
+                                *last_restart_interval = self.worker.info.restart_interval;
                             }
-
-                            b.store(false, Ordering::Release);
-                            *last_restart_interval = self.worker.info.restart_interval;
                         }
 
                         self.compute_dq(prev);

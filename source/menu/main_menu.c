@@ -389,7 +389,7 @@ static void pluginLoaderConfigPropagate(void) {
 	if (plgLoader->gamePluginPid)
 		pluginLoaderConfigPropagateProcess(plgLoader->gamePluginPid);
 
-	pluginLoaderConfigPropagateProcess(0x1a); // nwm process
+	pluginLoaderConfigPropagateProcess(RP_NWM_PROCESS); // nwm process
 }
 
 static int pluginLoaderMenu(void) {
@@ -466,7 +466,7 @@ static void rpDoNFCPatch(void) {
 		return;
 	}
 
-	int pid = 0x1a; // nwm process
+	int pid = RP_NWM_PROCESS; // nwm process
 	Handle hProcess;
 	int ret;
 	if ((ret = svcOpenProcess(&hProcess, pid))) {
@@ -703,9 +703,13 @@ static void showMainMenu(void) {
 				break;
 
 			case MENU_ENTRY_QTM_PATCH:
-				releaseVideo();
-				rpDoQTMPatchAndToggle();
-				acquireVideo();
+				if (!ntrConfig->isNew3DS) {
+					showMsg("QTM patch is available on New 3DS only.");
+				} else {
+					releaseVideo();
+					rpDoQTMPatchAndToggle();
+					acquireVideo();
+				}
 				break;
 
 			default:
@@ -987,7 +991,6 @@ void mainThread(void *) {
 		goto final;
 	}
 
-	// This handle may be short-lived so there may be a race condition here...
 	Handle fsUserHandle = ntrConfig->HomeFSUHandleAddr ?
 		*(u32 *)ntrConfig->HomeFSUHandleAddr : 0;
 	if (fsUserHandle == 0) {

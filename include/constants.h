@@ -88,11 +88,15 @@ static const u32 IoBasePdc = 0x10400000 + 0x80000000;
 #define RP_CORE_COUNT_DEFAULT RP_CORE_COUNT_MAX
 #ifdef OLD_3DS
 #define RP_CORE_COUNT_MAX (1)
+#define RP_NWM_PROCESS (0x19)
 #elif defined(NEW_3DS)
 #define RP_CORE_COUNT_MAX (3)
+#define RP_NWM_PROCESS (0x1a)
 #else
 #define RP_CORE_COUNT_MAX (ntrConfig->isNew3DS ? 3 : 1)
+#define RP_NWM_PROCESS (ntrConfig->isNew3DS ? 0x1a : 0x19)
 #endif
+#define NTR_LOADER_REGION ntr_loader_region
 #define RP_QUALITY_DEFAULT (75)
 #define RP_QUALITY_MIN (10)
 #define RP_QUALITY_MAX (100)
