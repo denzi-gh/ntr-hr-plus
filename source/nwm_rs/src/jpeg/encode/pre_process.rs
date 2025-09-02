@@ -152,9 +152,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 };
                 let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER) / samp_factor;
 
-                for j in 0..samp_factor {
-                    let l = (n - k) * samp_factor - j - 1;
-                    let m = i * samp_factor + j;
+                let vs = SAMP_FACTOR / samp_factor;
+                for j in 0..vs {
+                    let l = (n - k) * vs - j - 1;
+                    let m = i * vs + j;
 
                     let buf = buf.get_mut(ci, H_SAMP, V_SAMP).as_mut_ptr();
 
