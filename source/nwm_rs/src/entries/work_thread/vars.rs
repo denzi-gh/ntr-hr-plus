@@ -272,10 +272,16 @@ pub struct WorkFrame(WorkReady);
 impl WorkFrame {
     pub fn frame_release(self) -> Option<WorkAcquire> {
         let bctx = self.0.0.bctx();
+        let downsample = unsafe { *is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
         #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_reliable_stream() == entries::thread_nwm::ReliableStream::None {
             if !unsafe {
-                entries::thread_nwm::nwm_done_acquire(self.0.0.w, bctx.frame_id, bctx.is_top)
+                entries::thread_nwm::nwm_done_acquire(
+                    self.0.0.w,
+                    bctx.frame_id,
+                    bctx.is_top,
+                    downsample,
+                )
             } {
                 return None;
             }
@@ -286,7 +292,7 @@ impl WorkFrame {
 
         #[cfg(feature = "o3ds")]
         unsafe {
-            entries::thread_nwm::nwm_start_frame(bctx.frame_id, bctx.is_top);
+            entries::thread_nwm::nwm_start_frame(bctx.frame_id, bctx.is_top, downsample);
         }
 
         unsafe {
@@ -1023,6 +1029,15 @@ pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
     loop {
         #[cfg(not(feature = "o3ds"))]
         entries::thread_screen::thread_ready_acquire(&t)?;
+        #[cfg(feature = "o3ds")]
+        unsafe {
+            let mut rp_config = RP_CONFIG_SAVED;
+            rp_config.dstAddr = 0;
+            if rp_config != *config_consts::RP_CONFIG {
+                set_reset_threads();
+                return None;
+            }
+        }
         safe_impl::send_frame(Impl { w: work_index, t })?;
         work_index.next_wrapped();
     }

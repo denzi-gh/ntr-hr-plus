@@ -6,8 +6,6 @@ fn do_screen(screen: Screen) -> Option<bool> {
     let mut is_top = conf.priority_is_top;
     #[cfg(not(feature = "o3ds"))]
     let mut busy_wait = false;
-    #[cfg(feature = "o3ds")]
-    let busy_wait = true;
     #[cfg(not(feature = "o3ds"))]
     let last_timing = get_system_tick();
 
@@ -120,6 +118,7 @@ fn do_screen(screen: Screen) -> Option<bool> {
         }
     }
 
+    #[cfg(not(feature = "o3ds"))]
     if busy_wait {
         wait_for_vblank(is_top)
     }

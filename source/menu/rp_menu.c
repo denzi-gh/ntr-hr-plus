@@ -931,21 +931,43 @@ static int rpUpdateParamsFromMenu(RP_CONFIG *config) {
 		return -1;
 
 	s32 ret = 0;
-	Handle hClient = rpGetPortHandle();
-	if (!hClient) {
-		ret = -1;
-		goto final;
-	}
+	if (ntrConfig->isNew3DS) {
+		Handle hClient = rpGetPortHandle();
+		if (!hClient) {
+			ret = -1;
+			goto final;
+		}
 
-	u32* cmdbuf = getThreadCommandBuffer();
-	cmdbuf[0] = IPC_MakeHeader(SVC_NWM_CMD_PARAMS_UPDATE, sizeof(RP_CONFIG) / sizeof(u32), 0);
-	*(RP_CONFIG *)&cmdbuf[1] = *config;
+		u32* cmdbuf = getThreadCommandBuffer();
+		cmdbuf[0] = IPC_MakeHeader(SVC_NWM_CMD_PARAMS_UPDATE, sizeof(RP_CONFIG) / sizeof(u32), 0);
+		*(RP_CONFIG *)&cmdbuf[1] = *config;
 
-	ret = svcSendSyncRequest(hClient);
-	if (ret != 0) {
-		nsDbgPrint("Send port request failed: %08"PRIx32"\n", ret);
-		ret = -1;
-		goto final;
+		ret = svcSendSyncRequest(hClient);
+		if (ret != 0) {
+			nsDbgPrint("Send port request failed: %08"PRIx32"\n", ret);
+			ret = -1;
+			goto final;
+		}
+	} else {
+		Handle hProcess = 0;
+		u32 pid = RP_NWM_PROCESS; // nwm process
+		ret = svcOpenProcess(&hProcess, pid);
+		if (ret != 0) {
+			showDbg("Open nwm process failed: %08"PRIx32, ret);
+			hProcess = 0;
+			goto final;
+		}
+
+		ret = copyRemoteMemory(hProcess, rpConfig, CUR_PROCESS_HANDLE, config, sizeof(RP_CONFIG));
+		if (ret != 0) {
+			nsDbgPrint("Update remote play config failed: %08"PRIx32"\n", ret);
+		}
+
+		if (hProcess)
+			svcCloseHandle(hProcess);
+
+		if (ret)
+			goto final;
 	}
 	*rpConfig = *config;
 
@@ -1056,7 +1078,7 @@ int rpStartupFromMenu(RP_CONFIG *config) {
 		return rpUpdateParamsFromMenu(config);
 	}
 
-	Handle hProcess;
+	Handle hProcess = 0;
 	u32 pid = RP_NWM_PROCESS; // nwm process
 	s32 ret = svcOpenProcess(&hProcess, pid);
 	if (ret != 0) {

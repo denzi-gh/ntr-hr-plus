@@ -20,6 +20,9 @@ pub const FRAME_TIME_MAX_F: u32 = 4;
 #[allow(unused)]
 pub const FRAME_TIME_FACTOR: u32 = 3;
 
+#[cfg(feature = "o3ds")]
+pub static mut RP_CONFIG_SAVED: RP_CONFIG = const_default();
+
 pub mod config_consts {
     use super::*;
 
@@ -40,17 +43,33 @@ pub struct RpConfig(());
 
 pub const RP_CONFIG: RpConfig = RpConfig(());
 
+#[cfg(not(feature = "o3ds"))]
 macro_rules! rp_config_field {
     ($v:ident) => {
         unsafe { AtomicU32::from_mut(&mut (*config_consts::RP_CONFIG).$v) }
     };
 }
 
+#[cfg(not(feature = "o3ds"))]
 macro_rules! rp_config_screen_field {
     ($v:ident, $s:ident) => {
         unsafe {
             AtomicU32::from_mut(&mut (*config_consts::RP_CONFIG).screens[$s.get() as usize].$v)
         }
+    };
+}
+
+#[cfg(feature = "o3ds")]
+macro_rules! rp_config_field {
+    ($v:ident) => {
+        unsafe { AtomicU32::from_mut(&mut RP_CONFIG_SAVED.$v) }
+    };
+}
+
+#[cfg(feature = "o3ds")]
+macro_rules! rp_config_screen_field {
+    ($v:ident, $s:ident) => {
+        unsafe { AtomicU32::from_mut(&mut RP_CONFIG_SAVED.screens[$s.get() as usize].$v) }
     };
 }
 

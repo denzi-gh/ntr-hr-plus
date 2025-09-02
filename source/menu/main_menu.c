@@ -71,7 +71,8 @@ static u32 aptPrepareToStartApplicationCallback(u32 a1, u32 a2, u32 a3) {
 	plgLoader->tid[1] = tid[1];
 	gamePluginMenuSelect = 0;
 
-	rpSetGamePid(0);
+	if (ntrConfig->isNew3DS)
+		rpSetGamePid(0);
 
 	s32 res = ((aptPrepareToStartApplicationTypeDef)aptPrepareToStartApplicationHook.callCode)(a1, a2, a3);
 	return res;

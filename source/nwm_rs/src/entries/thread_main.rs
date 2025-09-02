@@ -45,10 +45,13 @@ fn once_jpeg() -> Option<()> {
 
 #[named]
 fn once<'a>() -> Option<ThreadsStorage<'a>> {
-    let res = unsafe { gspInit(1) };
-    if res != 0 {
-        ns_dbg_print!(failed, c_str!("GSP init"), res);
-        return None;
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let res = unsafe { gspInit(1) };
+        if res != 0 {
+            ns_dbg_print!(failed, c_str!("GSP init"), res);
+            return None;
+        }
     }
 
     let res = create_event(unsafe { &mut RESTART_READY_EVENT });
@@ -218,6 +221,11 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
     clear_reset_threads();
 
     unsafe {
+        #[cfg(feature = "o3ds")]
+        {
+            RP_CONFIG_SAVED = *config_consts::RP_CONFIG;
+        }
+
         set_core_count_in_use(RP_CONFIG.core_count().load(Ordering::Acquire));
         #[cfg(not(feature = "o3ds"))]
         let core_count = core_count_in_use();

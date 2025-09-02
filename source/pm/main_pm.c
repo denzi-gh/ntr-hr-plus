@@ -358,8 +358,10 @@ static int pmInjectToGame(Handle hGameProcess) {
 		return ret;
 	}
 
-	nsDbgPrint("Game pid :%"PRIx32"\n", pid);
-	rpSetGamePid(pid);
+	if (ntrConfig->isNew3DS) {
+		nsDbgPrint("Game pid :%"PRIx32"\n", pid);
+		rpSetGamePid(pid);
+	}
 
 	plgLoader->gamePluginPid = pid;
 	ret = pmSaveToMenu(&plgLoader->gamePluginPid, sizeof(plgLoader->gamePluginPid));

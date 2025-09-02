@@ -609,7 +609,7 @@ void plgInitScreenOverlay(u32 *stack) {
 
 	nsDbgPrint("Overlay addr: %"PRIx32"; fp: %"PRIx32"; fp2: %"PRIx32"\n", addr, fp, fp2);
 
-	if (plgLoaderEx->remotePlayBoost && plgCreateOverlayThread(fp || fp2, stack) != 0) {
+	if (ntrConfig->isNew3DS && plgLoaderEx->remotePlayBoost && plgCreateOverlayThread(fp || fp2, stack) != 0) {
 		nsDbgPrint("Overlay thread create failed\n");
 		// return;
 	}
@@ -629,7 +629,8 @@ void plgInitScreenOverlayDirectly(u32 funcAddr) {
 	if (rtCheckMemory(0x1F000000, 0x00600000, MEMPERM_READWRITE) == 0)
 		plgHasVRAMAccess = 1;
 
-	plgCreateOverlayThread(1, NULL);
+	if (ntrConfig->isNew3DS)
+		plgCreateOverlayThread(1, NULL);
 	rtInitHook(&SetBufferSwapHook, funcAddr, (u32)plgSetBufferSwapCallback);
 	rtEnableHook(&SetBufferSwapHook);
 }

@@ -1105,10 +1105,10 @@ pub fn nwm_info(work_index: WorkIndex) -> &'static mut NwmWorkInfo {
     unsafe { NWM_INFOS.get_mut(&work_index) }
 }
 
-const RP_CB_HDR_SIZE: usize =
-    (NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + mem::size_of::<usize>() - 1)
-        / mem::size_of::<usize>()
-        * mem::size_of::<usize>();
+const RP_CB_HDR_SIZE: usize = jpeg::jround_up(
+    NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize,
+    mem::size_of::<usize>(),
+);
 
 #[cfg(feature = "o3ds")]
 pub unsafe fn nwm_info() -> *mut u8 {
@@ -1120,8 +1120,8 @@ struct DataHdr([u8; DATA_HDR_SIZE as usize]);
 static mut DATA_BUF_HDRS: RangedArray<DataHdr, WORK_COUNT> = const_default();
 
 impl DataHdr {
-    fn init(frame_id: u8, is_top: bool) -> Self {
-        Self([frame_id, is_top as u8, 2, 0])
+    fn init(frame_id: u8, is_top: bool, downsample: u8) -> Self {
+        Self([frame_id, is_top as u8, 2 | downsample << 2, 0])
     }
 }
 
@@ -1142,7 +1142,7 @@ fn nwm_done_release(w: &mut WorkIndex) {
 
 #[named]
 #[cfg(not(feature = "o3ds"))]
-pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool) -> bool {
+pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool, downsample: u8) -> bool {
     unsafe {
         if wait_syn(
             cname!(),
@@ -1168,17 +1168,17 @@ pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool) -> bool
         }
 
         let hdr = DATA_BUF_HDRS.get_mut(&w);
-        *hdr = DataHdr::init(frame_id, is_top);
+        *hdr = DataHdr::init(frame_id, is_top, downsample);
 
         true
     }
 }
 
 #[cfg(feature = "o3ds")]
-pub unsafe fn nwm_start_frame(frame_id: u8, is_top: bool) {
+pub unsafe fn nwm_start_frame(frame_id: u8, is_top: bool, downsample: u8) {
     unsafe {
         let hdr = DATA_BUF_HDRS.get_mut(&WorkIndex::init(0));
-        *hdr = DataHdr::init(frame_id, is_top);
+        *hdr = DataHdr::init(frame_id, is_top, downsample);
     }
 }
 
@@ -1305,7 +1305,7 @@ pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
         size -= dst.free_in_bytes as usize;
     }
 
-    let data_buf = dst.dst;
+    let data_buf = unsafe { dst.dst.sub(size) };
     let packet_buf = unsafe { data_buf.sub(DATA_HDR_SIZE as usize) };
     let data_buf_hdr = unsafe { DATA_BUF_HDRS.get_mut(&WorkIndex::init(0)) };
     unsafe {

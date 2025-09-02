@@ -458,6 +458,7 @@ impl Screen<'_> {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub fn wait_for_vblank(is_top: bool) {
     unsafe {
         gspWaitForEvent(

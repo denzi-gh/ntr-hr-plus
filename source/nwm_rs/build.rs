@@ -13,6 +13,7 @@ use std::process::{Command, Output, Stdio};
 struct Callback {
     names: HashSet<String>,
     union_names: HashSet<String>,
+    eq_names: HashSet<String>,
 }
 
 impl Callback {
@@ -23,7 +24,16 @@ impl Callback {
         let mut union_names = HashSet::<String>::new();
         union_names.insert("nwm_cb".into());
 
-        Self { names, union_names }
+        let mut eq_names = HashSet::<String>::new();
+        eq_names.insert("nwm_cb".into());
+        eq_names.insert("RP_CONFIG".into());
+        eq_names.insert("RP_SCREEN_CONFIG".into());
+
+        Self {
+            names,
+            union_names,
+            eq_names,
+        }
     }
 }
 
@@ -31,6 +41,8 @@ impl ParseCallbacks for Callback {
     fn add_derives(&self, info: &bindgen::callbacks::DeriveInfo<'_>) -> Vec<String> {
         if self.names.contains(info.name) || self.union_names.contains(info.name) {
             vec!["ConstDefault".into()]
+        } else if self.eq_names.contains(info.name) {
+            vec!["ConstDefault".into(), "PartialEq".into()]
         } else {
             vec![]
         }
