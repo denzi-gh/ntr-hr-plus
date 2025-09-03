@@ -24,6 +24,7 @@ void __system_initSyscalls(void);
 Result __sync_init(void);
 void mainThread(void *) {
 	__system_initSyscalls();
+	int success = false;
 	s32 ret;
 	ret = __sync_init();
 	if (ret != 0) {
@@ -44,12 +45,7 @@ void mainThread(void *) {
 	}
 
 	ret = nsStartup();
-	if (ret != 0) {
-		disp(100, DBG_CL_USE_DBG_FAIL);
-	} else {
-		disp(100, DBG_CL_USE_DBG);
-	}
-	disp(100, DBG_CL_INFO);
+	success = true;
 
 final:
 	if (nwmReadyEvent) {
@@ -57,6 +53,15 @@ final:
 		if (ret != 0) {
 			showDbg("nwm payload init sync error: %08"PRIx32"\n", ret);
 		}
+	}
+
+	if (success) {
+		if (ret != 0) {
+			disp(100, DBG_CL_USE_DBG_FAIL);
+		} else {
+			disp(100, DBG_CL_USE_DBG);
+		}
+		disp(100, DBG_CL_INFO);
 	}
 
 	svcExitThread();
