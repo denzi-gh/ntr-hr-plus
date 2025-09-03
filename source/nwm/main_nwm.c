@@ -31,12 +31,15 @@ void mainThread(void *) {
 		nsDbgPrint("sync init failed: %08"PRIx32"\n", ret);
 		goto final;
 	}
-	fake_heap_start = (void *)plgRequestMemory(NWM_HEAP_SIZE);
-	if (!fake_heap_start) {
-		goto final;
+
+	if (ntrConfig->isNew3DS) {
+		fake_heap_start = (void *)plgRequestMemory(NWM_HEAP_SIZE);
+		if (!fake_heap_start) {
+			goto final;
+		}
+		fake_heap_end = fake_heap_start + NWM_HEAP_SIZE;
+		mappableInit(OS_MAP_AREA_BEGIN, OS_MAP_AREA_END);
 	}
-	fake_heap_end = fake_heap_start + NWM_HEAP_SIZE;
-	mappableInit(OS_MAP_AREA_BEGIN, OS_MAP_AREA_END);
 
 	ret = srvInit();
 	if (ret != 0) {
