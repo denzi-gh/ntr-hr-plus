@@ -1037,7 +1037,7 @@ void mainThread(void *) {
 		goto final;
 	}
 
-	if (ntrConfig->isNew3DS)
+	if (1 || ntrConfig->isNew3DS)
 		createSvcHandleThread();
 
 	plgInitScreenOverlayDirectly(*oldPC);
