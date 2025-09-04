@@ -1112,19 +1112,24 @@ int rpStartupFromMenu(RP_CONFIG *config) {
 	cfg.ntrConfig = *ntrConfig;
 	cfg.ntrConfig.ex.nsUseDbg |= nsDbgNext();
 
-	ret = nsAttachProcess(hProcess, remotePC, &cfg, 1);
+	ret = nsAttachProcess(hProcess, remotePC, &cfg, 1, 1);
 
 final:
-	if (hProcess)
-		svcCloseHandle(hProcess);
-
 	if (ret != 0) {
 		showDbg("Starting remote play failed: %08"PRIx32". Retry maybe...", ret);
 		ACR(&rpStarted);
-	} else if (ntrConfig->isNew3DS) {
-		nsDbgPrint("Locking CPU clock to 804 MHz and L2 cache to enabled...\n");
-		setCpuClockLock(3, 1);
+	} else {
+		clearPayloadBin();
+		nsContinueProcess(hProcess);
+
+		if (ntrConfig->isNew3DS) {
+			nsDbgPrint("Locking CPU clock to 804 MHz and L2 cache to enabled...\n");
+			setCpuClockLock(3, 1);
+		}
 	}
+
+	if (hProcess)
+		svcCloseHandle(hProcess);
 	return ret;
 }
 

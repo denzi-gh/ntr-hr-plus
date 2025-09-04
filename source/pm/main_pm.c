@@ -119,7 +119,7 @@ static void plgLoadPluginFromFile(const char *path, const u16 *name) {
 		goto fail_file;
 	}
 
-	s32 ret = plgEnsurePoolSize(plgLoaderEx->memSizeTotal + fileSize);
+	s32 ret = plgEnsurePoolSize(plgLoaderEx->memSizeTotal + fileSize, 0);
 	if (ret != 0) {
 		goto fail_file;
 	}
@@ -400,7 +400,7 @@ static int pmInjectToGame(Handle hGameProcess) {
 			}
 		}
 
-		ret = nsAttachProcess(hGameProcess, PROC_START_ADDR, &cfg, 0);
+		ret = nsAttachProcess(hGameProcess, PROC_START_ADDR, &cfg, 0, 0);
 		if (ret != 0) {
 			nsDbgPrint("Attach game process failed: %08"PRIx32"\n", ret);
 			goto error_alloc;
@@ -423,15 +423,13 @@ static u32 svcRunCallback(Handle hProcess, u32 *startInfo) {
 }
 
 static Handle pmReadyEvent;
+static int pmSuccess;
 
 void mainPre(void) {
 	if (svcCreateEvent(&pmReadyEvent, RESET_ONESHOT) != 0) {
 		pmReadyEvent = 0;
 		disp(100, DBG_CL_MSG);
 	}
-	rtInitHook(&svcRunHook, ntrConfig->PMSvcRunAddr, (u32)svcRunCallback);
-	rtEnableHook(&svcRunHook);
-	nsDbgPrint("pm svcRun hook installed at %08"PRIx32"\n", ntrConfig->PMSvcRunAddr);
 }
 
 void mainPost(void) {
@@ -441,6 +439,12 @@ void mainPost(void) {
 		}
 		svcCloseHandle(pmReadyEvent);
 		pmReadyEvent = 0;
+
+		if (pmSuccess) {
+			rtInitHook(&svcRunHook, ntrConfig->PMSvcRunAddr, (u32)svcRunCallback);
+			rtEnableHook(&svcRunHook);
+			nsDbgPrint("pm svcRun hook installed at %08"PRIx32"\n", ntrConfig->PMSvcRunAddr);
+		}
 	}
 }
 
@@ -498,6 +502,7 @@ void mainThread(void *) {
 		}
 	}
 
+	pmSuccess = true;
 	goto final;
 
 fs_fail:
@@ -516,12 +521,8 @@ final:
 	svcExitThread();
 }
 
-u32 payloadBinAlloc(u32 size) {
+u32 payloadBinEnsure(u32 size) {
 	return plgRequestMemory(size);
-}
-
-int payloadBinFree(u32, u32) {
-	return -1;
 }
 
 int setUpReturn(void) {

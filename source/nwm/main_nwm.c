@@ -102,7 +102,7 @@ static Result nwmSrvReceiveNotification(u32 *notificationIdOut) {
 	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
 
 	rc = svcSendSyncRequest(*nwmSrvHandle);
-	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
+	rc = R_SUCCEEDED(rc) ? (Result)cmdbuf[1] : rc;
 	if (notificationIdOut)
 		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
 

@@ -160,7 +160,7 @@ int __attribute__((weak)) nsCheckPCSafeToWrite(u32, u32) {
 	return 0;
 }
 
-u32 nsAttachProcess(Handle hProcess, u32 remotePC, NS_CONFIG *cfg, int thumbR3) {
+u32 nsAttachProcess(Handle hProcess, u32 remotePC, NS_CONFIG *cfg, int thumbR3, int paused) {
 	u32 size = 0;
 	u32* buf = 0;
 	u32 baseAddr = NS_CONFIG_ADDR;
@@ -259,10 +259,12 @@ lock_failed:
 		failed = 1;
 
 lock_final:
-		ret = svcControlProcess(hProcess, PROCESSOP_SCHEDULE_THREADS, 0, 0);
-		if (ret != 0) {
-			showDbg("unlocking remote process failed: %08"PRIx32"", ret);
-			goto final;
+		if (!paused || failed) {
+			ret = svcControlProcess(hProcess, PROCESSOP_SCHEDULE_THREADS, 0, 0);
+			if (ret != 0) {
+				showDbg("unlocking remote process failed: %08"PRIx32"", ret);
+				goto final;
+			}
 		}
 
 		if (failed) {
@@ -288,6 +290,10 @@ final:;
 		nsDbgPrint("mapRemoteMemory free failed: %08"PRIx32"\n", res);
 	}
 	return ret;
+}
+
+int nsContinueProcess(Handle hProcess) {
+	return svcControlProcess(hProcess, PROCESSOP_SCHEDULE_THREADS, 0, 0);
 }
 
 static int nsSendPacketHeader() {

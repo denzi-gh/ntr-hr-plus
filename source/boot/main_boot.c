@@ -65,7 +65,7 @@ static int injectToHomeMenu(void) {
 		disp(100, DBG_CL_USE_DBG);
 	}
 
-	ret = nsAttachProcess(hProcess, ntrCfg->HomeMenuInjectAddr, &cfg, 0);
+	ret = nsAttachProcess(hProcess, ntrCfg->HomeMenuInjectAddr, &cfg, 0, 0);
 
 	svcCloseHandle(hProcess);
 

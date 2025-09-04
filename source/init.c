@@ -73,7 +73,7 @@ int setUpReturn2(void) {
 }
 
 int plgLoaderInfoAlloc(void) {
-	s32 ret = plgEnsurePoolSize(sizeof(PLGLOADER_INFO));
+	s32 ret = plgEnsurePoolSize(sizeof(PLGLOADER_INFO), 0);
 	if (ret != 0) {
 		showDbg("plgLoader alloc failed.");
 	}
@@ -98,7 +98,7 @@ fail:
 
 static u32 plgPoolEnd;
 
-int plgEnsurePoolSize(u32 size) {
+int plgEnsurePoolSize(u32 size, bool free) {
 	if (!plgPoolEnd) {
 		plgPoolEnd = PLG_POOL_ADDR;
 	}
@@ -112,11 +112,17 @@ int plgEnsurePoolSize(u32 size) {
 	u32 ret, outAddr = 0, addr;
 	addr = plgPoolEnd;
 	size = end - plgPoolEnd;
+	u32 op = free ? MEMOP_FREE : MEMOP_ALLOC;
 	if (ntrConfig->memMode)
-		ret = svcControlMemoryEx(&outAddr, addr, addr, size, MEMOP_ALLOC | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
+		ret = svcControlMemoryEx(&outAddr, addr, addr, size, op | NTR_LOADER_REGION, MEMPERM_READWRITE, true);
 	else
-		ret = svcControlMemory(&outAddr, addr, addr, size, MEMOP_ALLOC, MEMPERM_READWRITE);
-	if (ret != 0 || outAddr != addr) {
+		ret = svcControlMemory(&outAddr, addr, addr, size, op, MEMPERM_READWRITE);
+	if (free) {
+		if (ret != 0) {
+			showDbg("Failed to free memory from pool at addr %08"PRIx32": %08"PRIx32"\n", addr, ret);
+			return -1;
+		}
+	} else if (ret != 0 || outAddr != addr) {
 		showDbg("Failed to extend memory from pool at addr %08"PRIx32": %08"PRIx32"\n", addr, ret);
 		return -1;
 	}
@@ -190,15 +196,22 @@ u32 plgRequestMemory(u32 size) {
 u32 arm11BinStart;
 u32 arm11BinSize;
 
-u32 __attribute__((weak)) payloadBinAlloc(u32 size) {
+static u32 payloadBinMax;
+
+u32 __attribute__((weak)) payloadBinEnsure(u32 size) {
 	u32 offset = rtAlignToPageSize(sizeof(PLGLOADER_INFO));
-	if (plgEnsurePoolSize(offset + size) == 0)
+	if (plgEnsurePoolSize(offset + size, 0) == 0) {
+		payloadBinMax = MAX(payloadBinMax, rtAlignToPageSize(size));
 		return PLG_POOL_ADDR + offset;
+	}
 	return 0;
 }
 
-int __attribute__((weak)) payloadBinFree(u32, u32) {
-	return -1;
+static int payloadBinClear(void) {
+	u32 offset = rtAlignToPageSize(sizeof(PLGLOADER_INFO));
+	int ret = plgEnsurePoolSize(offset + payloadBinMax, 1);
+	payloadBinMax = 0;
+	return ret;
 }
 
 int loadPayloadBin(char *name) {
@@ -225,7 +238,7 @@ int loadPayloadBin(char *name) {
 	}
 
 	u32 addr;
-		addr = payloadBinAlloc(fileSize);
+		addr = payloadBinEnsure(fileSize);
 	if (addr == 0) {
 		showDbg("Failed to allocate memory for payload.");
 		goto file_final;
@@ -234,7 +247,6 @@ int loadPayloadBin(char *name) {
 	u32 bytesRead = rtLoadFileToBuffer(file, (u32 *)addr, fileSize);
 	if (bytesRead != fileSize) {
 		showDbg("Failed to read payload.");
-		payloadBinFree(addr, fileSize);
 		goto file_final;
 	}
 
@@ -254,10 +266,14 @@ final:
 
 void unloadPayloadBin(void) {
 	if (arm11BinStart) {
-		payloadBinFree(arm11BinStart, arm11BinSize);
 		arm11BinStart = 0;
 		arm11BinSize = 0;
 	}
+}
+
+void clearPayloadBin(void) {
+	unloadPayloadBin();
+	payloadBinClear();
 }
 
 void rpSetGamePid(u32 gamePid) {

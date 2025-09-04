@@ -23,8 +23,9 @@ extern u32 arm11BinStart;
 extern u32 arm11BinSize;
 int loadPayloadBin(char *name);
 void unloadPayloadBin(void);
+void clearPayloadBin(void);
 
-int plgEnsurePoolSize(u32 size);
+int plgEnsurePoolSize(u32 size, bool free);
 u32 plgRequestMemory(u32 size);
 u32 plgRequestMemoryFromPool(u32 size, int pool);
 u32 plgGetMemoryUsage(void);

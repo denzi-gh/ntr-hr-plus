@@ -92,7 +92,7 @@ static int injectPM(void) {
 	NS_CONFIG cfg = { 0 };
 	cfg.ntrConfig = *ntrConfig;
 
-	ret = nsAttachProcess(hProcess, remotePC, &cfg, 0);
+	ret = nsAttachProcess(hProcess, remotePC, &cfg, 0, 0);
 	svcCloseHandle(hProcess);
 	return ret;
 }
@@ -771,7 +771,7 @@ static Result menuSrvReceiveNotification(u32 *notificationIdOut) {
 	cmdbuf[0] = IPC_MakeHeader(0xB, 0, 0); // 0xB0000
 
 	rc = svcSendSyncRequest(*menuSrvHandle);
-	rc = R_SUCCEEDED(rc) ? cmdbuf[1] : rc;
+	rc = R_SUCCEEDED(rc) ? (Result)cmdbuf[1] : rc;
 	if (notificationIdOut)
 		*notificationIdOut = R_SUCCEEDED(rc) ? cmdbuf[2] : 0;
 
