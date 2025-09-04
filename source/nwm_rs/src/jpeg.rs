@@ -30,12 +30,14 @@ pub struct JpegDqRet {
     pub mcus: u16,
 }
 
+#[cfg(not(feature = "mem3"))]
 #[derive(ConstDefault)]
 pub struct McuRowParams {
     pub mcu_col_start: u16,
     pub mcu_col_end: u16,
 }
 
+#[cfg(not(feature = "mem3"))]
 #[derive(ConstDefault)]
 pub struct CheckerParams {
     pub mcus: u16,
@@ -55,9 +57,11 @@ pub struct JpegScreenShared {
     pub mcus_per_row: usize,
     pub mcu_rows: u16,
     pub mcus: u16,
+    #[cfg(not(feature = "mem3"))]
     pub downsample: u8,
     pub width: u16,
     pub height: u16,
+    #[cfg(not(feature = "mem3"))]
     pub checker: CheckerParams,
 
     quant_tbls: QuantTbls,

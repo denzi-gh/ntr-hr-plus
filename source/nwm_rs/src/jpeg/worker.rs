@@ -20,6 +20,7 @@ pub struct JpegWorker<'a> {
     pub shared_mut: JpegSharedMutCell,
     pub bufs: &'a mut WorkerBufs,
     pub info: &'a CInfo,
+    #[cfg(not(feature = "mem3"))]
     pub thread_index: ThreadIndex,
     pub huff_state: HuffState,
     pub last_dc_vals: LastDcVals,
@@ -52,6 +53,7 @@ impl<'a> JpegWorker<'a> {
 pub struct CInfo {
     pub is_top: bool,
     pub color_space: ColorSpace,
+    #[cfg(not(feature = "mem3"))]
     pub restart_interval: u16,
     pub work_index: WorkIndex,
     #[cfg(not(feature = "o3ds"))]
@@ -77,6 +79,7 @@ impl Jpeg {
             },
             bufs: thread_index.index_into_mut(&mut self.bufs),
             info: work_index.index_into_mut(&mut self.info),
+            #[cfg(not(feature = "mem3"))]
             thread_index,
             huff_state: const_default(),
             last_dc_vals: const_default(),

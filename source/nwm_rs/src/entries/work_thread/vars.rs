@@ -44,7 +44,7 @@ impl Impl {
 pub unsafe fn init(
     quality: [u32; RP_SCREEN_COUNT as usize],
     chroma_ss: [u32; RP_SCREEN_COUNT as usize],
-    downsample: [u32; RP_SCREEN_COUNT as usize],
+    #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
 ) {
     unsafe {
         LAST_ROW_LAST_N.store(0, Ordering::Release);
@@ -70,7 +70,10 @@ pub unsafe fn init(
         }
         JPEG_QUALITY = quality;
         JPEG_CHROMA_SS = chroma_ss;
-        JPEG_DOWNSAMPLE = downsample;
+        #[cfg(not(feature = "mem3"))]
+        {
+            JPEG_DOWNSAMPLE = downsample;
+        }
         JPEG_EVEN_ODD = const_default();
     }
 }
@@ -272,7 +275,10 @@ pub struct WorkFrame(WorkReady);
 impl WorkFrame {
     pub fn frame_release(self) -> Option<WorkAcquire> {
         let bctx = self.0.0.bctx();
+        #[cfg(not(feature = "mem3"))]
         let downsample = unsafe { *is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+        #[cfg(feature = "mem3")]
+        let downsample = RP_DOWNSAMPLE_NONE;
         #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_reliable_stream() == entries::thread_nwm::ReliableStream::None {
             if !unsafe {
@@ -383,8 +389,12 @@ impl WorkFrame {
         let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
         let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
+        #[cfg(not(feature = "mem3"))]
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
+        #[cfg(feature = "mem3")]
+        let downsample = RP_DOWNSAMPLE_NONE;
 
+        #[cfg(not(feature = "mem3"))]
         let (mcus_per_row, mcu_rows) = if downsample == RP_DOWNSAMPLE_CHECKER {
             (
                 jpeg_screen.checker.mcus_per_row as u32,
@@ -393,6 +403,8 @@ impl WorkFrame {
         } else {
             (jpeg_screen.mcus_per_row as u32, jpeg_screen.mcu_rows as u32)
         };
+        #[cfg(feature = "mem3")]
+        let mcu_rows = jpeg_screen.mcu_rows as u32;
 
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
@@ -467,6 +479,7 @@ impl WorkFrame {
         };
 
         let restart_in_rows = v_adjusted as s32;
+        #[cfg(not(feature = "mem3"))]
         let restart_interval = restart_in_rows as u32 * mcus_per_row;
 
         let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
@@ -479,6 +492,7 @@ impl WorkFrame {
                 3 => jpeg::ColorSpace::RGB5A1,
                 _ => jpeg::ColorSpace::RGB4,
             },
+            #[cfg(not(feature = "mem3"))]
             restart_interval: restart_interval as u16,
             work_index: w,
             #[cfg(not(feature = "o3ds"))]
@@ -914,7 +928,10 @@ impl WorkAcquire {
         let t = self.0.t;
 
         let src = bctx.src;
+        #[cfg(not(feature = "mem3"))]
         let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+        #[cfg(feature = "mem3")]
+        let downsample = RP_DOWNSAMPLE_NONE;
         let src_len = bctx.src_len() as usize;
         let src = if downsample == RP_DOWNSAMPLE_CHECKER {
             unsafe { slice::from_raw_parts(src, src_len) }
@@ -1111,5 +1128,6 @@ pub struct TermInfo {
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
 static mut JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
+#[cfg(not(feature = "mem3"))]
 static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();

@@ -123,6 +123,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
+        #[cfg(not(feature = "mem3"))]
         if screen.downsample == RP_DOWNSAMPLE_CHECKER {
             let mcu_total_start =
                 self.worker.info.restart_interval * self.worker.thread_index.get() as u16;
@@ -342,6 +343,54 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         );
                     }
                 }
+            }
+        }
+
+        #[cfg(feature = "mem3")]
+        if vss {
+            // vss == true
+            let src_chunks = src
+                .chunks_exact(pitch)
+                .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+            let n = src_chunks.len();
+            for (i, chunks) in src_chunks.enumerate() {
+                self.process(
+                    |this| {
+                        /* Pre-process */
+                        this.pre_process_full(chunks);
+                        if i == j_max_half_factor(n) {
+                            pre_progress();
+                        }
+                        true
+                    },
+                    || {
+                        progress();
+                    },
+                );
+            }
+        } else {
+            // vss == false
+            let pre_process = if hss {
+                Self::pre_process_full_novsamp::<true>
+            } else {
+                Self::pre_process_full_novsamp::<false>
+            };
+
+            let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
+            let n = src_chunks.len();
+            for (i, chunk) in src_chunks.enumerate() {
+                self.process(
+                    |this| {
+                        pre_process(this, chunk);
+                        if i == j_max_half_factor(n) {
+                            pre_progress();
+                        }
+                        true
+                    },
+                    || {
+                        progress();
+                    },
+                );
             }
         }
 

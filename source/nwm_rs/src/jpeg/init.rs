@@ -51,7 +51,7 @@ impl JpegShared {
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        downsample: [u32; RP_SCREEN_COUNT as usize],
+        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         #[cfg(not(feature = "o3ds"))]
         {
@@ -122,6 +122,7 @@ impl JpegShared {
         self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(
             hq,
+            #[cfg(not(feature = "mem3"))]
             downsample,
             #[cfg(not(feature = "o3ds"))]
             delta_prog,
@@ -167,7 +168,7 @@ impl JpegShared {
     fn set_comp_infos(
         &mut self,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        downsample: [u32; RP_SCREEN_COUNT as usize],
+        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
@@ -177,16 +178,24 @@ impl JpegShared {
             let screen = s.index_into_mut(&mut self.screens);
             let hq = *s.index_into(&hq) as u8;
 
-            screen.downsample = *s.index_into(&downsample) as u8;
+            #[cfg(not(feature = "mem3"))]
+            {
+                screen.downsample = *s.index_into(&downsample) as u8;
 
-            if screen.downsample == RP_DOWNSAMPLE_CHECKER {
-                screen.width = downsample_checker_screen_dim(is_top) as u16;
-                screen.height = screen.width;
-            } else {
-                screen.width = downsample_screen_width(screen.downsample) as u16;
-                screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+                if screen.downsample == RP_DOWNSAMPLE_CHECKER {
+                    screen.width = downsample_checker_screen_dim(is_top) as u16;
+                    screen.height = screen.width;
+                } else {
+                    screen.width = downsample_screen_width(screen.downsample) as u16;
+                    screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+                }
+                screen.checker = const_default();
             }
-            screen.checker = const_default();
+            #[cfg(feature = "mem3")]
+            {
+                screen.width = downsample_screen_width(RP_DOWNSAMPLE_NONE) as u16;
+                screen.height = downsample_screen_height(RP_DOWNSAMPLE_NONE, is_top) as u16;
+            }
 
             let comp_infos = if hq == RP_CHROMASS_444 {
                 &self.jpeg_tbls.comp_infos_444
@@ -217,6 +226,7 @@ impl JpegShared {
             screen.mcu_rows = jdiv_round_up(screen.height as usize, screen.mcu_col_size) as u16;
             screen.mcus = screen.mcus_per_row as u16 * screen.mcu_rows;
 
+            #[cfg(not(feature = "mem3"))]
             if screen.downsample == RP_DOWNSAMPLE_CHECKER {
                 let tl = GSP_SCREEN_WIDTH;
                 let br = if is_top {
@@ -335,7 +345,7 @@ impl Jpeg {
         quality: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        downsample: [u32; RP_SCREEN_COUNT as usize],
+        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> Option<()> {
@@ -348,6 +358,7 @@ impl Jpeg {
             #[cfg(not(feature = "o3ds"))]
             core_count,
             hq,
+            #[cfg(not(feature = "mem3"))]
             downsample,
         );
         #[cfg(feature = "o3ds")]

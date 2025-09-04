@@ -8,7 +8,7 @@ pub unsafe fn forward_dct(
     #[cfg(not(feature = "o3ds"))] update_prev: bool,
     #[cfg(not(feature = "o3ds"))] rescale_prev: bool,
     #[cfg(not(feature = "o3ds"))] rescale_prev_shr: bool,
-    downsample: u8,
+    #[cfg(not(feature = "mem3"))] downsample: u8,
     input: &WorkerPrepBufDownsample,
     ci: CompIndex,
     h_samp: bool,
@@ -30,6 +30,7 @@ pub unsafe fn forward_dct(
         };
 
     unsafe {
+        #[cfg(not(feature = "mem3"))]
         match downsample {
             RP_DOWNSAMPLE_QUARTER => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_QUARTER),
@@ -56,6 +57,15 @@ pub unsafe fn forward_dct(
                 output,
             ),
         }
+        #[cfg(feature = "mem3")]
+        convsamp(
+            downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            samp,
+            input.full.get(ci, h_samp, v_samp).as_ptr(),
+            ypos,
+            xpos,
+            output,
+        );
 
         do_forward_dct(
             #[cfg(not(feature = "o3ds"))]

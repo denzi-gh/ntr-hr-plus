@@ -724,6 +724,7 @@ pub const fn downsample_screen_height(downsample: u8, is_top: bool) -> usize {
     }
 }
 
+#[cfg(not(feature = "mem3"))]
 pub const fn downsample_checker_screen_dim(is_top: bool) -> usize {
     let height = if is_top {
         GSP_SCREEN_HEIGHT_TOP as usize
@@ -735,6 +736,7 @@ pub const fn downsample_checker_screen_dim(is_top: bool) -> usize {
 
 pub union WorkerColorBufDownsample {
     pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
+    #[cfg(not(feature = "mem3"))]
     pub even_odd: [u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR],
 }
 
@@ -828,6 +830,7 @@ impl<const SIZE: usize> WorkerBufComps<SIZE> {
 
 pub type CompIndex = Ranged<{ MAX_COMPONENTS as u32 }>;
 
+#[cfg(not(feature = "mem3"))]
 #[derive(Clone, Copy)]
 pub struct WorkerPrepBufDownsampleQuarter {
     pub buf:
@@ -839,7 +842,9 @@ pub struct WorkerPrepBufDownsampleQuarter {
 pub union WorkerPrepBufDownsample {
     pub full:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_NONE)) }>,
+    #[cfg(not(feature = "mem3"))]
     pub quarter: WorkerPrepBufDownsampleQuarter,
+    #[cfg(not(feature = "mem3"))]
     pub even_odd:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)) }>,
 }

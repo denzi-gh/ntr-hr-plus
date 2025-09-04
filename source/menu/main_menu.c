@@ -394,6 +394,11 @@ static void pluginLoaderConfigPropagate(void) {
 }
 
 static int pluginLoaderMenu(void) {
+	if (ntrConfig->memMode) {
+		showMsg("Plugin loader is not available\non extended memory games.\nTry regular (non-HR) NTR 3.6\nversion if needed.");
+		return 0;
+	}
+
 	const char *enablePlugins = plgTranslate("Game Plugin Loader (Disabled)");
 	const char *disablePlugins = plgTranslate("Game Plugin Loader (Enabled)");
 	const char *enableCTRPFCompatText = plgTranslate("CTRPF Compat Mode (Disabled)");
@@ -1003,26 +1008,30 @@ void mainThread(void *) {
 	} else {
 		fsUseSession(fsUserHandle);
 	}
-	ret = loadPayloadBin(NTR_BIN_PM);
-	if (ret != 0) {
-		showDbg("Loading pm payload failed.");
-		goto final;
+
+	if (!ntrConfig->memMode) {
+		ret = loadPayloadBin(NTR_BIN_PM);
+		if (ret != 0) {
+			showDbg("Loading pm payload failed.");
+			goto final;
+		}
+
+		rtInitHook(&HomeFSReadHook, ntrConfig->HomeFSReadAddr, (u32)HomeFSReadCallback);
+		rtEnableHook(&HomeFSReadHook);
+		rtInitHook(&HomeCardUpdateInitHook, ntrConfig->HomeCardUpdateInitAddr, (u32)HomeCardUpdateInitCallback);
+		rtEnableHook(&HomeCardUpdateInitHook);
+
+		ret = injectToPM();
+		unloadPayloadBin();
+		if (ret != 0)
+			goto final;
 	}
-
-	rtInitHook(&HomeFSReadHook, ntrConfig->HomeFSReadAddr, (u32)HomeFSReadCallback);
-	rtEnableHook(&HomeFSReadHook);
-	rtInitHook(&HomeCardUpdateInitHook, ntrConfig->HomeCardUpdateInitAddr, (u32)HomeCardUpdateInitCallback);
-	rtEnableHook(&HomeCardUpdateInitHook);
-
-	ret = injectToPM();
-	unloadPayloadBin();
-
-	if (ret != 0)
-		goto final;
 
 	if (ntrConfig->isNew3DS) {
 		ret = loadPayloadBin(NTR_BIN_NWM);
-	} else  {
+	} else if (ntrConfig->memMode) {
+		ret = loadPayloadBin(NTR_BIN_NWM_MEM3);
+	} else {
 		ret = loadPayloadBin(NTR_BIN_NWM_O3DS);
 	}
 	if (ret != 0) {

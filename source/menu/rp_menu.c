@@ -307,6 +307,9 @@ static const char *getDownsampleName(int i) {
 }
 
 static const char *getDownsampleDesc(int i) {
+	if (ntrConfig->memMode) {
+		return "Downsample is not available on\nextended memory games.";
+	}
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:

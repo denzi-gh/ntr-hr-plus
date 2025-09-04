@@ -21,3 +21,4 @@ bindgen = "0.72.0"
 
 [features]
 o3ds = []
+mem3 = ["o3ds"]

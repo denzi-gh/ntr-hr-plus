@@ -76,6 +76,7 @@ NTR_BIN_MENU := ntr.hr.menu.bin
 NTR_BIN_PM := ntr.hr.pm.bin
 NTR_BIN_NWM := ntr.hr.nwm.bin
 NTR_BIN_NWM_O3DS := ntr.hr.nwm.o3ds.bin
+NTR_BIN_NWM_MEM3 := ntr.hr.nwm.mem3.bin
 NTR_BIN_GAME := ntr.hr.game.bin
 
 LIB_RS_DIR := target/armv6k-nintendo-3ds/release
@@ -84,7 +85,10 @@ LIB_NWM_RS := $(LIB_RS_DIR)/libnwm_rs.a
 LIB_RS_DIR_O3DS := target-o3ds/armv6k-nintendo-3ds/release
 LIB_NWM_RS_O3DS := $(LIB_RS_DIR_O3DS)/libnwm_rs.a
 
-PAYLOAD_BIN := $(NTR_BIN_BOOT) $(NTR_BIN_MENU) $(NTR_BIN_PM) $(NTR_BIN_NWM) $(NTR_BIN_NWM_O3DS) $(NTR_BIN_GAME)
+LIB_RS_DIR_MEM3 := target-mem3/armv6k-nintendo-3ds/release
+LIB_NWM_RS_MEM3 := $(LIB_RS_DIR_MEM3)/libnwm_rs.a
+
+PAYLOAD_BIN := $(NTR_BIN_BOOT) $(NTR_BIN_MENU) $(NTR_BIN_PM) $(NTR_BIN_NWM) $(NTR_BIN_NWM_O3DS) $(NTR_BIN_NWM_MEM3) $(NTR_BIN_GAME)
 PAYLOAD_TARGET_DIR := ../BootNTR-Bins/romfs
 PAYLOAD_TARGET_BIN := $(addprefix $(PAYLOAD_TARGET_DIR)/,$(PAYLOAD_BIN))
 
@@ -97,7 +101,7 @@ install: $(PAYLOAD_TARGET_BIN)
 
 .NOTPARALLEL: rs
 
-rs: $(LIB_NWM_RS) $(LIB_NWM_RS_O3DS)
+rs: $(LIB_NWM_RS) $(LIB_NWM_RS_O3DS) $(LIB_NWM_RS_MEM3)
 
 CP_CMD = @echo \* $(notdir $@) \*; $(CP) $< $@
 
@@ -128,6 +132,9 @@ bin/$(NTR_BIN_NWM:.bin=.elf): $(OBJ) $(OBJ_NWM) $(OBJ_NWM_MISC) libctru_ntr.a 3d
 bin/$(NTR_BIN_NWM_O3DS:.bin=.elf): $(OBJ) $(OBJ_NWM_O3DS) libctru_ntr.a 3dst.ld $(LIB_NWM_RS_O3DS) | bin
 	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM_O3DS) $(LDLIBS) -L$(LIB_RS_DIR_O3DS) -lnwm_rs -lm
 
+bin/$(NTR_BIN_NWM_MEM3:.bin=.elf): $(OBJ) $(OBJ_NWM_O3DS) libctru_ntr.a 3dst.ld $(LIB_NWM_RS_MEM3) | bin
+	$(CC) -flto=auto $(CFLAGS) -o $@ -T 3dst.ld $(LDFLAGS) $(OBJ) $(OBJ_NWM_O3DS) $(LDLIBS) -L$(LIB_RS_DIR_MEM3) -lnwm_rs -lm
+
 bin:
 	mkdir $@
 
@@ -136,6 +143,9 @@ $(LIB_NWM_RS): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -t
 
 $(LIB_NWM_RS_O3DS): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -type f)
 	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --target-dir $(shell realpath target-o3ds) --features o3ds --release
+
+$(LIB_NWM_RS_MEM3): $(shell find source/nwm_rs -type f) $(shell find . -name '*.h' -type f)
+	$(RSFLAGS) cargo -Z unstable-options -C source/nwm_rs build --target-dir $(shell realpath target-mem3) --features mem3,o3ds --release
 
 libctru_ntr.a: $(CTRU_DIR)/lib/libctru.a
 	$(CP_CMD)
@@ -159,7 +169,7 @@ obj/%.o: source/boot/%.c | obj
 	$(CC_CMD)
 
 obj/%.o: source/menu/%.c | obj
-	$(CC_CMD) -DNTR_BIN_PM=\"$(NTR_BIN_PM)\" -DNTR_BIN_NWM=\"$(NTR_BIN_NWM)\" -DNTR_BIN_NWM_O3DS=\"$(NTR_BIN_NWM_O3DS)\"
+	$(CC_CMD) -DNTR_BIN_PM=\"$(NTR_BIN_PM)\" -DNTR_BIN_NWM=\"$(NTR_BIN_NWM)\" -DNTR_BIN_NWM_O3DS=\"$(NTR_BIN_NWM_O3DS)\" -DNTR_BIN_NWM_MEM3=\"$(NTR_BIN_NWM_MEM3)\"
 
 obj/%.o: source/pm/%.c | obj
 	$(CC_CMD) -DNTR_BIN_GAME=\"$(NTR_BIN_GAME)\"
@@ -193,4 +203,5 @@ clean:
 	-rm *.map bin/* release/* obj/* libctru_ntr.a
 	-rm target/ -rf
 	-rm target-o3ds/ -rf
+	-rm target-mem3/ -rf
 	$(MAKE) -C $(CTRU_DIR) clean

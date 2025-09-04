@@ -4,6 +4,7 @@
 use super::*;
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
+    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -18,6 +19,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
         &mut self,
         input: &[&[u8]; DOWNSAMPLE_FACTOR],
@@ -40,6 +42,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -77,9 +80,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let color = ci.index_into_mut(&mut self.worker.bufs.color);
             if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
                 unsafe {
+                    #[cfg(not(feature = "mem3"))]
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => color.ptr = color.buf.even_odd.as_mut_ptr(),
                         _ => color.ptr = color.buf.full.as_mut_ptr(),
+                    }
+                    #[cfg(feature = "mem3")]
+                    {
+                        color.ptr = color.buf.full.as_mut_ptr();
                     }
                 }
             } else {
@@ -88,6 +96,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let out_width = width / step;
                 let output_base = output_base * out_width;
                 let output = unsafe {
+                    #[cfg(not(feature = "mem3"))]
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => self
                             .worker
@@ -106,6 +115,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .as_mut_ptr()
                             .add(output_base),
                     }
+                    #[cfg(feature = "mem3")]
+                    self.worker
+                        .bufs
+                        .prep
+                        .full
+                        .get_mut(ci, H_SAMP, V_SAMP)
+                        .as_mut_ptr()
+                        .add(output_base)
                 };
                 color.ptr = output;
             }
