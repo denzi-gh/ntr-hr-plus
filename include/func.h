@@ -34,6 +34,6 @@
 #define getKeys() ((REG(IoBasePad) & 0xFFF) ^ 0xFFF)
 #define canUseUI() (ALC(&hasDirectScreenAccess))
 
-void memcpy_ctr(void* dst, void* src, size_t size);
+void memcpy_ctr(void *dst, const void *src, size_t size);
 
 #endif

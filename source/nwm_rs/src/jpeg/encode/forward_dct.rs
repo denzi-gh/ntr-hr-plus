@@ -57,11 +57,12 @@ pub unsafe fn forward_dct(
                 output,
             ),
         }
+        // RP_DOWNSAMPLE_EVEN_ODD
         #[cfg(feature = "mem3")]
         convsamp(
-            downsample_screen_width(RP_DOWNSAMPLE_NONE),
+            downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD),
             samp,
-            input.full.get(ci, h_samp, v_samp).as_ptr(),
+            input.even_odd.get(ci, h_samp, v_samp).as_ptr(),
             ypos,
             xpos,
             output,

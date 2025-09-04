@@ -268,6 +268,7 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
                 .chroma_ss(ScreenIndex::init(RP_SCREEN_BOT as u32))
                 .load(Ordering::Acquire),
         ];
+        #[cfg(not(feature = "mem3"))]
         let downsample = [
             RP_CONFIG
                 .downsample(ScreenIndex::init(RP_SCREEN_TOP as u32))
@@ -276,9 +277,15 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
                 .downsample(ScreenIndex::init(RP_SCREEN_BOT as u32))
                 .load(Ordering::Acquire),
         ];
+        #[cfg(not(feature = "mem3"))]
         let quality = [
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
+        ];
+        #[cfg(feature = "mem3")]
+        let quality = [
+            jpeg::downsample_quality_scale(RP_DOWNSAMPLE_EVEN_ODD, quality),
+            jpeg::downsample_quality_scale(RP_DOWNSAMPLE_EVEN_ODD, quality),
         ];
         #[cfg(not(feature = "o3ds"))]
         jpeg.init(

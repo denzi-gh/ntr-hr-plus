@@ -346,6 +346,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
 
+        // RP_DOWNSAMPLE_EVEN_ODD
         #[cfg(feature = "mem3")]
         if vss {
             // vss == true
@@ -357,7 +358,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 self.process(
                     |this| {
                         /* Pre-process */
-                        this.pre_process_full(chunks);
+                        this.pre_process_even_odd(chunks);
                         if i == j_max_half_factor(n) {
                             pre_progress();
                         }
@@ -371,9 +372,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         } else {
             // vss == false
             let pre_process = if hss {
-                Self::pre_process_full_novsamp::<true>
+                Self::pre_process_even_odd_novsamp::<true>
             } else {
-                Self::pre_process_full_novsamp::<false>
+                Self::pre_process_even_odd_novsamp::<false>
             };
 
             let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();

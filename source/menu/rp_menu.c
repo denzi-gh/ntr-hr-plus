@@ -293,6 +293,9 @@ static const char *getChromaSSDesc(int i) {
 }
 
 static const char *getDownsampleName(int i) {
+	if (ntrConfig->memMode) {
+		return "Even/Odd";
+	}
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:

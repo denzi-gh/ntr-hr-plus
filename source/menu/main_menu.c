@@ -395,7 +395,7 @@ static void pluginLoaderConfigPropagate(void) {
 
 static int pluginLoaderMenu(void) {
 	if (ntrConfig->memMode) {
-		showMsg("Plugin loader is not available\non extended memory games.\nTry regular (non-HR) NTR 3.6\nversion if needed.");
+		showMsg("Plugin loader is not available\nfor extended memory games.\nTry regular (non-HR) NTR 3.6\nversion if needed.");
 		return 0;
 	}
 

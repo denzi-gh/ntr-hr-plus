@@ -193,8 +193,8 @@ impl JpegShared {
             }
             #[cfg(feature = "mem3")]
             {
-                screen.width = downsample_screen_width(RP_DOWNSAMPLE_NONE) as u16;
-                screen.height = downsample_screen_height(RP_DOWNSAMPLE_NONE, is_top) as u16;
+                screen.width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) as u16;
+                screen.height = downsample_screen_height(RP_DOWNSAMPLE_EVEN_ODD, is_top) as u16;
             }
 
             let comp_infos = if hq == RP_CHROMASS_444 {

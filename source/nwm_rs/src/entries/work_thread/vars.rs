@@ -278,7 +278,7 @@ impl WorkFrame {
         #[cfg(not(feature = "mem3"))]
         let downsample = unsafe { *is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
         #[cfg(feature = "mem3")]
-        let downsample = RP_DOWNSAMPLE_NONE;
+        let downsample = RP_DOWNSAMPLE_EVEN_ODD;
         #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_reliable_stream() == entries::thread_nwm::ReliableStream::None {
             if !unsafe {
@@ -392,7 +392,7 @@ impl WorkFrame {
         #[cfg(not(feature = "mem3"))]
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
         #[cfg(feature = "mem3")]
-        let downsample = RP_DOWNSAMPLE_NONE;
+        let downsample = RP_DOWNSAMPLE_EVEN_ODD;
 
         #[cfg(not(feature = "mem3"))]
         let (mcus_per_row, mcu_rows) = if downsample == RP_DOWNSAMPLE_CHECKER {
@@ -931,7 +931,7 @@ impl WorkAcquire {
         #[cfg(not(feature = "mem3"))]
         let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
         #[cfg(feature = "mem3")]
-        let downsample = RP_DOWNSAMPLE_NONE;
+        let downsample = RP_DOWNSAMPLE_EVEN_ODD;
         let src_len = bctx.src_len() as usize;
         let src = if downsample == RP_DOWNSAMPLE_CHECKER {
             unsafe { slice::from_raw_parts(src, src_len) }
@@ -1086,8 +1086,14 @@ impl BlitCtx {
         self.height() * self.pitch()
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn width(&self) -> u32 {
         GSP_SCREEN_WIDTH
+    }
+
+    #[cfg(feature = "mem3")]
+    pub fn width(&self) -> u32 {
+        jpeg::downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) as u32
     }
 
     pub fn height(&self) -> u32 {
@@ -1131,3 +1137,8 @@ static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
 #[cfg(not(feature = "mem3"))]
 static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();
+
+#[cfg(feature = "mem3")]
+pub fn jpeg_even_odd(s: ScreenIndex) -> bool {
+    unsafe { *s.index_into(&JPEG_EVEN_ODD) }
+}

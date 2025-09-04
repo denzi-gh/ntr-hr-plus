@@ -139,6 +139,7 @@ pub type ThreadIndex = Ranged<RP_CORE_COUNT_MAX>;
 pub type ScreenIndex = Ranged<SCREEN_COUNT>;
 pub type CoreCount = IRanged<RP_CORE_COUNT_MIN, RP_CORE_COUNT_MAX>;
 
+#[cfg(not(feature = "mem3"))]
 pub const fn img_buffer_size(is_top: bool) -> usize {
     (GSP_SCREEN_WIDTH
         * 4 // max bpp
@@ -147,6 +148,13 @@ pub const fn img_buffer_size(is_top: bool) -> usize {
         } else {
             GSP_SCREEN_HEIGHT_BOTTOM
         }) as usize
+}
+
+#[cfg(feature = "mem3")]
+pub const fn img_buffer_size(is_top: bool) -> usize {
+    jpeg::downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)
+        * 4 // max bpp
+        * jpeg::downsample_screen_height(RP_DOWNSAMPLE_EVEN_ODD, is_top)
 }
 
 #[allow(unused)]

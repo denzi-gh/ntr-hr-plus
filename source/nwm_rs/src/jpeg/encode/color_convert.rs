@@ -34,6 +34,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -42,12 +43,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
         output_base: usize,
     ) {
+        #[cfg(not(feature = "mem3"))]
         let start = if self.worker.info.even_odd == false {
             0
         } else {
@@ -57,8 +58,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<S, H_SAMP, V_SAMP>(
             input,
             output_base,
+            #[cfg(not(feature = "mem3"))]
             start,
+            #[cfg(not(feature = "mem3"))]
             2,
+            #[cfg(feature = "mem3")]
+            0,
+            #[cfg(feature = "mem3")]
+            1,
             RP_DOWNSAMPLE_EVEN_ODD,
         );
     }
@@ -74,7 +81,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     ) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
+        #[cfg(not(feature = "mem3"))]
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        #[cfg(feature = "mem3")]
+        let width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD);
 
         for ci in CompIndex::all() {
             let color = ci.index_into_mut(&mut self.worker.bufs.color);
@@ -85,9 +95,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         RP_DOWNSAMPLE_EVEN_ODD => color.ptr = color.buf.even_odd.as_mut_ptr(),
                         _ => color.ptr = color.buf.full.as_mut_ptr(),
                     }
+                    // RP_DOWNSAMPLE_EVEN_ODD
                     #[cfg(feature = "mem3")]
                     {
-                        color.ptr = color.buf.full.as_mut_ptr();
+                        color.ptr = color.buf.even_odd.as_mut_ptr();
                     }
                 }
             } else {
@@ -115,11 +126,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .as_mut_ptr()
                             .add(output_base),
                     }
+                    // RP_DOWNSAMPLE_EVEN_ODD
                     #[cfg(feature = "mem3")]
                     self.worker
                         .bufs
                         .prep
-                        .full
+                        .even_odd
                         .get_mut(ci, H_SAMP, V_SAMP)
                         .as_mut_ptr()
                         .add(output_base)

@@ -33,6 +33,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
@@ -95,7 +96,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         output_base: usize,
@@ -233,7 +233,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_even_odd(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR]) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
@@ -243,6 +242,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+
+    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_full(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR]) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
@@ -334,6 +335,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
+
+    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_full_novsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
         const V_SAMP: bool = false;
         for (base, chunk) in src.as_chunks::<1>().0.iter().enumerate() {
@@ -342,7 +345,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_even_odd_novsamp<const H_SAMP: bool>(&mut self, src: [&[u8]; DCTSIZE]) {
         const V_SAMP: bool = false;
         for (base, chunk) in src.as_chunks::<1>().0.iter().enumerate() {

@@ -517,14 +517,17 @@ pub fn update_gpu_regs(is_top: bool) -> ScreenInfo {
     }
 }
 
+#[cfg(not(feature = "mem3"))]
 type DmaHandles = RangedArray<Handle, WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct ScreenParams {
+    #[cfg(not(feature = "mem3"))]
     pub dmas: DmaHandles,
     pub game_handle: Handle,
     pub game_pid: u32,
     pub game_fcram_base: u32,
+    #[cfg(not(feature = "mem3"))]
     pub pid: u32,
     pub overlay: OverlayParams,
 }
@@ -563,6 +566,7 @@ impl Drop for ScreenParamsLock {
 }
 
 pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
+    #[cfg(not(feature = "mem3"))]
     if let Some(lock) = screen_params_lock() {
         #[cfg(not(feature = "o3ds"))]
         let w = unsafe { PARAMS.work_index };
@@ -573,20 +577,28 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
         #[cfg(feature = "o3ds")]
         let img = unsafe { img_info() } as u32;
 
-        if capture_screen(
+        capture_screen(
             lock.param(),
             is_top,
             screen_info,
             img,
             #[cfg(not(feature = "o3ds"))]
             w,
-        ) {
-            true
-        } else {
-            false
-        }
+        )
     } else {
         false
+    }
+
+    #[cfg(feature = "mem3")]
+    {
+        let img = unsafe { img_info() } as u32;
+        capture_screen(
+            is_top,
+            screen_info,
+            img,
+            #[cfg(not(feature = "o3ds"))]
+            w,
+        )
     }
 }
 
@@ -615,48 +627,79 @@ pub fn img_info_prev(is_top: bool) -> *const u8 {
     *iinfo.bufs.get(&index)
 }
 
+#[named]
 fn capture_screen(
-    params: &mut ScreenParams,
+    #[cfg(not(feature = "mem3"))] params: &mut ScreenParams,
     is_top: bool,
     screen_info: &ScreenInfo,
     dst: u32,
     #[cfg(not(feature = "o3ds"))] w: WorkIndex,
 ) -> bool {
     unsafe {
-        #[cfg(feature = "o3ds")]
+        #[cfg(all(feature = "o3ds", not(feature = "mem3")))]
         let w = WorkIndex::init(0);
 
+        #[cfg(not(feature = "mem3"))]
         let phys = screen_info.src as u32;
 
         let format = screen_info.format & 0xf;
 
         // Skip if handling of format unimplemented
         if format > 3 {
+            ns_dbg_print!(failed, c_str!("format"), format as s32);
             sleep_thread(THREAD_WAIT_NS);
             return false;
         }
 
         let bpp: u32;
+        #[cfg(not(feature = "mem3"))]
         let mut burst_size: u32 = 16;
 
         if format == 0 {
             bpp = 4;
-            burst_size *= 4;
+            #[cfg(not(feature = "mem3"))]
+            {
+                burst_size *= 4;
+            }
         } else if format == 1 {
             bpp = 3;
         } else {
             bpp = 2;
-            burst_size *= 2;
+            #[cfg(not(feature = "mem3"))]
+            {
+                burst_size *= 2;
+            }
         }
-        let mut transfer_size = GSP_SCREEN_WIDTH * bpp;
-        let mut pitch = screen_info.pitch;
-        let buf_size = transfer_size
-            * if is_top {
-                GSP_SCREEN_HEIGHT_TOP
-            } else {
-                GSP_SCREEN_HEIGHT_BOTTOM
-            };
+        #[cfg(feature = "mem3")]
+        let burst_size = bpp;
 
+        #[cfg(feature = "mem3")]
+        let phys = if entries::work_thread::jpeg_even_odd(is_top_index(is_top)) {
+            screen_info.src as u32 + bpp
+        } else {
+            screen_info.src as u32
+        };
+
+        #[cfg(not(feature = "mem3"))]
+        let mut transfer_size = GSP_SCREEN_WIDTH * bpp;
+        #[cfg(feature = "mem3")]
+        let width = jpeg::downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) as u32;
+        #[cfg(feature = "mem3")]
+        let transfer_size = width * bpp;
+
+        #[cfg(not(feature = "mem3"))]
+        let mut pitch = screen_info.pitch;
+        #[cfg(feature = "mem3")]
+        let pitch = screen_info.pitch;
+
+        let height = if is_top {
+            GSP_SCREEN_HEIGHT_TOP
+        } else {
+            GSP_SCREEN_HEIGHT_BOTTOM
+        };
+        let buf_size = transfer_size * height;
+
+        #[cfg(not(feature = "mem3"))]
         if transfer_size == pitch {
             let mut mul = if is_top { 16 } else { 64 };
             transfer_size *= mul;
@@ -669,6 +712,7 @@ fn capture_screen(
             pitch = transfer_size;
         }
 
+        #[cfg(not(feature = "mem3"))]
         let dma_conf = DmaConfig {
             channelId: -1,
             flags: (DMACFG_WAIT_AVAILABLE | DMACFG_DST_MEMORY_CONFIG | DMACFG_SRC_MEMORY_CONFIG)
@@ -677,7 +721,10 @@ fn capture_screen(
             _padding: 0,
             srcDev: DmaDeviceConfig {
                 deviceId: -1,
+                #[cfg(not(feature = "mem3"))]
                 allowedAlignments: 15,
+                #[cfg(feature = "mem3")]
+                allowedAlignments: 1,
             },
             dstMem: DmaMemoryConfig {
                 burstSize: burst_size as s16,
@@ -687,21 +734,29 @@ fn capture_screen(
             },
             dstDev: DmaDeviceConfig {
                 deviceId: -1,
+                #[cfg(not(feature = "mem3"))]
                 allowedAlignments: 15,
+                #[cfg(feature = "mem3")]
+                allowedAlignments: 1,
             },
             srcMem: DmaMemoryConfig {
                 burstSize: burst_size as s16,
+                #[cfg(not(feature = "mem3"))]
                 burstStride: burst_size as s16,
+                #[cfg(feature = "mem3")]
+                burstStride: burst_size as s16 * jpeg::DOWNSAMPLE_FACTOR as s16,
                 transferSize: transfer_size as s16,
                 transferStride: pitch as s16,
             },
         };
 
         if buf_size > img_buffer_size(is_top) as u32 {
+            ns_dbg_print!(failed, c_str!("buf_size"), buf_size as s32);
             sleep_thread(THREAD_WAIT_NS);
             return false;
         }
 
+        #[cfg(not(feature = "mem3"))]
         {
             let dma = params.dmas.get_mut(&w);
             if *dma != 0 {
@@ -710,6 +765,7 @@ fn capture_screen(
             }
         }
 
+        #[cfg(not(feature = "mem3"))]
         let (process, addr) = if is_in_vram(phys) {
             close_game_handle(params);
             (
@@ -728,27 +784,59 @@ fn capture_screen(
             return false;
         };
 
-        let mut dma = mem::MaybeUninit::uninit();
-        let res = svcStartInterProcessDma(
-            dma.as_mut_ptr(),
-            CUR_PROCESS_HANDLE,
-            dst,
-            process,
-            addr,
-            buf_size,
-            &dma_conf,
-        );
-        if res != 0 {
-            close_game_handle(params);
-            sleep_thread(THREAD_WAIT_NS);
-            return false;
+        #[cfg(not(feature = "mem3"))]
+        let dma = {
+            let mut dma = mem::MaybeUninit::uninit();
+            let res = svcStartInterProcessDma(
+                dma.as_mut_ptr(),
+                CUR_PROCESS_HANDLE,
+                dst,
+                process,
+                addr,
+                buf_size,
+                &dma_conf,
+            );
+            if res != 0 {
+                close_game_handle(params);
+                ns_dbg_print!(failed, c_str!("dma"), res);
+                sleep_thread(THREAD_WAIT_NS);
+                return false;
+            }
+
+            #[cfg(not(feature = "o3ds"))]
+            send_overlay_stats(&mut params.overlay);
+
+            let dma = dma.assume_init();
+            *params.dmas.get_mut(&w) = dma;
+            dma
+        };
+        #[cfg(all(feature = "o3ds", not(feature = "mem3")))]
+        {
+            let _ = dma;
         }
 
-        #[cfg(not(feature = "o3ds"))]
-        send_overlay_stats(&mut params.overlay);
+        #[cfg(feature = "mem3")]
+        {
+            let mut src_y = phys | (1 << 31);
+            let mut dst_y = dst;
+            for _y in 0..height {
+                let mut src_x = src_y;
+                let mut dst_x = dst_y;
+                for _x in 0..width {
+                    slice::from_raw_parts_mut(dst_x as *mut u8, burst_size as usize)
+                        .copy_from_slice(slice::from_raw_parts(
+                            src_x as *const u8,
+                            burst_size as usize,
+                        ));
 
-        let dma = dma.assume_init();
-        *params.dmas.get_mut(&w) = dma;
+                    src_x += burst_size * jpeg::DOWNSAMPLE_FACTOR as u32;
+                    dst_x += burst_size;
+                }
+
+                src_y += pitch;
+                dst_y += transfer_size;
+            }
+        }
 
         thread_ready_release(
             is_top,
@@ -788,6 +876,7 @@ fn close_overlay_handle(params: &mut OverlayParams) {
     params.game_pid = 0;
 }
 
+#[cfg(not(feature = "mem3"))]
 fn get_game_handle(params: &mut ScreenParams) -> Handle {
     let game_pid = RP_CONFIG.game_pid().load(Ordering::Acquire);
     if game_pid != params.game_pid {
@@ -904,6 +993,7 @@ fn send_overlay_stats(params: &mut OverlayParams) {
     }
 }
 
+#[cfg(not(feature = "mem3"))]
 fn is_in_vram(phys: u32) -> bool {
     if phys >= 0x18000000 {
         if phys < 0x18000000 + 0x00600000 {
@@ -913,6 +1003,7 @@ fn is_in_vram(phys: u32) -> bool {
     false
 }
 
+#[cfg(not(feature = "mem3"))]
 fn is_in_fcram(phys: u32) -> bool {
     if phys >= 0x20000000 {
         if phys < 0x20000000 + 0x10000000 {

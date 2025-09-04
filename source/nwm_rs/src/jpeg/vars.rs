@@ -735,8 +735,8 @@ pub const fn downsample_checker_screen_dim(is_top: bool) -> usize {
 }
 
 pub union WorkerColorBufDownsample {
-    pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
     #[cfg(not(feature = "mem3"))]
+    pub full: [u8; downsample_screen_width(RP_DOWNSAMPLE_NONE) * SAMP_FACTOR],
     pub even_odd: [u8; downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) * SAMP_FACTOR],
 }
 
@@ -840,11 +840,11 @@ pub struct WorkerPrepBufDownsampleQuarter {
 }
 
 pub union WorkerPrepBufDownsample {
+    #[cfg(not(feature = "mem3"))]
     pub full:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_NONE)) }>,
     #[cfg(not(feature = "mem3"))]
     pub quarter: WorkerPrepBufDownsampleQuarter,
-    #[cfg(not(feature = "mem3"))]
     pub even_odd:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)) }>,
 }
