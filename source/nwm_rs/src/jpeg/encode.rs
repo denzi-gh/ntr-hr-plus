@@ -182,7 +182,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         );
                     }
 
-                    if let Some(rem) = src_chunks.into_remainder() {
+                    let rem = src_chunks.into_remainder();
+                    if !rem.is_empty() {
                         self.process(
                             #[cfg(not(feature = "o3ds"))]
                             prev,

@@ -1,4 +1,4 @@
-# Need 2025-08-08 nightly rust for now
+# Need 2026-01-08 nightly rust for now
 
 DEV_BIN_DIR := $(DEVKITARM)/bin
 UNAME := $(shell uname)
@@ -39,8 +39,11 @@ CTRU_DIR := libctru/libctru
 
 CFLAGS := -O3 -ffast-math -g -march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft -fno-strict-aliasing -fshort-enums
 CFLAGS += -ffunction-sections -fdata-sections
-CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__
+CPPFLAGS := -Iinclude -Ilibctru/libctru/include -D__3DS__ -Wno-comment
 LDFLAGS = -Wl,--gc-sections -Wl,-Map=$(basename $(notdir $@)).map,-z,notext,-z,noexecstack -L. -L$(DEVKITARM)/arm-none-eabi/lib/armv6k/fpu
+ifeq ($(USE_CLANG),1)
+LDFLAGS += -fuse-ld=lld
+endif
 LDLIBS := -lctru_ntr -lsysbase
 LDLIBS += -Wl,-pie
 SRC_C := $(wildcard source/*.c)

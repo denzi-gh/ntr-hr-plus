@@ -476,9 +476,9 @@ fn flss(mut val: u16) -> u32 {
             bit -= 2;
             val <<= 2;
         }
+        #[allow(unused_assignments)]
         if (val & 0x8000) == 0 {
             bit -= 1;
-            #[allow(unused_assignments)]
             val <<= 1;
         }
 
