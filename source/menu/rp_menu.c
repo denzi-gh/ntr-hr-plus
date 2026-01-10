@@ -293,9 +293,6 @@ static const char *getChromaSSDesc(int i) {
 }
 
 static const char *getDownsampleName(int i) {
-	if (ntrConfig->memMode) {
-		return "Even/Odd";
-	}
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:
@@ -310,9 +307,6 @@ static const char *getDownsampleName(int i) {
 }
 
 static const char *getDownsampleDesc(int i) {
-	if (ntrConfig->memMode) {
-		return "Downsample cannot be changed on\nextended memory games.";
-	}
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:

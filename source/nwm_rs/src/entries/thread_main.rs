@@ -269,7 +269,6 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
                 .chroma_ss(ScreenIndex::init(RP_SCREEN_BOT as u32))
                 .load(Ordering::Acquire),
         ];
-        #[cfg(not(feature = "mem3"))]
         let downsample = [
             RP_CONFIG
                 .downsample(ScreenIndex::init(RP_SCREEN_TOP as u32))
@@ -299,18 +298,8 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
         )?;
 
         #[cfg(feature = "o3ds")]
-        jpeg.init(
-            quality,
-            chroma_ss,
-            #[cfg(not(feature = "mem3"))]
-            downsample,
-        )?;
-        entries::work_thread::init(
-            quality,
-            chroma_ss,
-            #[cfg(not(feature = "mem3"))]
-            downsample,
-        );
+        jpeg.init(quality, chroma_ss, downsample)?;
+        entries::work_thread::init(quality, chroma_ss, downsample);
 
         #[cfg(not(feature = "o3ds"))]
         entries::thread_nwm::init_nwm_infos(nwm_bufs, core_count);

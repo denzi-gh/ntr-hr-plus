@@ -51,7 +51,7 @@ impl JpegShared {
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         #[cfg(not(feature = "o3ds"))]
         {
@@ -122,7 +122,6 @@ impl JpegShared {
         self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(
             hq,
-            #[cfg(not(feature = "mem3"))]
             downsample,
             #[cfg(not(feature = "o3ds"))]
             delta_prog,
@@ -168,7 +167,7 @@ impl JpegShared {
     fn set_comp_infos(
         &mut self,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
@@ -193,8 +192,9 @@ impl JpegShared {
             }
             #[cfg(feature = "mem3")]
             {
-                screen.width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) as u16;
-                screen.height = downsample_screen_height(RP_DOWNSAMPLE_EVEN_ODD, is_top) as u16;
+                screen.downsample = *s.index_into(&downsample) as u8;
+                screen.width = downsample_screen_width(screen.downsample) as u16;
+                screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
             }
 
             let comp_infos = if hq == RP_CHROMASS_444 {
@@ -345,7 +345,7 @@ impl Jpeg {
         quality: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        #[cfg(not(feature = "mem3"))] downsample: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> Option<()> {
@@ -358,7 +358,6 @@ impl Jpeg {
             #[cfg(not(feature = "o3ds"))]
             core_count,
             hq,
-            #[cfg(not(feature = "mem3"))]
             downsample,
         );
         #[cfg(feature = "o3ds")]

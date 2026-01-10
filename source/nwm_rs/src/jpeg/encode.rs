@@ -349,7 +349,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
 
-        // RP_DOWNSAMPLE_EVEN_ODD
         #[cfg(feature = "mem3")]
         {
             let src = unsafe {
@@ -363,55 +362,60 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         }) as usize,
                 )
             };
-            if vss {
-                // vss == true
-                let src_chunks = src
-                    .chunks_exact(src_pitch as usize)
-                    .map(|s| &s[0..pitch])
-                    .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
-                let n = src_chunks.len();
-                for (i, chunks) in src_chunks.enumerate() {
-                    self.process(
-                        |this| {
-                            /* Pre-process */
-                            this.pre_process_even_odd(chunks);
-                            if i == j_max_half_factor(n) {
-                                pre_progress();
-                            }
-                            true
-                        },
-                        || {
-                            progress();
-                        },
-                    );
-                }
-            } else {
-                // vss == false
-                let pre_process = if hss {
-                    Self::pre_process_even_odd_novsamp::<true>
-                } else {
-                    Self::pre_process_even_odd_novsamp::<false>
-                };
+            match screen.downsample {
+                RP_DOWNSAMPLE_EVEN_ODD => {
+                    if vss {
+                        // vss == true
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+                        let n = src_chunks.len();
+                        for (i, chunks) in src_chunks.enumerate() {
+                            self.process(
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_even_odd(chunks);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    } else {
+                        // vss == false
+                        let pre_process = if hss {
+                            Self::pre_process_even_odd_novsamp::<true>
+                        } else {
+                            Self::pre_process_even_odd_novsamp::<false>
+                        };
 
-                let src_chunks = src
-                    .chunks_exact(src_pitch as usize)
-                    .map(|s| &s[0..pitch])
-                    .array_chunks::<DCTSIZE>();
-                let n = src_chunks.len();
-                for (i, chunk) in src_chunks.enumerate() {
-                    self.process(
-                        |this| {
-                            pre_process(this, chunk);
-                            if i == j_max_half_factor(n) {
-                                pre_progress();
-                            }
-                            true
-                        },
-                        || {
-                            progress();
-                        },
-                    );
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<DCTSIZE>();
+                        let n = src_chunks.len();
+                        for (i, chunk) in src_chunks.enumerate() {
+                            self.process(
+                                |this| {
+                                    pre_process(this, chunk);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    }
                 }
+                _ => {}
             }
         }
 
