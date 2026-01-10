@@ -35,6 +35,7 @@ pub fn request_mem_from_pool<const N: usize>() -> Option<&'static mut MemRegion8
     }
 }
 
+#[cfg(not(feature = "mem3"))]
 pub fn request_mem_from_pool_vsize(t: usize) -> Option<&'static mut [u8]> {
     let s = unsafe { plgRequestMemory(t as u32) };
     if s > 0 {

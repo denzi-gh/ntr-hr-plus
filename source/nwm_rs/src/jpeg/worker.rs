@@ -37,7 +37,9 @@ impl<'a> JpegWorker<'a> {
     pub fn encode<F, G>(
         &'a mut self,
         dst: WorkerDst,
-        src: &[u8],
+        #[cfg(not(feature = "mem3"))] src: &[u8],
+        #[cfg(feature = "mem3")] src: *const u8,
+        #[cfg(feature = "mem3")] pitch: u32,
         pre_progress: F,
         progress: G,
     ) -> Option<JpegDqRet>
@@ -45,7 +47,13 @@ impl<'a> JpegWorker<'a> {
         F: FnMut(),
         G: FnMut(),
     {
-        JpegEncode { worker: self, dst }.encode(src, pre_progress, progress)
+        JpegEncode { worker: self, dst }.encode(
+            src,
+            #[cfg(feature = "mem3")]
+            pitch,
+            pre_progress,
+            progress,
+        )
     }
 }
 

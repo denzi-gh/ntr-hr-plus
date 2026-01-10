@@ -99,6 +99,7 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
         }
     }
 
+    #[cfg(not(feature = "mem3"))]
     unsafe { entries::thread_screen::once_img_infos() }?;
 
     if once_jpeg() == None {

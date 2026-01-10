@@ -105,6 +105,8 @@ impl WorkReady {
         unsafe {
             *bctx = BlitCtx {
                 format: work_ready.format & 0xf,
+                #[cfg(feature = "mem3")]
+                pitch: work_ready.pitch,
                 #[cfg(not(feature = "o3ds"))]
                 src: entries::thread_screen::img_info(work_ready.is_top),
                 #[cfg(feature = "o3ds")]
@@ -930,9 +932,9 @@ impl WorkAcquire {
         let src = bctx.src;
         #[cfg(not(feature = "mem3"))]
         let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
-        #[cfg(feature = "mem3")]
-        let downsample = RP_DOWNSAMPLE_EVEN_ODD;
+        #[cfg(not(feature = "mem3"))]
         let src_len = bctx.src_len() as usize;
+        #[cfg(not(feature = "mem3"))]
         let src = if downsample == RP_DOWNSAMPLE_CHECKER {
             unsafe { slice::from_raw_parts(src, src_len) }
         } else {
@@ -1013,7 +1015,14 @@ impl WorkAcquire {
             dst
         };
 
-        let jpeg_ret = worker.encode(dst, src, pre_progress, progress)?;
+        let jpeg_ret = worker.encode(
+            dst,
+            src,
+            #[cfg(feature = "mem3")]
+            bctx.pitch,
+            pre_progress,
+            progress,
+        )?;
         #[cfg(feature = "o3ds")]
         let _ = jpeg_ret;
 
@@ -1063,6 +1072,8 @@ pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
 #[derive(ConstDefault)]
 pub struct BlitCtx {
     pub format: u32,
+    #[cfg(feature = "mem3")]
+    pub pitch: u32,
     pub src: *const u8,
 
     pub frame_id: u8,
@@ -1077,6 +1088,7 @@ pub struct BlitCtx {
 
 pub type RowIndices = RangedArray<u32, RP_CORE_COUNT_MAX>;
 
+#[cfg(not(feature = "mem3"))]
 impl BlitCtx {
     pub fn pitch(&self) -> u32 {
         self.bpp() * self.width()
@@ -1086,14 +1098,8 @@ impl BlitCtx {
         self.height() * self.pitch()
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn width(&self) -> u32 {
         GSP_SCREEN_WIDTH
-    }
-
-    #[cfg(feature = "mem3")]
-    pub fn width(&self) -> u32 {
-        jpeg::downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD) as u32
     }
 
     pub fn height(&self) -> u32 {
@@ -1137,8 +1143,3 @@ static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
 #[cfg(not(feature = "mem3"))]
 static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
 static mut JPEG_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();
-
-#[cfg(feature = "mem3")]
-pub fn jpeg_even_odd(s: ScreenIndex) -> bool {
-    unsafe { *s.index_into(&JPEG_EVEN_ODD) }
-}

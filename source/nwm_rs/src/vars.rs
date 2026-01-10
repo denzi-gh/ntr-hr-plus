@@ -150,13 +150,6 @@ pub const fn img_buffer_size(is_top: bool) -> usize {
         }) as usize
 }
 
-#[cfg(feature = "mem3")]
-pub const fn img_buffer_size(is_top: bool) -> usize {
-    jpeg::downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)
-        * 4 // max bpp
-        * jpeg::downsample_screen_height(RP_DOWNSAMPLE_EVEN_ODD, is_top)
-}
-
 #[allow(unused)]
 #[derive(ConstDefault)]
 pub struct WorkHandles {
