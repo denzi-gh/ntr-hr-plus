@@ -415,7 +415,58 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    if vss {
+                        // vss == true
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
+                        let n = src_chunks.len();
+                        for (i, chunks) in src_chunks.enumerate() {
+                            self.process(
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_full(chunks);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    } else {
+                        // vss == false
+                        let pre_process = if hss {
+                            Self::pre_process_full_novsamp::<true>
+                        } else {
+                            Self::pre_process_full_novsamp::<false>
+                        };
+
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<DCTSIZE>();
+                        let n = src_chunks.len();
+                        for (i, chunk) in src_chunks.enumerate() {
+                            self.process(
+                                |this| {
+                                    pre_process(this, chunk);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    }
+                }
             }
         }
 

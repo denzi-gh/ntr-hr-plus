@@ -163,7 +163,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                 rescale_prev,
                                 #[cfg(not(feature = "o3ds"))]
                                 rescale_prev_shr,
-                                #[cfg(not(feature = "mem3"))]
                                 screen.downsample,
                                 &self.worker.bufs.prep,
                                 ci,

@@ -34,7 +34,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         input: &[&[u8]; S],
@@ -80,15 +79,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let color = ci.index_into_mut(&mut self.worker.bufs.color);
             if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
                 unsafe {
-                    #[cfg(not(feature = "mem3"))]
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => color.ptr = color.buf.even_odd.as_mut_ptr(),
                         _ => color.ptr = color.buf.full.as_mut_ptr(),
-                    }
-                    // RP_DOWNSAMPLE_EVEN_ODD
-                    #[cfg(feature = "mem3")]
-                    {
-                        color.ptr = color.buf.even_odd.as_mut_ptr();
                     }
                 }
             } else {
@@ -97,7 +90,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let out_width = width / step;
                 let output_base = output_base * out_width;
                 let output = unsafe {
-                    #[cfg(not(feature = "mem3"))]
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => self
                             .worker
@@ -116,15 +108,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .as_mut_ptr()
                             .add(output_base),
                     }
-                    // RP_DOWNSAMPLE_EVEN_ODD
-                    #[cfg(feature = "mem3")]
-                    self.worker
-                        .bufs
-                        .prep
-                        .even_odd
-                        .get_mut(ci, H_SAMP, V_SAMP)
-                        .as_mut_ptr()
-                        .add(output_base)
                 };
                 color.ptr = output;
             }
