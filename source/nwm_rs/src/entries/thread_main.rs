@@ -322,6 +322,8 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
 fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> Option<()> {
     pause()?;
 
+    let use_dbg = unsafe { (*config_consts::NTR_CONFIG).ex.nsUseDbg != 0 };
+
     let init = init(
         #[cfg(not(feature = "o3ds"))]
         &s.nwm_bufs,
@@ -380,7 +382,9 @@ fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> O
 
         #[cfg(not(feature = "o3ds"))]
         unsafe {
-            rp_svc_print_limits();
+            if use_dbg {
+                rp_svc_print_limits();
+            }
         }
 
         let t = ThreadIndex::init(0);
@@ -390,7 +394,10 @@ fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> O
         set_reset_threads();
     }
 
-    ns_dbg_print!(msg, c_str!("Nwm main loop restarted"));
+    if use_dbg {
+        ns_dbg_print!(msg, c_str!("Nwm main loop restarted"));
+    }
+
     Some(())
 }
 

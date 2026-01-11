@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-libc = { version = "0.2.174", default-features = false }
+libc = { version = "0.2.180", default-features = false }
 oorandom = "11.1.5"
 function_name = "0.3.0"
 # Modified to work with union types
@@ -17,7 +17,7 @@ const-default = { path = "../../const_default", version = "1.0.0", features = [
 ] }
 
 [build-dependencies]
-bindgen = "0.72.0"
+bindgen = "0.72.1"
 
 [features]
 o3ds = []

@@ -1085,7 +1085,8 @@ int rpStartupFromMenu(RP_CONFIG *config) {
 	rpClampParamsInMenu(config);
 
 	if (ATSR(&rpStarted)) {
-		nsDbgPrint("Remote play already started, updating params.\n");
+		if (ntrConfig->ex.nsUseDbg)
+			nsDbgPrint("Remote play already started, updating params.\n");
 		return rpUpdateParamsFromMenu(config);
 	}
 

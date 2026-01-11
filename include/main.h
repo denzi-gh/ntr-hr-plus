@@ -13,8 +13,6 @@ void mainPost(void);
 int main(void);
 extern int nfcPatched;
 
-static NTR_CONFIG *const ntrConfig = &nsConfig->ntrConfig;
-
 typedef void (*showDbgFunc_t)(const char *);
 extern showDbgFunc_t showDbgFunc;
 int showMsgDbgFunc(const char *msg);

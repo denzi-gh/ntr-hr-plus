@@ -576,7 +576,8 @@ int ikcp_input(ikcpcb *kcp, char *data, int size)
 		if (fid == 0 && gid == ((IUINT16)-1 & ((1 << GID_NBITS) - 1))) {
 			if (!kcp->session_established) {
 				kcp->session_established = true;
-				nsDbgPrint("kcp session_established");
+				if (ntrConfig->ex.nsUseDbg)
+					nsDbgPrint("kcp session_established");
 				kcp->congc.last_send_time = svcGetSystemTick();
 			}
 			return 0;

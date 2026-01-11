@@ -67,6 +67,7 @@ typedef struct {
 
 static NS_CONFIG *const nsConfig = (NS_CONFIG *)NS_CONFIG_ADDR;
 static RP_CONFIG *const rpConfig = &nsConfig->rpConfig;
+static NTR_CONFIG *const ntrConfig = &nsConfig->ntrConfig;
 
 void nsThreadInit();
 int nsStartup(void);

@@ -64,32 +64,35 @@ fn main() {
     let nwm_header_str = "nwm_rs.h";
     let nwm_header = Path::new(nwm_header_str);
 
-    let current_dir = env::current_dir().unwrap();
-    let rerun_headers = |path: &str| {
-        let stdout = match Command::new("find")
-            .args([path, "-name", "*.h", "-type", "f"])
-            .stderr(Stdio::inherit())
-            .output()
-        {
-            Ok(Output { stdout, status, .. }) if status.success() => stdout,
-            Ok(Output { status, .. }) => {
-                println!("cargo::error=find failed with status {status}");
-                return;
-            }
-            Err(err) => {
-                println!("cargo::error=find failed {err}");
-                return;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let current_dir = env::current_dir().unwrap();
+        let rerun_headers = |path: &str| {
+            let stdout = match Command::new("find")
+                .args([path, "-name", "*.h", "-type", "f"])
+                .stderr(Stdio::inherit())
+                .output()
+            {
+                Ok(Output { stdout, status, .. }) if status.success() => stdout,
+                Ok(Output { status, .. }) => {
+                    println!("cargo::error=find failed with status {status}");
+                    return;
+                }
+                Err(err) => {
+                    println!("cargo::error=find failed {err}");
+                    return;
+                }
+            };
+            for line in String::from_utf8_lossy(&stdout).lines() {
+                let file = current_dir.join(line).canonicalize().unwrap();
+                let file = file.display();
+                println!("cargo:rerun-if-changed={file}");
             }
         };
-        for line in String::from_utf8_lossy(&stdout).lines() {
-            let file = current_dir.join(line).canonicalize().unwrap();
-            let file = file.display();
-            println!("cargo:rerun-if-changed={file}");
-        }
-    };
-    rerun_headers("..");
-    rerun_headers(include_path_str);
-    rerun_headers(ctru_include_path_str);
+        rerun_headers("..");
+        rerun_headers(include_path_str);
+        rerun_headers(ctru_include_path_str);
+    }
 
     let sysroot = Path::new(&devkitarm).join("arm-none-eabi");
     let system_include = sysroot.join("include");
@@ -109,6 +112,11 @@ fn main() {
         .blocklist_type("u(8|16|32|64)")
         .blocklist_type("__builtin_va_list")
         .blocklist_type("__va_list")
+        .blocklist_type("timeval")
+        .blocklist_type("in_addr")
+        .blocklist_type("sockaddr_storage")
+        .blocklist_type("(in_addr|socklen|suseconds|sa_family|time)_t")
+        .blocklist_item("SOL_CONFIG")
         .blocklist_function("handlePortCmd")
         .blocklist_function("setjmp")
         .blocklist_function("longjmp")
