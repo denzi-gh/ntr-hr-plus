@@ -310,7 +310,7 @@ static const char *getDownsampleDesc(int i) {
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:
-			return "Choose downsample method to improve\nframerate at the cost of quality.";
+			return "Choose downsample method to improve\nframerate at the cost of quality.\nNeed NTRViewer-HR.";
 		case RP_DOWNSAMPLE_CHECKER:
 			return "Checkerboard: Alternate checkerboard\npattern every other frame.";
 		case RP_DOWNSAMPLE_EVEN_ODD:
