@@ -39,6 +39,7 @@ pub struct JpegEncode<'a, 'b> {
     pub dst: WorkerDst,
 }
 
+#[cfg(not(feature = "mem3"))]
 fn get_bpp_for_format(c: ColorSpace) -> u8 {
     match c {
         ColorSpace::XBGR => 4,
@@ -55,19 +56,24 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         &mut self,
         #[cfg(not(feature = "mem3"))] src: &[u8],
         #[cfg(feature = "mem3")] src: *const u8,
+        #[cfg(feature = "mem3")] pitch: u32,
         #[cfg(not(feature = "o3ds"))] mut pre_progress: F,
-        #[cfg(feature = "mem3")] mut progress: G,
+        #[cfg(feature = "mem3")]
+        #[allow(unused)]
+        mut progress: G,
     ) -> Option<JpegDqRet>
     where
         F: FnMut(),
         G: FnMut(),
     {
+        #[cfg(not(feature = "mem3"))]
         let bpp = get_bpp_for_format(self.worker.info.color_space);
         let is_top = self.worker.info.is_top;
         #[cfg(not(feature = "o3ds"))]
         let w = self.worker.info.work_index;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.shared.screens);
+        #[cfg(not(feature = "mem3"))]
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
         #[allow(unused)]
         let mcus = screen.mcus;
@@ -342,27 +348,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         #[cfg(feature = "mem3")]
         {
-            let src =
-                unsafe { slice::from_raw_parts(src, pitch * CAPTURE_DMA_BUF_HEIGHT as usize) };
             let height = if is_top {
                 GSP_SCREEN_HEIGHT_TOP
             } else {
                 GSP_SCREEN_HEIGHT_BOTTOM
             } as usize;
-            let src_iter = &mut src.chunks_exact(pitch).cycle().scan(
-                0 as u32,
-                #[inline(never)]
-                |state, x| {
-                    if *state >= height as u32 {
-                        return None;
-                    }
-                    if *state % CAPTURE_DMA_HEIGHT == 0 {
-                        progress();
-                    }
-                    *state += 1;
-                    Some(x.as_ptr())
-                },
-            );
+            let src = unsafe { slice::from_raw_parts(src, pitch as usize * height) };
+            let src_iter = &mut src.chunks_exact(pitch as usize).map(|x| x.as_ptr());
             match screen.downsample {
                 RP_DOWNSAMPLE_QUARTER => {
                     if vss {

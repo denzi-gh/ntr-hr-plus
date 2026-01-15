@@ -23,15 +23,6 @@ pub const FRAME_TIME_FACTOR: u32 = 3;
 #[cfg(feature = "o3ds")]
 pub static mut RP_CONFIG_SAVED: RP_CONFIG = const_default();
 
-#[cfg(feature = "mem3")]
-pub const CAPTURE_DMA_HEIGHT: u32 = 4;
-
-#[cfg(feature = "mem3")]
-pub const CAPTURE_DMA_COUNT: u32 = 2;
-
-#[cfg(feature = "mem3")]
-pub const CAPTURE_DMA_BUF_HEIGHT: u32 = CAPTURE_DMA_HEIGHT * CAPTURE_DMA_COUNT;
-
 pub mod config_consts {
     use super::*;
 

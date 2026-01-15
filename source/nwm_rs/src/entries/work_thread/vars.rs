@@ -106,14 +106,9 @@ impl WorkReady {
 
         unsafe {
             *bctx = BlitCtx {
-                #[cfg(not(feature = "mem3"))]
                 format: work_ready.format,
                 #[cfg(feature = "mem3")]
-                screen_info: work_ready.screen_info,
-                #[cfg(feature = "mem3")]
-                screen_params: work_ready.screen_params_lock,
-                #[cfg(feature = "mem3")]
-                dma_params: work_ready.dma_params,
+                pitch: work_ready.pitch,
                 #[cfg(not(feature = "o3ds"))]
                 src: entries::thread_screen::img_info(work_ready.is_top),
                 #[cfg(feature = "o3ds")]
@@ -486,10 +481,7 @@ impl WorkFrame {
         let restart_interval = restart_in_rows as u32 * mcus_per_row;
 
         let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
-        #[cfg(not(feature = "mem3"))]
         let format = bctx.format;
-        #[cfg(feature = "mem3")]
-        let format = bctx.screen_info.format;
         let cinfo = jpeg::CInfo {
             is_top: bctx.is_top,
             color_space: match format {
@@ -971,32 +963,7 @@ impl WorkAcquire {
         };
 
         #[cfg(feature = "mem3")]
-        let src_buf_size = bctx.screen_info.pitch * CAPTURE_DMA_HEIGHT;
-        #[cfg(feature = "mem3")]
-        let dst_buf_size = bctx.pitch() * CAPTURE_DMA_HEIGHT;
-        #[cfg(feature = "mem3")]
-        let dst_buf_total_size = bctx.src_len();
-        #[cfg(feature = "mem3")]
-        let mut buf_i = 0 as u32;
-        #[cfg(feature = "mem3")]
-        let mut params_good = true;
-        #[cfg(feature = "mem3")]
-        let progress = || {
-            if params_good
-                && !entries::thread_screen::next_capture_screen(
-                    &bctx.screen_params,
-                    &bctx.dma_params,
-                    src_buf_size,
-                    dst_buf_size,
-                    &mut buf_i,
-                    dst_buf_total_size,
-                )
-            {
-                let params = mem::replace(&mut bctx.screen_params, const_default());
-                drop(params);
-                params_good = false;
-            }
-        };
+        let progress = || {};
 
         #[cfg(not(feature = "o3ds"))]
         let s = is_top_index(bctx.is_top);
@@ -1049,6 +1016,8 @@ impl WorkAcquire {
         let jpeg_ret = worker.encode(
             dst,
             src,
+            #[cfg(feature = "mem3")]
+            bctx.pitch,
             #[cfg(not(feature = "o3ds"))]
             pre_progress,
             #[cfg(feature = "mem3")]
@@ -1102,14 +1071,9 @@ pub unsafe fn work_thread_loop(t: ThreadIndex) -> Option<()> {
 
 #[derive(ConstDefault)]
 pub struct BlitCtx {
-    #[cfg(not(feature = "mem3"))]
     pub format: u32,
     #[cfg(feature = "mem3")]
-    pub screen_info: entries::thread_screen::ScreenInfo,
-    #[cfg(feature = "mem3")]
-    pub screen_params: entries::thread_screen::ScreenParamsLock,
-    #[cfg(feature = "mem3")]
-    pub dma_params: entries::thread_screen::DmaParams,
+    pub pitch: u32,
     pub src: *const u8,
 
     pub frame_id: u8,
@@ -1124,6 +1088,7 @@ pub struct BlitCtx {
 
 pub type RowIndices = RangedArray<u32, RP_CORE_COUNT_MAX>;
 
+#[cfg(not(feature = "mem3"))]
 impl BlitCtx {
     pub fn pitch(&self) -> u32 {
         self.bpp() * self.width()
@@ -1146,10 +1111,7 @@ impl BlitCtx {
     }
 
     pub fn bpp(&self) -> u32 {
-        #[cfg(not(feature = "mem3"))]
         let format = self.format;
-        #[cfg(feature = "mem3")]
-        let format = self.screen_info.format;
         if format == 0 {
             4
         } else if format == 1 {

@@ -60,12 +60,13 @@ impl<'a> JpegWorker<'a> {
         &'a mut self,
         dst: WorkerDst,
         #[cfg(feature = "mem3")] src: *const u8,
+        #[cfg(feature = "mem3")] pitch: u32,
         progress: G,
     ) -> Option<JpegDqRet>
     where
         G: FnMut(),
     {
-        JpegEncode { worker: self, dst }.encode::<G, _>(src, progress)
+        JpegEncode { worker: self, dst }.encode::<G, _>(src, pitch, progress)
     }
 }
 
