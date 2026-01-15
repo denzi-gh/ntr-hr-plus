@@ -50,13 +50,13 @@ fn get_bpp_for_format(c: ColorSpace) -> u8 {
 impl<'a, 'b> JpegEncode<'a, 'b> {
     #[named]
     #[allow(unused_macros)]
+    #[inline(never)]
     pub fn encode<F, G>(
         &mut self,
         #[cfg(not(feature = "mem3"))] src: &[u8],
         #[cfg(feature = "mem3")] src: *const u8,
-        #[cfg(feature = "mem3")] src_pitch: u32,
-        mut pre_progress: F,
-        mut progress: G,
+        #[cfg(not(feature = "o3ds"))] mut pre_progress: F,
+        #[cfg(feature = "mem3")] mut progress: G,
     ) -> Option<JpegDqRet>
     where
         F: FnMut(),
@@ -68,7 +68,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let w = self.worker.info.work_index;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.shared.screens);
-        let pitch = screen.width as usize * bpp as usize;
+        let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
         #[allow(unused)]
         let mcus = screen.mcus;
 
@@ -142,6 +142,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     if mcu_curr_start >= mcu_total_start {
                         let _mcu_x = params.mcu_col_start + mcu_i;
 
+                        #[cfg(not(feature = "o3ds"))]
                         if mcu_curr_count == j_max_half_factor(mcu_total_count as usize) as u16 {
                             pre_progress();
                         }
@@ -156,194 +157,184 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     }
                 }
             }
-        } else if vss {
-            // vss == true
-            match screen.downsample {
-                RP_DOWNSAMPLE_QUARTER => {
-                    let src_chunks = src
-                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
-                        .array_chunks::<{ DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR }>();
-                    let n = src_chunks.len();
-                    for (i, chunks) in src_chunks.clone().enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                /* Pre-process */
-                                this.pre_process_quarter(chunks);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
-                    }
-
-                    let rem = src_chunks.into_remainder();
-                    if !rem.is_empty() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            n,
-                            |this| {
-                                /* Pre-process */
-                                if !this.pre_process_quarter_rem(rem) {
-                                    return false;
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
-                    }
-                }
-                RP_DOWNSAMPLE_EVEN_ODD => {
-                    let src_chunks = src
-                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
-                        .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
-                    let n = src_chunks.len();
-                    for (i, chunks) in src_chunks.enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                /* Pre-process */
-                                this.pre_process_even_odd(chunks);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
-                    }
-                }
-                _ => {
-                    let src_chunks = src
-                        .chunks_exact(pitch)
-                        .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
-                    let n = src_chunks.len();
-                    for (i, chunks) in src_chunks.enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                /* Pre-process */
-                                this.pre_process_full(chunks);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
-                    }
-                }
-            };
         } else {
-            // vss == false
-            match screen.downsample {
-                RP_DOWNSAMPLE_QUARTER => {
-                    let pre_process = if hss {
-                        Self::pre_process_quarter_novsamp
-                    } else {
-                        Self::pre_process_quarter_nohsamp_novsamp
-                    };
+            let src_iter = &mut src.chunks_exact(pitch).map(|x| x.as_ptr());
+            let height = if is_top {
+                GSP_SCREEN_HEIGHT_TOP
+            } else {
+                GSP_SCREEN_HEIGHT_BOTTOM
+            } as usize;
+            if vss {
+                // vss == true
+                match screen.downsample {
+                    RP_DOWNSAMPLE_QUARTER => {
+                        let n = height / (DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR);
+                        let rem = height % (DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR);
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_quarter(src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
 
-                    let src_chunks = src
-                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
-                        .array_chunks::<{ DCTSIZE * DOWNSAMPLE_FACTOR }>();
-                    let n = src_chunks.len();
-                    for (i, chunk) in src_chunks.enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                pre_process(this, chunk);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
+                        if rem > 0 {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                n,
+                                |this| {
+                                    /* Pre-process */
+                                    if !this.pre_process_quarter_rem(src_iter, rem) {
+                                        return false;
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
                     }
-                }
-                RP_DOWNSAMPLE_EVEN_ODD => {
-                    let pre_process = if hss {
-                        Self::pre_process_even_odd_novsamp::<true>
-                    } else {
-                        Self::pre_process_even_odd_novsamp::<false>
-                    };
-
-                    let src_chunks = src
-                        .chunks_exact(pitch * DOWNSAMPLE_FACTOR)
-                        .array_chunks::<DCTSIZE>();
-                    let n = src_chunks.len();
-                    for (i, chunk) in src_chunks.enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                pre_process(this, chunk);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
+                    RP_DOWNSAMPLE_EVEN_ODD => {
+                        let n = height / (DCTSIZE * SAMP_FACTOR);
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_even_odd(src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
                     }
-                }
-                _ => {
-                    let pre_process = if hss {
-                        Self::pre_process_full_novsamp::<true>
-                    } else {
-                        Self::pre_process_full_novsamp::<false>
-                    };
+                    _ => {
+                        let n = height / (DCTSIZE * SAMP_FACTOR);
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_full(src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
+                    }
+                };
+            } else {
+                // vss == false
+                match screen.downsample {
+                    RP_DOWNSAMPLE_QUARTER => {
+                        let pre_process = if hss {
+                            Self::pre_process_quarter_novsamp
+                        } else {
+                            Self::pre_process_quarter_nohsamp_novsamp
+                        };
 
-                    let src_chunks = src.chunks_exact(pitch).array_chunks::<DCTSIZE>();
-                    let n = src_chunks.len();
-                    for (i, chunk) in src_chunks.enumerate() {
-                        self.process(
-                            #[cfg(not(feature = "o3ds"))]
-                            prev,
-                            #[cfg(not(feature = "o3ds"))]
-                            i,
-                            |this| {
-                                pre_process(this, chunk);
-                                if i == j_max_half_factor(n) {
-                                    pre_progress();
-                                }
-                                true
-                            },
-                            || {
-                                progress();
-                            },
-                        );
+                        let n = height / (DCTSIZE * DOWNSAMPLE_FACTOR);
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    pre_process(this, src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
+                    }
+                    RP_DOWNSAMPLE_EVEN_ODD => {
+                        let pre_process = if hss {
+                            Self::pre_process_even_odd_novsamp::<true>
+                        } else {
+                            Self::pre_process_even_odd_novsamp::<false>
+                        };
+
+                        let n = height / DCTSIZE;
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    pre_process(this, src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
+                    }
+                    _ => {
+                        let pre_process = if hss {
+                            Self::pre_process_full_novsamp::<true>
+                        } else {
+                            Self::pre_process_full_novsamp::<false>
+                        };
+
+                        let n = height / DCTSIZE;
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                #[cfg(not(feature = "o3ds"))]
+                                prev,
+                                #[cfg(not(feature = "o3ds"))]
+                                i,
+                                |this| {
+                                    pre_process(this, src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
                     }
                 }
             }
@@ -351,54 +342,53 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         #[cfg(feature = "mem3")]
         {
-            let src = unsafe {
-                slice::from_raw_parts(
-                    src,
-                    (src_pitch
-                        * if is_top {
-                            GSP_SCREEN_HEIGHT_TOP
-                        } else {
-                            GSP_SCREEN_HEIGHT_BOTTOM
-                        }) as usize,
-                )
-            };
+            let src =
+                unsafe { slice::from_raw_parts(src, pitch * CAPTURE_DMA_BUF_HEIGHT as usize) };
+            let height = if is_top {
+                GSP_SCREEN_HEIGHT_TOP
+            } else {
+                GSP_SCREEN_HEIGHT_BOTTOM
+            } as usize;
+            let src_iter = &mut src.chunks_exact(pitch).cycle().scan(
+                0 as u32,
+                #[inline(never)]
+                |state, x| {
+                    if *state >= height as u32 {
+                        return None;
+                    }
+                    if *state % CAPTURE_DMA_HEIGHT == 0 {
+                        progress();
+                    }
+                    *state += 1;
+                    Some(x.as_ptr())
+                },
+            );
             match screen.downsample {
                 RP_DOWNSAMPLE_QUARTER => {
                     if vss {
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR }>();
-                        let n = src_chunks.len();
-                        for (i, chunks) in src_chunks.clone().enumerate() {
+                        let count = height / (DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR);
+                        let rem = height % (DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR);
+                        for _ in 0..count {
                             self.process(
                                 |this| {
                                     /* Pre-process */
-                                    this.pre_process_quarter(chunks);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    this.pre_process_quarter(src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
 
-                        let rem = src_chunks.into_remainder();
-                        if !rem.is_empty() {
+                        if rem > 0 {
                             self.process(
                                 |this| {
                                     /* Pre-process */
-                                    if !this.pre_process_quarter_rem(rem) {
+                                    if !this.pre_process_quarter_rem(src_iter, rem) {
                                         return false;
                                     }
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     } else {
@@ -408,23 +398,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             Self::pre_process_quarter_nohsamp_novsamp
                         };
 
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<{ DCTSIZE * DOWNSAMPLE_FACTOR }>();
-                        let n = src_chunks.len();
-                        for (i, chunk) in src_chunks.enumerate() {
+                        for _ in 0..height / (DCTSIZE * DOWNSAMPLE_FACTOR) {
                             self.process(
                                 |this| {
-                                    pre_process(this, chunk);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    pre_process(this, src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     }
@@ -432,24 +412,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 RP_DOWNSAMPLE_EVEN_ODD => {
                     if vss {
                         // vss == true
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
-                        let n = src_chunks.len();
-                        for (i, chunks) in src_chunks.enumerate() {
+                        for _ in 0..height / (DCTSIZE * SAMP_FACTOR) {
                             self.process(
                                 |this| {
                                     /* Pre-process */
-                                    this.pre_process_even_odd(chunks);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    this.pre_process_even_odd(src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     } else {
@@ -460,23 +430,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             Self::pre_process_even_odd_novsamp::<false>
                         };
 
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<DCTSIZE>();
-                        let n = src_chunks.len();
-                        for (i, chunk) in src_chunks.enumerate() {
+                        for _ in 0..height / DCTSIZE {
                             self.process(
                                 |this| {
-                                    pre_process(this, chunk);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    pre_process(this, src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     }
@@ -484,24 +444,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 _ => {
                     if vss {
                         // vss == true
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR }>();
-                        let n = src_chunks.len();
-                        for (i, chunks) in src_chunks.enumerate() {
+                        for _ in 0..height / (DCTSIZE * SAMP_FACTOR) {
                             self.process(
                                 |this| {
                                     /* Pre-process */
-                                    this.pre_process_full(chunks);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    this.pre_process_full(src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     } else {
@@ -512,23 +462,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             Self::pre_process_full_novsamp::<false>
                         };
 
-                        let src_chunks = src
-                            .chunks_exact(src_pitch as usize)
-                            .map(|s| &s[0..pitch])
-                            .array_chunks::<DCTSIZE>();
-                        let n = src_chunks.len();
-                        for (i, chunk) in src_chunks.enumerate() {
+                        for _ in 0..height / DCTSIZE {
                             self.process(
                                 |this| {
-                                    pre_process(this, chunk);
-                                    if i == j_max_half_factor(n) {
-                                        pre_progress();
-                                    }
+                                    pre_process(this, src_iter);
                                     true
                                 },
-                                || {
-                                    progress();
-                                },
+                                || {},
                             );
                         }
                     }
@@ -729,6 +669,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
 pub const fn j_max_half_factor(v: usize) -> usize {
     v / 2
 }

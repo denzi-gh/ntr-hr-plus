@@ -99,7 +99,6 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     unsafe { entries::thread_screen::once_img_infos() }?;
 
     if once_jpeg() == None {
@@ -277,15 +276,9 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
                 .downsample(ScreenIndex::init(RP_SCREEN_BOT as u32))
                 .load(Ordering::Acquire),
         ];
-        #[cfg(not(feature = "mem3"))]
         let quality = [
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
-        ];
-        #[cfg(feature = "mem3")]
-        let quality = [
-            jpeg::downsample_quality_scale(RP_DOWNSAMPLE_EVEN_ODD, quality),
-            jpeg::downsample_quality_scale(RP_DOWNSAMPLE_EVEN_ODD, quality),
         ];
         #[cfg(not(feature = "o3ds"))]
         jpeg.init(

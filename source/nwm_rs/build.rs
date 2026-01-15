@@ -20,6 +20,9 @@ impl Callback {
     fn new() -> Self {
         let mut names = HashSet::<String>::new();
         names.insert("rp_cb".into());
+        names.insert("DmaConfig".into());
+        names.insert("DmaDeviceConfig".into());
+        names.insert("DmaMemoryConfig".into());
 
         let mut union_names = HashSet::<String>::new();
         union_names.insert("nwm_cb".into());

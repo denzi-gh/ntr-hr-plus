@@ -4,9 +4,10 @@
 use super::*;
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
+    // input count DOWNSAMPLE_FACTOR
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
-        input: &[&[u8]; DOWNSAMPLE_FACTOR],
+        input: &mut impl Iterator<Item = *const u8>,
     ) {
         const V_SAMP: bool = true;
         self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP>(
@@ -18,9 +19,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    // input count DOWNSAMPLE_FACTOR
     pub fn color_convert_quarter_novsamp<const H_SAMP: bool>(
         &mut self,
-        input: &[&[u8]; DOWNSAMPLE_FACTOR],
+        input: &mut impl Iterator<Item = *const u8>,
     ) {
         const V_SAMP: bool = false;
         self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP>(
@@ -32,17 +34,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    // input count S
     pub fn color_convert_full<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
-        input: &[&[u8]; S],
+        input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
         self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
     }
 
+    // input count S
     pub fn color_convert_even_odd<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
-        input: &[&[u8]; S],
+        input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
         let start = if self.worker.info.even_odd == false {
@@ -60,10 +64,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         );
     }
 
+    // input count S
     #[inline(always)]
     pub fn color_convert<const S: usize, const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
-        input: &[&[u8]; S],
+        input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
         start: usize,
         step: usize,
@@ -178,9 +183,10 @@ pub fn pconvert(
             >> SCALEBITS) as u8;
 }
 
+// input count N
 #[inline(always)]
 pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, const N: usize>(
-    input: &[&[u8]; N],
+    input: &mut impl Iterator<Item = *const u8>,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
     start: usize,
@@ -193,34 +199,37 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, out_width * N) };
     let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, out_width * N) };
     for i in 0..N {
-        let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * P) };
+        if let Some(input) = input.next() {
+            let input = unsafe { slice::from_raw_parts(input, width * P) };
 
-        let output0 = &mut output0[out_width * i..out_width * (i + 1)];
-        let output1 = &mut output1[out_width * i..out_width * (i + 1)];
-        let output2 = &mut output2[out_width * i..out_width * (i + 1)];
+            let output0 = &mut output0[out_width * i..out_width * (i + 1)];
+            let output1 = &mut output1[out_width * i..out_width * (i + 1)];
+            let output2 = &mut output2[out_width * i..out_width * (i + 1)];
 
-        for (((input, output0), output1), output2) in input
-            .as_chunks::<P>()
-            .0
-            .iter()
-            .skip(start)
-            .step_by(step)
-            .zip(output0.into_iter())
-            .zip(output1.into_iter())
-            .zip(output2.into_iter())
-        {
-            let r = input[R];
-            let g = input[G];
-            let b = input[B];
+            for (((input, output0), output1), output2) in input
+                .as_chunks::<P>()
+                .0
+                .iter()
+                .skip(start)
+                .step_by(step)
+                .zip(output0.into_iter())
+                .zip(output1.into_iter())
+                .zip(output2.into_iter())
+            {
+                let r = input[R];
+                let g = input[G];
+                let b = input[B];
 
-            pconvert(r, g, b, output0, output1, output2, tab);
+                pconvert(r, g, b, output0, output1, output2, tab);
+            }
         }
     }
 }
 
+// input count N
 #[inline(always)]
 pub fn cconvert2<const N: usize, F>(
-    input: &[&[u8]; N],
+    input: &mut impl Iterator<Item = *const u8>,
     comps: F,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
@@ -236,25 +245,27 @@ pub fn cconvert2<const N: usize, F>(
     let output1 = unsafe { slice::from_raw_parts_mut(output1.ptr, out_width * N) };
     let output2 = unsafe { slice::from_raw_parts_mut(output2.ptr, out_width * N) };
     for i in 0..N {
-        let input = unsafe { slice::from_raw_parts(input[i].as_ptr(), width * 2) };
+        if let Some(input) = input.next() {
+            let input = unsafe { slice::from_raw_parts(input, width * 2) };
 
-        let output0 = &mut output0[out_width * i..out_width * (i + 1)];
-        let output1 = &mut output1[out_width * i..out_width * (i + 1)];
-        let output2 = &mut output2[out_width * i..out_width * (i + 1)];
+            let output0 = &mut output0[out_width * i..out_width * (i + 1)];
+            let output1 = &mut output1[out_width * i..out_width * (i + 1)];
+            let output2 = &mut output2[out_width * i..out_width * (i + 1)];
 
-        for (((input, output0), output1), output2) in input
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .skip(start)
-            .step_by(step)
-            .zip(output0.into_iter())
-            .zip(output1.into_iter())
-            .zip(output2.into_iter())
-        {
-            let (r, g, b) = comps(input[0] as u16 | ((input[1] as u16) << 8), tab);
+            for (((input, output0), output1), output2) in input
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .skip(start)
+                .step_by(step)
+                .zip(output0.into_iter())
+                .zip(output1.into_iter())
+                .zip(output2.into_iter())
+            {
+                let (r, g, b) = comps(input[0] as u16 | ((input[1] as u16) << 8), tab);
 
-            pconvert(r, g, b, output0, output1, output2, &tab.rgb_ycc_tab);
+                pconvert(r, g, b, output0, output1, output2, &tab.rgb_ycc_tab);
+            }
         }
     }
 }

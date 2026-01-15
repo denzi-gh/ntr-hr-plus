@@ -51,6 +51,20 @@ pub unsafe fn once_img_infos() -> Option<()> {
     Some(())
 }
 
+#[cfg(feature = "mem3")]
+pub unsafe fn once_img_infos() -> Option<()> {
+    if let Some(m) =
+        request_mem_from_pool::<{ (CAPTURE_DMA_BUF_HEIGHT * GSP_SCREEN_WIDTH * 4) as usize }>()
+    {
+        unsafe {
+            IMG_INFO = m.to_ptr();
+        }
+    } else {
+        return None;
+    }
+    Some(())
+}
+
 #[derive(ConstDefault)]
 pub struct Config {
     pub priority_is_top: bool,
@@ -299,12 +313,26 @@ impl WorkDone {
     }
 }
 
-#[derive(ConstDefault, Clone, Copy)]
+#[cfg(feature = "mem3")]
+#[derive(ConstDefault)]
+pub struct DmaParams {
+    pub dst: u32,
+    pub dma_conf: DmaConfig,
+    pub process: Handle,
+    pub addr: u32,
+}
+
+#[derive(ConstDefault)]
 pub struct WorkReadyParams {
     pub is_top: bool,
+    #[cfg(not(feature = "mem3"))]
     pub format: u32,
     #[cfg(feature = "mem3")]
-    pub pitch: u32,
+    pub screen_info: ScreenInfo,
+    #[cfg(feature = "mem3")]
+    pub screen_params_lock: ScreenParamsLock,
+    #[cfg(feature = "mem3")]
+    pub dma_params: DmaParams,
     #[cfg(not(feature = "o3ds"))]
     pub dma: Handle,
 }
@@ -317,8 +345,10 @@ type SkipFrames = RangedArray<bool, WORK_COUNT>;
 #[allow(unused_macros)]
 fn thread_ready_release(
     is_top: bool,
-    format: u32,
-    #[cfg(feature = "mem3")] pitch: u32,
+    #[cfg(not(feature = "mem3"))] format: u32,
+    #[cfg(feature = "mem3")] screen_info: &ScreenInfo,
+    #[cfg(feature = "mem3")] screen_params_lock: ScreenParamsLock,
+    #[cfg(feature = "mem3")] dma_params: DmaParams,
     #[cfg(not(feature = "o3ds"))] work_index: WorkIndex,
     #[cfg(not(feature = "o3ds"))] dma: Handle,
 ) {
@@ -326,14 +356,26 @@ fn thread_ready_release(
         #[cfg(feature = "o3ds")]
         let work_index = WorkIndex::init(0);
 
-        *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
-            is_top,
-            format,
-            #[cfg(feature = "mem3")]
-            pitch,
-            #[cfg(not(feature = "o3ds"))]
-            dma,
-        };
+        #[cfg(not(feature = "mem3"))]
+        {
+            *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
+                is_top,
+                format,
+                #[cfg(feature = "mem3")]
+                pitch,
+                #[cfg(not(feature = "o3ds"))]
+                dma,
+            };
+        }
+        #[cfg(feature = "mem3")]
+        {
+            *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
+                is_top,
+                screen_info: *screen_info,
+                screen_params_lock,
+                dma_params,
+            };
+        }
 
         #[cfg(not(feature = "o3ds"))]
         {
@@ -477,7 +519,7 @@ pub fn wait_for_vblank(is_top: bool) {
     }
 }
 
-#[derive(ConstDefault)]
+#[derive(ConstDefault, Clone, Copy)]
 pub struct ScreenInfo {
     pub fill: u32,
     pub src: *mut u8,
@@ -518,21 +560,19 @@ pub fn update_gpu_regs(is_top: bool) -> ScreenInfo {
             }
             screen_info.fill = ptr::read_volatile(LCD_BOTTOM_FILLCOLOR as *const u32);
         }
+        screen_info.format &= 0xf;
         screen_info
     }
 }
 
-#[cfg(not(feature = "mem3"))]
 type DmaHandles = RangedArray<Handle, WORK_COUNT>;
 
 #[derive(ConstDefault)]
 pub struct ScreenParams {
-    #[cfg(not(feature = "mem3"))]
     pub dmas: DmaHandles,
     pub game_handle: Handle,
     pub game_pid: u32,
     pub game_fcram_base: u32,
-    #[cfg(not(feature = "mem3"))]
     pub pid: u32,
     pub overlay: OverlayParams,
 }
@@ -552,10 +592,11 @@ pub fn screen_params_lock() -> Option<ScreenParamsLock> {
         unsafe { SCREEN_HANDLES_LOCK },
         c_str!("SCREEN_HANDLES_LOCK"),
     )?;
-    Some(ScreenParamsLock(()))
+    Some(ScreenParamsLock(true))
 }
 
-pub struct ScreenParamsLock(());
+#[derive(ConstDefault)]
+pub struct ScreenParamsLock(bool);
 
 impl ScreenParamsLock {
     pub fn param(&self) -> &mut ScreenParams {
@@ -566,12 +607,13 @@ impl ScreenParamsLock {
 impl Drop for ScreenParamsLock {
     #[named]
     fn drop(&mut self) {
-        unsafe { release_mutex(cname!(), SCREEN_HANDLES_LOCK, c_str!("SCREEN_HANDLES_LOCK")) }
+        if self.0 {
+            unsafe { release_mutex(cname!(), SCREEN_HANDLES_LOCK, c_str!("SCREEN_HANDLES_LOCK")) }
+        }
     }
 }
 
 pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
-    #[cfg(not(feature = "mem3"))]
     if let Some(lock) = screen_params_lock() {
         #[cfg(not(feature = "o3ds"))]
         let w = unsafe { PARAMS.work_index };
@@ -583,7 +625,7 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
         let img = unsafe { img_info() } as u32;
 
         capture_screen(
-            lock.param(),
+            lock,
             is_top,
             screen_info,
             img,
@@ -592,13 +634,6 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
         )
     } else {
         false
-    }
-
-    #[cfg(feature = "mem3")]
-    unsafe {
-        IMG_INFO = (screen_info.src as u32 | (1 << 31)) as *mut u8;
-        thread_ready_release(is_top, screen_info.format, screen_info.pitch);
-        true
     }
 }
 
@@ -627,16 +662,86 @@ pub fn img_info_prev(is_top: bool) -> *const u8 {
     *iinfo.bufs.get(&index)
 }
 
+#[cfg(feature = "mem3")]
+pub fn next_capture_screen(
+    screen_params_lock: &ScreenParamsLock,
+    dma_params: &DmaParams,
+    src_buf_size: u32,
+    dst_buf_size: u32,
+    buf_i: &mut u32,
+    dst_buf_total_size: u32,
+) -> bool {
+    unsafe {
+        let params = screen_params_lock.param();
+
+        let dst_offset = *buf_i % CAPTURE_DMA_COUNT * dst_buf_size;
+        let w = WorkIndex::init(0);
+        {
+            let dma = params.dmas.get_mut(&w);
+            if *dma != 0 {
+                let _ = svcWaitSynchronization(*dma, -1);
+                let _ = svcCloseHandle(*dma);
+                *dma = 0;
+                let _ = svcInvalidateProcessDataCache(
+                    CUR_PROCESS_HANDLE,
+                    dma_params.dst + dst_offset,
+                    dst_buf_size,
+                );
+            }
+        }
+
+        *buf_i += 1;
+
+        let src_offset = *buf_i * src_buf_size;
+        let dst_offset = *buf_i % CAPTURE_DMA_COUNT * dst_buf_size;
+        if dst_offset >= dst_buf_total_size {
+            return false;
+        }
+        let dst_buf_size = core::cmp::min(dst_buf_size, dst_buf_total_size - dst_offset);
+
+        let _ = svcFlushProcessDataCache(
+            dma_params.process,
+            dma_params.addr + src_offset,
+            dst_buf_size,
+        );
+        let _ = svcFlushProcessDataCache(
+            CUR_PROCESS_HANDLE,
+            dma_params.dst + dst_offset,
+            dst_buf_size,
+        );
+
+        let mut dma = mem::MaybeUninit::uninit();
+        let res = svcStartInterProcessDma(
+            dma.as_mut_ptr(),
+            CUR_PROCESS_HANDLE,
+            dma_params.dst + dst_offset,
+            dma_params.process,
+            dma_params.addr + src_offset,
+            dst_buf_size,
+            &dma_params.dma_conf,
+        );
+        if res != 0 {
+            return false;
+        }
+
+        let dma = dma.assume_init();
+        *params.dmas.get_mut(&w) = dma;
+    }
+
+    true
+}
+
 #[named]
-#[cfg(not(feature = "mem3"))]
 fn capture_screen(
-    params: &mut ScreenParams,
+    screen_params_lock: ScreenParamsLock,
     is_top: bool,
     screen_info: &ScreenInfo,
     dst: u32,
     #[cfg(not(feature = "o3ds"))] w: WorkIndex,
 ) -> bool {
     unsafe {
+        let params = screen_params_lock.param();
+
         #[cfg(feature = "o3ds")]
         let w = WorkIndex::init(0);
 
@@ -668,11 +773,14 @@ fn capture_screen(
 
         let mut pitch = screen_info.pitch;
 
+        #[cfg(not(feature = "mem3"))]
         let height = if is_top {
             GSP_SCREEN_HEIGHT_TOP
         } else {
             GSP_SCREEN_HEIGHT_BOTTOM
         };
+        #[cfg(feature = "mem3")]
+        let height = CAPTURE_DMA_HEIGHT;
         let buf_size = transfer_size * height;
 
         if transfer_size == pitch {
@@ -695,10 +803,7 @@ fn capture_screen(
             _padding: 0,
             srcDev: DmaDeviceConfig {
                 deviceId: -1,
-                #[cfg(not(feature = "mem3"))]
                 allowedAlignments: 15,
-                #[cfg(feature = "mem3")]
-                allowedAlignments: 1,
             },
             dstMem: DmaMemoryConfig {
                 burstSize: burst_size as s16,
@@ -708,22 +813,17 @@ fn capture_screen(
             },
             dstDev: DmaDeviceConfig {
                 deviceId: -1,
-                #[cfg(not(feature = "mem3"))]
                 allowedAlignments: 15,
-                #[cfg(feature = "mem3")]
-                allowedAlignments: 1,
             },
             srcMem: DmaMemoryConfig {
                 burstSize: burst_size as s16,
-                #[cfg(not(feature = "mem3"))]
                 burstStride: burst_size as s16,
-                #[cfg(feature = "mem3")]
-                burstStride: burst_size as s16 * jpeg::DOWNSAMPLE_FACTOR as s16,
                 transferSize: transfer_size as s16,
                 transferStride: pitch as s16,
             },
         };
 
+        #[cfg(not(feature = "mem3"))]
         if buf_size > img_buffer_size(is_top) as u32 {
             ns_dbg_print!(failed, c_str!("buf_size"), buf_size as s32);
             sleep_thread(THREAD_WAIT_NS);
@@ -733,6 +833,7 @@ fn capture_screen(
         {
             let dma = params.dmas.get_mut(&w);
             if *dma != 0 {
+                let _ = svcWaitSynchronization(*dma, -1);
                 let _ = svcCloseHandle(*dma);
                 *dma = 0;
             }
@@ -786,6 +887,7 @@ fn capture_screen(
             let _ = dma;
         }
 
+        #[cfg(not(feature = "mem3"))]
         thread_ready_release(
             is_top,
             screen_info.format,
@@ -793,6 +895,19 @@ fn capture_screen(
             w,
             #[cfg(not(feature = "o3ds"))]
             dma,
+        );
+
+        #[cfg(feature = "mem3")]
+        thread_ready_release(
+            is_top,
+            screen_info,
+            screen_params_lock,
+            DmaParams {
+                dst,
+                dma_conf,
+                process,
+                addr,
+            },
         );
 
         true
@@ -824,7 +939,6 @@ fn close_overlay_handle(params: &mut OverlayParams) {
     params.game_pid = 0;
 }
 
-#[cfg(not(feature = "mem3"))]
 fn get_game_handle(params: &mut ScreenParams) -> Handle {
     let game_pid = RP_CONFIG.game_pid().load(Ordering::Acquire);
     if game_pid != params.game_pid {
@@ -941,7 +1055,6 @@ fn send_overlay_stats(params: &mut OverlayParams) {
     }
 }
 
-#[cfg(not(feature = "mem3"))]
 fn is_in_vram(phys: u32) -> bool {
     if phys >= 0x18000000 {
         if phys < 0x18000000 + 0x00600000 {
@@ -951,7 +1064,6 @@ fn is_in_vram(phys: u32) -> bool {
     false
 }
 
-#[cfg(not(feature = "mem3"))]
 fn is_in_fcram(phys: u32) -> bool {
     if phys >= 0x20000000 {
         if phys < 0x20000000 + 0x10000000 {

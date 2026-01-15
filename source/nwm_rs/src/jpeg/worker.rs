@@ -33,27 +33,39 @@ pub struct JpegSharedMutCell {
     pub cell: *mut JpegSharedMut,
 }
 
+#[cfg(not(feature = "o3ds"))]
 impl<'a> JpegWorker<'a> {
-    pub fn encode<F, G>(
+    pub fn encode<F>(&'a mut self, dst: WorkerDst, src: &[u8], pre_progress: F) -> Option<JpegDqRet>
+    where
+        F: FnMut(),
+    {
+        JpegEncode { worker: self, dst }.encode::<_, F>(src, pre_progress)
+    }
+}
+
+#[cfg(all(feature = "o3ds", not(feature = "mem3")))]
+impl<'a> JpegWorker<'a> {
+    pub fn encode(
         &'a mut self,
         dst: WorkerDst,
         #[cfg(not(feature = "mem3"))] src: &[u8],
+    ) -> Option<JpegDqRet> {
+        JpegEncode { worker: self, dst }.encode::<fn() -> (), fn() -> ()>(src)
+    }
+}
+
+#[cfg(all(feature = "o3ds", feature = "mem3"))]
+impl<'a> JpegWorker<'a> {
+    pub fn encode<G>(
+        &'a mut self,
+        dst: WorkerDst,
         #[cfg(feature = "mem3")] src: *const u8,
-        #[cfg(feature = "mem3")] pitch: u32,
-        pre_progress: F,
         progress: G,
     ) -> Option<JpegDqRet>
     where
-        F: FnMut(),
         G: FnMut(),
     {
-        JpegEncode { worker: self, dst }.encode(
-            src,
-            #[cfg(feature = "mem3")]
-            pitch,
-            pre_progress,
-            progress,
-        )
+        JpegEncode { worker: self, dst }.encode::<G, _>(src, progress)
     }
 }
 
