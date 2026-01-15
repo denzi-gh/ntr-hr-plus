@@ -1,11 +1,11 @@
-FROM archlinux:base-devel
+FROM archlinux:base-devel-20260111.0.480139
 
 ENV DEVKITPRO=/opt/devkitpro
 ENV DEVKITARM=/opt/devkitpro/devkitARM
 ENV DEVKITPPC=/opt/devkitpro/devkitPPC
 ENV PATH="$PATH:/opt/devkitpro/tools/bin"
 
-RUN pacman -Syuu llvm clang rustup wget cmake ninja python git lld unzip vim zip --noconfirm --needed && \
+RUN pacman -Syuu llvm clang rustup wget cmake ninja python git lld unzip vim zip nvm --noconfirm --needed && \
     export MAKEROM_VERSION=0.18.4 && \
     wget "https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v$MAKEROM_VERSION/makerom-v$MAKEROM_VERSION-ubuntu_x86_64.zip" && \
     unzip "makerom-v$MAKEROM_VERSION-ubuntu_x86_64.zip" && \
@@ -49,7 +49,7 @@ RUN pacman -Syuu llvm clang rustup wget cmake ninja python git lld unzip vim zip
         ninja install && \
         cd .. && \
     rm -rf "llvm-project-$CLANG_VERSION.src.tar.xz" "llvm-project-$CLANG_VERSION.src" compiler-rt-build && \
-    export RUST_VERSION=2025-08-08 && \
+    export RUST_VERSION=2026-01-08 && \
     rustup toolchain install nightly-$RUST_VERSION && \
     rustup component add rust-src && \
     pacman-key --recv BC26F752D25B92CE272E0F44F7FD5492264BB9D0 --keyserver keyserver.ubuntu.com && \

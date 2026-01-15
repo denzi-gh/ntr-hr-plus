@@ -829,7 +829,6 @@ impl<const SIZE: usize> WorkerBufComps<SIZE> {
 
 pub type CompIndex = Ranged<{ MAX_COMPONENTS as u32 }>;
 
-#[cfg(not(feature = "mem3"))]
 #[derive(Clone, Copy)]
 pub struct WorkerPrepBufDownsampleQuarter {
     pub buf:
@@ -841,7 +840,6 @@ pub struct WorkerPrepBufDownsampleQuarter {
 pub union WorkerPrepBufDownsample {
     pub full:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_NONE)) }>,
-    #[cfg(not(feature = "mem3"))]
     pub quarter: WorkerPrepBufDownsampleQuarter,
     pub even_odd:
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)) }>,

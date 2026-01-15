@@ -61,7 +61,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn downsample_quarter<const H_SAMP: bool, const V_SAMP: bool>(
         &mut self,
         output_base: usize,
@@ -126,7 +125,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_quarter_rem<'t, T: Iterator<Item = &'t [u8]>>(&mut self, src: T) -> bool {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
@@ -174,7 +172,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         true
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn do_pre_process_quarter(
         &mut self,
         output_base: usize,
@@ -220,7 +217,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_quarter(&mut self, src: [&[u8]; DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR]) {
         for (output_base, chunk) in src
             .as_chunks::<{ SAMP_FACTOR * DOWNSAMPLE_FACTOR }>()
@@ -250,7 +246,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_quarter_nohsamp_novsamp(
         &mut self,
         src: [&[u8]; DCTSIZE * DOWNSAMPLE_FACTOR],
@@ -287,7 +282,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
     }
 
-    #[cfg(not(feature = "mem3"))]
     pub fn pre_process_quarter_novsamp(&mut self, src: [&[u8]; DCTSIZE * DOWNSAMPLE_FACTOR]) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = false;

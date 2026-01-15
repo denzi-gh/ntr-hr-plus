@@ -31,7 +31,6 @@ pub unsafe fn forward_dct(
 
     unsafe {
         match downsample {
-            #[cfg(not(feature = "mem3"))]
             RP_DOWNSAMPLE_QUARTER => convsamp(
                 downsample_screen_width(RP_DOWNSAMPLE_QUARTER),
                 samp,

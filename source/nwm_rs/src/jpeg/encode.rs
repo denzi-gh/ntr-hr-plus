@@ -363,6 +363,72 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 )
             };
             match screen.downsample {
+                RP_DOWNSAMPLE_QUARTER => {
+                    if vss {
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<{ DCTSIZE * SAMP_FACTOR * DOWNSAMPLE_FACTOR }>();
+                        let n = src_chunks.len();
+                        for (i, chunks) in src_chunks.clone().enumerate() {
+                            self.process(
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_quarter(chunks);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+
+                        let rem = src_chunks.into_remainder();
+                        if !rem.is_empty() {
+                            self.process(
+                                |this| {
+                                    /* Pre-process */
+                                    if !this.pre_process_quarter_rem(rem) {
+                                        return false;
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    } else {
+                        let pre_process = if hss {
+                            Self::pre_process_quarter_novsamp
+                        } else {
+                            Self::pre_process_quarter_nohsamp_novsamp
+                        };
+
+                        let src_chunks = src
+                            .chunks_exact(src_pitch as usize)
+                            .map(|s| &s[0..pitch])
+                            .array_chunks::<{ DCTSIZE * DOWNSAMPLE_FACTOR }>();
+                        let n = src_chunks.len();
+                        for (i, chunk) in src_chunks.enumerate() {
+                            self.process(
+                                |this| {
+                                    pre_process(this, chunk);
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {
+                                    progress();
+                                },
+                            );
+                        }
+                    }
+                }
                 RP_DOWNSAMPLE_EVEN_ODD => {
                     if vss {
                         // vss == true

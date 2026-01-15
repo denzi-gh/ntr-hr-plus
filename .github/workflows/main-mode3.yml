@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: xzn92/ntr-hr-build-environment:2025-08-10
+      image: xzn92/ntr-hr-build-environment:2026-01-08
     steps:
       - name: Rust env
         run: |
@@ -28,7 +28,6 @@ jobs:
           popd
       - name: Prepare node
         run: |
-          pacman -Sy nvm --noconfirm
           source /usr/share/nvm/init-nvm.sh
           nvm install node
           echo "$(dirname $(which node))" >> "$GITHUB_PATH"
