@@ -165,11 +165,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         } else {
             let src_iter = &mut src.chunks_exact(pitch).map(|x| x.as_ptr());
-            let height = if is_top {
-                GSP_SCREEN_HEIGHT_TOP
-            } else {
-                GSP_SCREEN_HEIGHT_BOTTOM
-            } as usize;
+            let height = src.len() / pitch;
             if vss {
                 // vss == true
                 match screen.downsample {

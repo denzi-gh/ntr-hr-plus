@@ -99,7 +99,7 @@ static mut PARAMS: Params = const_default();
 
 pub fn close_handles() {
     if let Some(lock) = screen_params_lock() {
-        close_game_handle(lock.param())
+        close_game_handle(lock.params())
     }
 }
 
@@ -331,8 +331,6 @@ fn thread_ready_release(
             *PARAMS.work_ready.get_mut(&work_index) = WorkReadyParams {
                 is_top,
                 format,
-                #[cfg(feature = "mem3")]
-                pitch,
                 #[cfg(not(feature = "o3ds"))]
                 dma,
             };
@@ -564,13 +562,13 @@ pub fn screen_params_lock() -> Option<ScreenParamsLock> {
         unsafe { SCREEN_HANDLES_LOCK },
         c_str!("SCREEN_HANDLES_LOCK"),
     )?;
-    Some(ScreenParamsLock())
+    Some(ScreenParamsLock(()))
 }
 
-pub struct ScreenParamsLock();
+pub struct ScreenParamsLock(());
 
 impl ScreenParamsLock {
-    pub fn param(&self) -> &mut ScreenParams {
+    pub fn params(&self) -> &mut ScreenParams {
         unsafe { &mut SCREEN_PARAMS }
     }
 }
@@ -595,7 +593,7 @@ pub fn try_capture_screen(is_top: bool, screen_info: &ScreenInfo) -> bool {
         let img = unsafe { img_info() } as u32;
 
         capture_screen(
-            lock,
+            lock.params(),
             is_top,
             screen_info,
             img,
@@ -642,15 +640,13 @@ pub fn img_info_prev(is_top: bool) -> *const u8 {
 #[named]
 #[cfg(not(feature = "mem3"))]
 fn capture_screen(
-    screen_params_lock: ScreenParamsLock,
+    params: &mut ScreenParams,
     is_top: bool,
     screen_info: &ScreenInfo,
     dst: u32,
     #[cfg(not(feature = "o3ds"))] w: WorkIndex,
 ) -> bool {
     unsafe {
-        let params = screen_params_lock.param();
-
         #[cfg(feature = "o3ds")]
         let w = WorkIndex::init(0);
 
@@ -738,7 +734,6 @@ fn capture_screen(
         {
             let dma = params.dmas.get_mut(&w);
             if *dma != 0 {
-                let _ = svcWaitSynchronization(*dma, -1);
                 let _ = svcCloseHandle(*dma);
                 *dma = 0;
             }

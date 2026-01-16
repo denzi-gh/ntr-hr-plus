@@ -97,12 +97,7 @@ impl WorkReady {
         entries::thread_screen::thread_ready_acquire()?;
 
         let bctx = self.0.bctx_mut();
-        let work_ready = unsafe {
-            mem::replace(
-                ptr::read_volatile(&self.0.work_ready_params()),
-                const_default(),
-            )
-        };
+        let work_ready = unsafe { ptr::read_volatile(&self.0.work_ready_params()) };
 
         unsafe {
             *bctx = BlitCtx {
@@ -481,10 +476,9 @@ impl WorkFrame {
         let restart_interval = restart_in_rows as u32 * mcus_per_row;
 
         let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
-        let format = bctx.format;
         let cinfo = jpeg::CInfo {
             is_top: bctx.is_top,
-            color_space: match format {
+            color_space: match bctx.format {
                 0 => jpeg::ColorSpace::XBGR,
                 1 => jpeg::ColorSpace::BGR,
                 2 => jpeg::ColorSpace::RGB565,
