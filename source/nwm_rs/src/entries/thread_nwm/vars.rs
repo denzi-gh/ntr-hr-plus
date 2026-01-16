@@ -901,10 +901,10 @@ unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
     };
 
     unsafe {
-        let reliable_stream = flags & RP_CONFIG_RELIABLE_STREAM_FLAG > 0;
+        let reliable_stream = flags & RP_CONFIG_FLAG_RELIABLE_STREAM > 0;
         RELIABLE_STREAM.store(reliable_stream, Ordering::Release);
         RELIABLE_STREAM_DELTA_PROG.store(
-            reliable_stream && flags & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG > 0,
+            reliable_stream && flags & RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA > 0,
             Ordering::Release,
         );
         MAX_QOS = qos;

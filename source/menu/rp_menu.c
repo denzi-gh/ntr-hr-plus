@@ -32,13 +32,13 @@ enum {
 };
 
 enum {
+	REMOTE_PLAY_MENU_COMP_FMT_PROT,
 	REMOTE_PLAY_MENU_QUALITY,
 	REMOTE_PLAY_MENU_PRIORITY_SCREEN,
 	REMOTE_PLAY_MENU_PRIORITY_FACTOR,
 	REMOTE_PLAY_MENU_QOS,
 	REMOTE_PLAY_MENU_VIEWER_IP,
 	REMOTE_PLAY_MENU_VIEWER_PORT,
-	REMOTE_PLAY_MENU_RELIABLE_STREAM,
 	REMOTE_PLAY_MENU_ADV,
 
 	REMOTE_PLAY_MENU_APPLY,
@@ -209,64 +209,178 @@ socket_exit:
 	closesocket(fd);
 }
 
-enum ReliableStream {
-	ReliableStreamNone,
-	ReliableStreamOn,
-	ReliableStreamDelta, // WIP
-	ReliableStreamMin = ReliableStreamNone,
-	ReliableStreamMax = ReliableStreamDelta,
+enum CompressionProtocol {
+	CompressionProtocolUDP,
+	CompressionProtocolReliableStream,
+	CompressionProtocolRSDelta,
+	CompressionProtocolCount,
 };
 
-static enum ReliableStream getReliableStreamFromFlag(int flag) {
-	if (flag & RP_CONFIG_RELIABLE_STREAM_FLAG) {
-		if (flag & RP_CONFIG_RELIABLE_STREAM_DELTA_PROG) {
-			return ReliableStreamDelta;
+enum CompressionFormat {
+	CompressionFormatJPEG,
+	CompressionFormatLossless,
+	CompressionFormatCount,
+};
+
+static void getCompFmtProtFromFlag(int flag, enum CompressionFormat *fmt, int *lossless_data, enum CompressionProtocol *prot) {
+	if (fmt) {
+		if (flag & RP_CONFIG_FLAG_LOSSLESS) {
+			*fmt = CompressionFormatLossless;
 		} else {
-			return ReliableStreamOn;
+			*fmt = CompressionFormatJPEG;
 		}
-	} else {
-		return ReliableStreamNone;
+	}
+
+	if (lossless_data)
+		*lossless_data = (flag & RP_CONFIG_FLAG_LOSSLESS_DATA) >> RP_CONFIG_FLAG_LOSSLESS_DATA_SHIFT;
+
+	if (prot) {
+		if (flag & RP_CONFIG_FLAG_RELIABLE_STREAM) {
+			if (flag & RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA) {
+				*prot = CompressionProtocolRSDelta;
+			} else {
+				*prot = CompressionProtocolReliableStream;
+			}
+		} else {
+			*prot = CompressionProtocolUDP;
+		}
 	}
 }
 
-static int getFlagFromReliableStream(enum ReliableStream reliableStream) {
-	switch (reliableStream) {
-		default:
-        case ReliableStreamNone:
-			return 0;
-        case ReliableStreamOn:
-			return RP_CONFIG_RELIABLE_STREAM_FLAG;
-        case ReliableStreamDelta:
-			return RP_CONFIG_RELIABLE_STREAM_FLAG | RP_CONFIG_RELIABLE_STREAM_DELTA_PROG;
-    }
-}
+static void updateFlagFromCompFmtProt(int *flag, enum CompressionFormat *fmt, int *lossless_data, enum CompressionProtocol *prot) {
+	if (!flag)
+		return;
 
-static const char *getReliableStreamName(enum ReliableStream reliableStream) {
-	switch (reliableStream) {
-		default:
-        case ReliableStreamNone:
-			return "Off";
-        case ReliableStreamOn:
-			return "On";
-        case ReliableStreamDelta:
-			return "On + Delta";
-    }
-}
+	if (fmt) {
+		switch (*fmt) {
+			default:
+			case CompressionFormatJPEG:
+				*flag &= ~RP_CONFIG_FLAG_LOSSLESS;
+				break;
 
-static const char *getReliableStreamDesc(enum ReliableStream reliableStream) {
-	if (!ntrConfig->isNew3DS) {
-		return "Reliable Stream is New 3DS only.\n";
+			case CompressionFormatLossless:
+				*flag |= RP_CONFIG_FLAG_LOSSLESS;
+				break;
+		}
 	}
-	switch (reliableStream) {
-		default:
-        case ReliableStreamNone:
-			return "Off: Better compatibility and\nlower latency; may drop frames.";
-        case ReliableStreamOn:
-			return "On: Avoid dropping frames.\nNeed NTRViewer-HR.";
-        case ReliableStreamDelta:
-			return "Delta: Progressive delta encoding.";
-    }
+
+	if (lossless_data) {
+		*flag &= ~RP_CONFIG_FLAG_LOSSLESS_DATA;
+		*flag |= ((*lossless_data) & RP_CONFIG_FLAG_LOSSLESS_DATA_MASK) << RP_CONFIG_FLAG_LOSSLESS_DATA_SHIFT;
+	}
+
+	if (prot) {
+		switch (*prot) {
+			default:
+			case CompressionProtocolUDP:
+				*flag &= ~RP_CONFIG_FLAG_RELIABLE_STREAM;
+				*flag &= ~RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA;
+				break;
+
+			case CompressionProtocolReliableStream:
+				*flag |= RP_CONFIG_FLAG_RELIABLE_STREAM;
+				*flag &= ~RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA;
+				break;
+
+			case CompressionProtocolRSDelta:
+				*flag |= RP_CONFIG_FLAG_RELIABLE_STREAM;
+				*flag |= RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA;
+				break;
+		}
+	}
 }
+
+static const char *getCompFmtProtName(enum CompressionFormat fmt, enum CompressionProtocol prot) {
+	switch (fmt) {
+		default:
+		case CompressionFormatJPEG:
+			switch (prot) {
+				default:
+				case CompressionProtocolUDP:
+					return "JPEG UDP";
+					break;
+
+				case CompressionProtocolReliableStream:
+					return "JPEG RS";
+					break;
+
+				case CompressionProtocolRSDelta:
+					return "JPEG RS, Delta";
+					break;
+			}
+			break;
+
+		case CompressionFormatLossless:
+			switch (prot) {
+				default:
+				case CompressionProtocolUDP:
+					return "Lossless UDP";
+					break;
+
+				case CompressionProtocolReliableStream:
+					return "Lossless RS";
+					break;
+
+				case CompressionProtocolRSDelta:
+					return "Lossless RS, Delta";
+					break;
+			}
+			break;
+	}
+}
+
+static const char *getCompFmtProtDesc(enum CompressionFormat fmt, enum CompressionProtocol prot) {
+	switch (fmt) {
+		default:
+		case CompressionFormatJPEG:
+			switch (prot) {
+				default:
+				case CompressionProtocolUDP:
+					return "Compatibility and low latency.\nMay drop frames.";
+					break;
+
+				case CompressionProtocolReliableStream:
+					return "Avoid dropping frames.\nNeed NTRViewer-HR.";
+					break;
+
+				case CompressionProtocolRSDelta:
+					return "JPEG delta encoding.\nNeed NTRViewer-HR.";
+					break;
+			}
+			break;
+
+		case CompressionFormatLossless:
+			switch (prot) {
+				default:
+				case CompressionProtocolUDP:
+					return "Lossless low latency.\nNeed NTRViewer-HR.";
+					break;
+
+				case CompressionProtocolReliableStream:
+					return "Lossless, avoid dropping frames.\nNeed NTRViewer-HR.";
+					break;
+
+				case CompressionProtocolRSDelta:
+					return "Lossless delta encoding.\nNeed NTRViewer-HR.";
+					break;
+			}
+			break;
+	}
+}
+
+#define CompProtCount (ntrConfig->isNew3DS ? CompressionProtocolCount : 1)
+
+static int getOptionFromCompFmtProt(enum CompressionFormat fmt, enum CompressionProtocol prot) {
+	return fmt * CompProtCount + prot;
+}
+
+static void getCompFmtProtFromOption(int option, enum CompressionFormat *fmt, enum CompressionProtocol *prot) {
+	*prot = option % CompProtCount;
+	*fmt = option / CompProtCount;
+}
+
+#define CompFmtProtMin (0)
+#define CompFmtProtMax (CompProtCount * CompressionFormatCount - 1)
 
 static const char *getChromaSSName(int i) {
 	switch (i) {
@@ -310,11 +424,11 @@ static const char *getDownsampleDesc(int i) {
 	switch (i) {
 		default:
 		case RP_DOWNSAMPLE_NONE:
-			return "Choose downsample method to improve\nframerate at the cost of quality.\nNeed NTRViewer-HR.";
+			return "Choose downsample method to improve\nframerate at the cost of quality.";
 		case RP_DOWNSAMPLE_CHECKER:
-			return "Checkerboard: Alternate checkerboard\npattern every other frame.";
+			return "Checkerboard: Alternate checkerboard\npattern every other frame.\nNeed NTRViewer-HR.";
 		case RP_DOWNSAMPLE_EVEN_ODD:
-			return "Even/Odd: Alternate even/odd row\nevery other frame.";
+			return "Even/Odd: Alternate even/odd row\nevery other frame.\nNeed NTRViewer-HR.";
 		case RP_DOWNSAMPLE_QUARTER:
 			return "1/2x1/2: Quarter resoluion.";
 	}
@@ -705,6 +819,17 @@ int remotePlayMenu(u32 localaddr) {
 			titleCurrent = titleNotStarted;
 		}
 
+		enum CompressionFormat compFmt;
+		int losslessData;
+		enum CompressionProtocol compProt;
+		getCompFmtProtFromFlag(config.dstPort & RP_CONFIG_FLAGS_DATA_MASK, &compFmt, &losslessData, &compProt);
+
+		int rpLosslessData;
+		getCompFmtProtFromFlag(rpConfig->dstPort & RP_CONFIG_FLAGS_DATA_MASK, NULL, &rpLosslessData, NULL);
+
+		char compFmtProtCaption[LOCAL_OPT_TEXT_BUF_SIZE];
+		xsnprintf(compFmtProtCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Fmt/Prot: %s", getCompFmtProtName(compFmt, compProt));
+
 		char priorityScreenCaption[LOCAL_OPT_TEXT_BUF_SIZE];
 		xsnprintf(priorityScreenCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Priority Screen: %s", (config.mode & 0xff00) == 0 ? "Bottom" : "Top");
 
@@ -712,7 +837,15 @@ int remotePlayMenu(u32 localaddr) {
 		xsnprintf(priorityFactorCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Priority Factor: %"PRId32, config.mode & 0xff);
 
 		char qualityCaption[LOCAL_OPT_TEXT_BUF_SIZE];
-		xsnprintf(qualityCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Quality: %"PRId32, config.quality);
+		switch (compFmt) {
+			default:
+			case CompressionFormatJPEG:
+				xsnprintf(qualityCaption, LOCAL_OPT_TEXT_BUF_SIZE, "JPEG Quality: %"PRId32, config.quality);
+				break;
+			case CompressionFormatLossless:
+				xsnprintf(qualityCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Color Quality Bias: %"PRId32, losslessData);
+				break;
+		}
 
 		char qosCaption[LOCAL_OPT_TEXT_BUF_SIZE];
 		xsnprintf(qosCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Bandwidth Limit: %"PRId32" Mbps", config.qos / 1024 / 128);
@@ -721,11 +854,7 @@ int remotePlayMenu(u32 localaddr) {
 		xsnprintf(dstAddrCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Viewer IP: %d.%d.%d.%d", dstAddr4[0], dstAddr4[1], dstAddr4[2], dstAddr4[3]);
 
 		char dstPortCaption[LOCAL_OPT_TEXT_BUF_SIZE];
-		xsnprintf(dstPortCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Port: %"PRId32, config.dstPort & 0xffff);
-
-		enum ReliableStream reliableStream = getReliableStreamFromFlag(config.dstPort & 0xffff0000);
-		char reliableStreamCaption[LOCAL_OPT_TEXT_BUF_SIZE];
-		xsnprintf(reliableStreamCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Reliable Stream: %s", getReliableStreamName(reliableStream));
+		xsnprintf(dstPortCaption, LOCAL_OPT_TEXT_BUF_SIZE, "Viewer Port: %"PRId32, config.dstPort & RP_CONFIG_PORT_MASK);
 
 		const char *captions[REMOTE_PLAY_MENU_COUNT];
 		captions[REMOTE_PLAY_MENU_PRIORITY_SCREEN] = priorityScreenCaption;
@@ -734,22 +863,30 @@ int remotePlayMenu(u32 localaddr) {
 		captions[REMOTE_PLAY_MENU_QOS] = qosCaption;
 		captions[REMOTE_PLAY_MENU_VIEWER_IP] = dstAddrCaption;
 		captions[REMOTE_PLAY_MENU_VIEWER_PORT] = dstPortCaption;
-		captions[REMOTE_PLAY_MENU_RELIABLE_STREAM] = reliableStreamCaption;
+		captions[REMOTE_PLAY_MENU_COMP_FMT_PROT] = compFmtProtCaption;
 		captions[REMOTE_PLAY_MENU_ADV] = "Advanced Options";
 		captions[REMOTE_PLAY_MENU_APPLY] = "Apply";
 
 		const char *descs[REMOTE_PLAY_MENU_COUNT] = { 0 };
 		descs[REMOTE_PLAY_MENU_PRIORITY_FACTOR] = "0: Priority screen only.";
-		descs[REMOTE_PLAY_MENU_RELIABLE_STREAM] = getReliableStreamDesc(reliableStream);
+		descs[REMOTE_PLAY_MENU_COMP_FMT_PROT] = getCompFmtProtDesc(compFmt, compProt);
 
 		const u8 (*colors[REMOTE_PLAY_MENU_COUNT])[3] = { 0 };
 		colors[REMOTE_PLAY_MENU_PRIORITY_SCREEN] = !!(config.mode & 0xff00) != !!(rpConfig->mode & 0xff00) ? &changed_color : 0;
 		colors[REMOTE_PLAY_MENU_PRIORITY_FACTOR] = (config.mode & 0xff) != (rpConfig->mode & 0xff) ? &changed_color : 0;
-		colors[REMOTE_PLAY_MENU_QUALITY] = config.quality != rpConfig->quality ? &changed_color : 0;
+		switch (compFmt) {
+			default:
+			case CompressionFormatJPEG:
+				colors[REMOTE_PLAY_MENU_QUALITY] = config.quality != rpConfig->quality ? &changed_color : 0;
+				break;
+			case CompressionFormatLossless:
+				colors[REMOTE_PLAY_MENU_QUALITY] = losslessData != rpLosslessData ? &changed_color : 0;
+				break;
+		}
 		colors[REMOTE_PLAY_MENU_QOS] = config.qos != rpConfig->qos ? &changed_color : 0;
 		colors[REMOTE_PLAY_MENU_VIEWER_IP] = config.dstAddr != rpConfig->dstAddr ? &changed_color : 0;
-		colors[REMOTE_PLAY_MENU_VIEWER_PORT] = (config.dstPort & 0xffff) != (rpConfig->dstPort & 0xffff) ? &changed_color : 0;
-		colors[REMOTE_PLAY_MENU_RELIABLE_STREAM] = (config.dstPort & 0xffff0000) != (rpConfig->dstPort & 0xffff0000) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_VIEWER_PORT] = (config.dstPort & RP_CONFIG_PORT_MASK) != (rpConfig->dstPort & RP_CONFIG_PORT_MASK) ? &changed_color : 0;
+		colors[REMOTE_PLAY_MENU_COMP_FMT_PROT] = (config.dstPort & RP_CONFIG_FLAGS) != (rpConfig->dstPort & RP_CONFIG_FLAGS) ? &changed_color : 0;
 		colors[REMOTE_PLAY_MENU_ADV] = memcmp(RP_CONFIG_ADV_CFG(&config), RP_CONFIG_ADV_CFG(rpConfig), RP_CONFIG_ADV_CFG_SIZE) != 0 ? &changed_color : 0;
 
 		u32 keys;
@@ -814,17 +951,50 @@ int remotePlayMenu(u32 localaddr) {
 			}
 
 			case REMOTE_PLAY_MENU_QUALITY: { /* quality */
-				int quality = config.quality;
-				if (keys == KEY_X)
-					quality = rpConfig->quality;
-				else
-					menu_adjust_value_with_key(&quality, keys, 5, 10);
+				int dstPort = config.dstPort;
+				int dstFlag = dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+				enum CompressionFormat fmt;
+				int losslessData;
+				getCompFmtProtFromFlag(dstFlag, &fmt, &losslessData, NULL);
 
-				quality = CLAMP(quality, RP_QUALITY_MIN, RP_QUALITY_MAX);
+				switch (fmt) {
+					default:
+					case CompressionFormatJPEG: {
+						int quality = config.quality;
+						if (keys == KEY_X)
+							quality = rpConfig->quality;
+						else
+							menu_adjust_value_with_key(&quality, keys, 5, 10);
 
-				if (quality != (int)config.quality) {
-					config.quality = quality;
+						quality = CLAMP(quality, RP_QUALITY_MIN, RP_QUALITY_MAX);
+
+						if (quality != (int)config.quality) {
+							config.quality = quality;
+						}
+					}
+					break;
+					case CompressionFormatLossless: {
+						if (keys == KEY_X) {
+							int dstPort = rpConfig->dstPort;
+							int dstFlag = dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+							getCompFmtProtFromFlag(dstFlag, NULL, &losslessData, NULL);
+						} else
+							menu_adjust_value_with_key(&losslessData, keys, 1, 1);
+
+						losslessData = CLAMP(losslessData, RP_COLOR_BIAS_MIN, RP_COLOR_BIAS_MAX);
+						dstFlag &= ~RP_CONFIG_FLAG_LOSSLESS_DATA;
+						dstFlag |= losslessData << RP_CONFIG_FLAG_LOSSLESS_DATA_SHIFT;
+
+						dstPort &= RP_CONFIG_PORT_MASK;
+						dstPort |= dstFlag;
+
+						if (dstPort != (int)config.dstPort) {
+							config.dstPort = dstPort;
+						}
+					}
+					break;
 				}
+
 				break;
 			}
 
@@ -871,11 +1041,11 @@ int remotePlayMenu(u32 localaddr) {
 
 			case REMOTE_PLAY_MENU_VIEWER_PORT: { /* dst port */
 				int dstPort = config.dstPort;
-				int dstFlag = dstPort & 0xffff0000;
-				dstPort &= 0xffff;
+				int dstFlag = dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+				dstPort &= RP_CONFIG_PORT_MASK;
 				if (keys == KEY_X) {
 					dstPort = rpConfig->dstPort;
-					dstPort &= 0xffff;
+					dstPort &= RP_CONFIG_PORT_MASK;
 				} else {
 					menu_adjust_value_with_key(&dstPort, keys, 10, 100);
 				}
@@ -888,22 +1058,23 @@ int remotePlayMenu(u32 localaddr) {
 				break;
 			}
 
-			case REMOTE_PLAY_MENU_RELIABLE_STREAM: { /* reliable stream */
+			case REMOTE_PLAY_MENU_COMP_FMT_PROT: { /* reliable stream */
 				int dstPort = config.dstPort;
-				int dstFlag = dstPort & 0xffff0000;
-				dstPort &= 0xffff;
+				int dstFlag = dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+				dstPort &= RP_CONFIG_PORT_MASK;
 				if (keys == KEY_X) {
 					int dstPort = rpConfig->dstPort;
-					dstFlag = dstPort & 0xffff0000;
+					dstFlag &= ~RP_CONFIG_FLAGS;
+					dstFlag |= dstPort & RP_CONFIG_FLAGS;
 				} else {
-					int options = getReliableStreamFromFlag(dstFlag);
-					menu_adjust_value_with_key(&options, keys, 1, 1);
-					if (!ntrConfig->isNew3DS) {
-						options = ReliableStreamNone;
-					} else {
-						options = CWRAP(options, ReliableStreamMin, ReliableStreamMax);
-					}
-					dstFlag = getFlagFromReliableStream(options);
+					enum CompressionFormat fmt;
+					enum CompressionProtocol prot;
+					getCompFmtProtFromFlag(dstFlag, &fmt, NULL, &prot);
+					int option = getOptionFromCompFmtProt(fmt, prot);
+					menu_adjust_value_with_key(&option, keys, 1, 1);
+					option = CWRAP(option, CompFmtProtMin, CompFmtProtMax);
+					getCompFmtProtFromOption(option, &fmt, &prot);
+					updateFlagFromCompFmtProt(&dstFlag, &fmt, NULL, &prot);
 				}
 
 				dstPort |= dstFlag;
@@ -1000,17 +1171,20 @@ static void rpClampParamsInMenu(RP_CONFIG *config) {
 		}
 	}
 
-	int dstFlag = config->dstPort & 0xffff0000;
-	if (!ntrConfig->isNew3DS) {
-		dstFlag = getFlagFromReliableStream(ReliableStreamNone);
-	} else {
-		enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
-		if (ALC(&nfcPatched) && reliableStream != ReliableStreamNone) {
-			showMsg("NFC patch is applied, Reliable Stream\nwill be disabled for compatibility.");
-			dstFlag = getFlagFromReliableStream(ReliableStreamNone);
-		}
+	int dstFlag = config->dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+	enum CompressionFormat compFmt;
+	int losslessData;
+	enum CompressionProtocol compProt;
+	getCompFmtProtFromFlag(dstFlag, &compFmt, &losslessData, &compProt);
+	compProt = CLAMP(compProt, 0, CompProtCount - 1);
+	compFmt = CLAMP(compFmt, 0, CompressionFormatCount - 1);
+	losslessData = CLAMP(losslessData, RP_COLOR_BIAS_MIN, RP_COLOR_BIAS_MAX);
+	if (ALC(&nfcPatched) && compProt != CompressionProtocolUDP) {
+		showMsg("NFC patch is applied, Reliable Stream\nwill be disabled for compatibility.");
+		compProt = CompressionProtocolUDP;
 	}
-	config->dstPort = CLAMP(config->dstPort & 0xffff, RP_PORT_MIN, RP_PORT_MAX) | dstFlag;
+	updateFlagFromCompFmtProt(&dstFlag, &compFmt, &losslessData, &compProt);
+	config->dstPort = CLAMP(config->dstPort & RP_CONFIG_PORT_MASK, RP_PORT_MIN, RP_PORT_MAX) | dstFlag;
 
 	if (config->threadPriority == 0) {
 		config->threadPriority = RP_THREAD_PRIO_DEFAULT;
@@ -1137,12 +1311,13 @@ final:
 void rpCheckReliableStreamForNFC(void) {
 	if (ALC(&rpStarted)) {
 		RP_CONFIG config = *rpConfig;
-		int dstFlag = config.dstPort & 0xffff0000;
-		enum ReliableStream reliableStream = getReliableStreamFromFlag(dstFlag);
-
-		if (reliableStream != ReliableStreamNone) {
+		int dstFlag = config.dstPort & RP_CONFIG_FLAGS_DATA_MASK;
+		enum CompressionProtocol compProt;
+		getCompFmtProtFromFlag(dstFlag, NULL, NULL, &compProt);
+		if (compProt != CompressionProtocolUDP) {
 			showMsg("Reliable Stream will be disabled for\ncompatibility.");
-			dstFlag = getFlagFromReliableStream(ReliableStreamNone);
+			compProt = CompressionProtocolUDP;
+			updateFlagFromCompFmtProt(&dstFlag, NULL, NULL, &compProt);
 		}
 		config.dstPort = (config.dstPort & 0xffff) | dstFlag;
 		rpStartupFromMenu(&config);

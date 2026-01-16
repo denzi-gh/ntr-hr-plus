@@ -232,7 +232,7 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
         let core_count = core_count_in_use();
 
         let dst_port = RP_CONFIG.dst_port().load(Ordering::Acquire);
-        let dst_flags = dst_port & 0xffff0000;
+        let dst_flags = dst_port & RP_CONFIG_FLAGS_DATA_MASK;
         let dst_port = dst_port & 0xffff;
         if dst_port == 0 {
             RP_CONFIG
