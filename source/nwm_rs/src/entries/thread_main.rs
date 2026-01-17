@@ -31,13 +31,13 @@ static mut RESTART_DONE_EVENT: Handle = const_default();
 pub const NWM_BUFFER_SIZE: usize =
     (SEND_BUFS_SIZE / WORK_COUNT) as usize / mem::size_of::<usize>() * mem::size_of::<usize>();
 
-fn once_jpeg() -> Option<()> {
-    let jpeg = request_mem_from_pool::<{ mem::size_of::<encoder::Encoder>() }>()?;
+fn once_encoder() -> Option<()> {
+    let encoder = request_mem_from_pool::<{ mem::size_of::<encoder::Encoder>() }>()?;
     unsafe {
-        encoder::ENCODER = jpeg.to_ptr() as *mut encoder::Encoder;
-        let jpeg = &mut *encoder::ENCODER;
+        encoder::ENCODER = encoder.to_ptr() as *mut encoder::Encoder;
+        let encoder = &mut *encoder::ENCODER;
 
-        jpeg.once();
+        encoder.once();
     }
 
     Some(())
@@ -102,8 +102,8 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
     #[cfg(not(feature = "mem3"))]
     unsafe { entries::thread_screen::once_img_infos() }?;
 
-    if once_jpeg() == None {
-        ns_dbg_print!(failed, c_str!("JPEG init"), res);
+    if once_encoder() == None {
+        ns_dbg_print!(failed, c_str!("Encoder init"), res);
         return None;
     }
 
