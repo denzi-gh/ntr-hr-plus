@@ -382,7 +382,7 @@ impl WorkFrame {
         let core_count_other = core_count_all - 1;
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
-        let jpeg_shared = unsafe { encoder::get_jpeg_shared() };
+        let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
         let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
@@ -944,7 +944,7 @@ impl WorkAcquire {
             };
             let pitch = bctx.pitch();
 
-            let jpeg_shared = unsafe { encoder::get_jpeg_shared() };
+            let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
             let mcu_size = is_top_index(bctx.is_top)
                 .index_into(&jpeg_shared.screens)
                 .mcu_col_size;

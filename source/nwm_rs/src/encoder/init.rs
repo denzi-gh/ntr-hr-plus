@@ -43,21 +43,69 @@ impl JpegSharedMut {
     }
 }
 
-impl JpegShared {
+impl EncoderShared {
     fn init(
         &mut self,
-        quality: [u32; RP_SCREEN_COUNT as usize],
+        downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
-        hq: [u32; RP_SCREEN_COUNT as usize],
-        downsample: [u32; RP_SCREEN_COUNT as usize],
-    ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
+    ) {
         #[cfg(not(feature = "o3ds"))]
         {
             self.rel_stream = rel_stream;
             self.delta_prog = delta_prog;
+            self.core_count = core_count;
         }
+
+        for s in ScreenIndex::all() {
+            let screen = s.index_into_mut(&mut self.screens);
+            let is_top = s.get() == RP_SCREEN_TOP as u32;
+
+            #[cfg(not(feature = "mem3"))]
+            {
+                screen.downsample = *s.index_into(&downsample) as u8;
+
+                if screen.downsample == RP_DOWNSAMPLE_CHECKER {
+                    screen.width = downsample_checker_screen_dim(is_top) as u16;
+                    screen.height = screen.width;
+                } else {
+                    screen.width = downsample_screen_width(screen.downsample) as u16;
+                    screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+                }
+            }
+            #[cfg(feature = "mem3")]
+            {
+                screen.downsample = *s.index_into(&downsample) as u8;
+                screen.width = downsample_screen_width(screen.downsample) as u16;
+                screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+            }
+
+            screen.max_h_samp_factor = 1;
+            screen.max_v_samp_factor = 1;
+        }
+    }
+}
+
+impl LosslessShared {
+    fn init(&mut self, color_bias: [u8; RP_SCREEN_COUNT as usize]) {
+        for s in ScreenIndex::all() {
+            let bias = s.index_into_mut(&mut self.color_bias);
+            let color_bias = *s.index_into(&color_bias);
+            *bias = color_bias;
+        }
+    }
+}
+
+impl JpegShared {
+    fn init(
+        &mut self,
+        quality: [u32; RP_SCREEN_COUNT as usize],
+        hq: [u32; RP_SCREEN_COUNT as usize],
+        shared: &mut EncoderShared,
+    ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
+        #[cfg(not(feature = "o3ds"))]
+        let delta_prog = shared.delta_prog;
         #[cfg(feature = "o3ds")]
         let delta_prog = false;
 
@@ -115,16 +163,12 @@ impl JpegShared {
             }
         }
 
-        #[cfg(not(feature = "o3ds"))]
-        {
-            self.core_count = core_count;
-        }
         self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(
             hq,
-            downsample,
             #[cfg(not(feature = "o3ds"))]
             delta_prog,
+            shared,
         )
     }
 
@@ -167,34 +211,21 @@ impl JpegShared {
     fn set_comp_infos(
         &mut self,
         hq: [u32; RP_SCREEN_COUNT as usize],
-        downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
+        shared: &mut EncoderShared,
     ) -> [(usize, f32); RP_SCREEN_COUNT as usize] {
         let mut ret: [(usize, f32); RP_SCREEN_COUNT as usize] = const_default();
 
         for s in ScreenIndex::all() {
+            #[cfg(not(feature = "mem3"))]
             let is_top = s.get() == RP_SCREEN_TOP as u32;
-            let screen = s.index_into_mut(&mut self.screens);
+            let jpeg_screen = s.index_into_mut(&mut self.screens);
+            let screen = s.index_into_mut(&mut shared.screens);
             let hq = *s.index_into(&hq) as u8;
 
             #[cfg(not(feature = "mem3"))]
             {
-                screen.downsample = *s.index_into(&downsample) as u8;
-
-                if screen.downsample == RP_DOWNSAMPLE_CHECKER {
-                    screen.width = downsample_checker_screen_dim(is_top) as u16;
-                    screen.height = screen.width;
-                } else {
-                    screen.width = downsample_screen_width(screen.downsample) as u16;
-                    screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
-                }
-                screen.checker = const_default();
-            }
-            #[cfg(feature = "mem3")]
-            {
-                screen.downsample = *s.index_into(&downsample) as u8;
-                screen.width = downsample_screen_width(screen.downsample) as u16;
-                screen.height = downsample_screen_height(screen.downsample, is_top) as u16;
+                jpeg_screen.checker = const_default();
             }
 
             let comp_infos = if hq == RP_CHROMASS_444 {
@@ -204,27 +235,27 @@ impl JpegShared {
             } else {
                 &self.jpeg_tbls.comp_infos_420
             };
-            screen.comp_infos = comp_infos;
-            screen.max_h_samp_factor = 1;
-            screen.max_v_samp_factor = 1;
-            screen.max_blocks_in_mcu = 0;
+            jpeg_screen.comp_infos = comp_infos;
+            jpeg_screen.max_blocks_in_mcu = 0;
             for i in 0..MAX_COMPONENTS {
                 let info = &comp_infos.infos[i];
                 screen.max_h_samp_factor =
                     cmp::max(screen.max_h_samp_factor, info.h_samp_factor as usize);
                 screen.max_v_samp_factor =
                     cmp::max(screen.max_v_samp_factor, info.v_samp_factor as usize);
-                screen.max_blocks_in_mcu +=
+                jpeg_screen.max_blocks_in_mcu +=
                     info.h_samp_factor as usize * info.v_samp_factor as usize;
             }
-            if screen.max_blocks_in_mcu > MAX_BLOCKS_IN_MCU {
+            if jpeg_screen.max_blocks_in_mcu > MAX_BLOCKS_IN_MCU {
                 panic!();
             }
-            screen.mcu_row_size = DCTSIZE * screen.max_h_samp_factor;
-            screen.mcu_col_size = DCTSIZE * screen.max_v_samp_factor;
-            screen.mcus_per_row = jdiv_round_up(screen.width as usize, screen.mcu_row_size);
-            screen.mcu_rows = jdiv_round_up(screen.height as usize, screen.mcu_col_size) as u16;
-            screen.mcus = screen.mcus_per_row as u16 * screen.mcu_rows;
+            jpeg_screen.mcu_row_size = DCTSIZE * screen.max_h_samp_factor;
+            jpeg_screen.mcu_col_size = DCTSIZE * screen.max_v_samp_factor;
+            jpeg_screen.mcus_per_row =
+                jdiv_round_up(screen.width as usize, jpeg_screen.mcu_row_size);
+            jpeg_screen.mcu_rows =
+                jdiv_round_up(screen.height as usize, jpeg_screen.mcu_col_size) as u16;
+            jpeg_screen.mcus = jpeg_screen.mcus_per_row as u16 * jpeg_screen.mcu_rows;
 
             #[cfg(not(feature = "mem3"))]
             if screen.downsample == RP_DOWNSAMPLE_CHECKER {
@@ -235,43 +266,44 @@ impl JpegShared {
                     GSP_SCREEN_HEIGHT_BOTTOM
                 };
 
-                let mcu_l_v = tl / screen.mcu_col_size as u32;
-                let mcu_l_r = tl % screen.mcu_col_size as u32;
+                let mcu_l_v = tl / jpeg_screen.mcu_col_size as u32;
+                let mcu_l_r = tl % jpeg_screen.mcu_col_size as u32;
                 let mcu_l_w = (mcu_l_r > 0) as u32;
 
-                let mcu_r_v = br / screen.mcu_col_size as u32;
-                let mcu_r_r = br % screen.mcu_col_size as u32;
+                let mcu_r_v = br / jpeg_screen.mcu_col_size as u32;
+                let mcu_r_r = br % jpeg_screen.mcu_col_size as u32;
                 let mcu_r_w = (mcu_r_r > 0) as u32;
 
-                let checker = &mut screen.checker;
+                let checker = &mut jpeg_screen.checker;
 
                 let mut mcus = 0;
-                for mcu_y_start in 0..screen.mcu_rows as u32 {
+                for mcu_y_start in 0..jpeg_screen.mcu_rows as u32 {
                     let params = &mut checker.mcu_row_params[mcu_y_start as usize];
 
                     let x_start = if mcu_y_start < mcu_l_v {
-                        let y_end = (mcu_y_start + 1) * screen.mcu_col_size as u32;
+                        let y_end = (mcu_y_start + 1) * jpeg_screen.mcu_col_size as u32;
                         tl - y_end
                     } else if mcu_y_start < mcu_l_v + mcu_l_w {
                         0
                     } else {
                         let y_start =
-                            (mcu_y_start - mcu_l_v) * screen.mcu_col_size as u32 - mcu_l_r;
+                            (mcu_y_start - mcu_l_v) * jpeg_screen.mcu_col_size as u32 - mcu_l_r;
                         y_start
                     };
-                    params.mcu_col_start = (x_start / screen.mcu_row_size as u32) as u16;
+                    params.mcu_col_start = (x_start / jpeg_screen.mcu_row_size as u32) as u16;
 
                     let x_end = if mcu_y_start < mcu_r_v {
-                        let y_end = (mcu_y_start + 1) * screen.mcu_col_size as u32;
+                        let y_end = (mcu_y_start + 1) * jpeg_screen.mcu_col_size as u32;
                         tl + y_end
                     } else if mcu_y_start < mcu_r_v + mcu_r_w {
                         tl + br
                     } else {
                         let y_start =
-                            (mcu_y_start - mcu_r_v) * screen.mcu_col_size as u32 - mcu_r_r;
+                            (mcu_y_start - mcu_r_v) * jpeg_screen.mcu_col_size as u32 - mcu_r_r;
                         tl + (br - y_start)
                     };
-                    params.mcu_col_end = jdiv_round_up(x_end as usize, screen.mcu_row_size) as u16;
+                    params.mcu_col_end =
+                        jdiv_round_up(x_end as usize, jpeg_screen.mcu_row_size) as u16;
 
                     mcus += params.mcu_col_end - params.mcu_col_start;
                 }
@@ -302,22 +334,23 @@ impl JpegShared {
                         }
                         ret
                     };
-                    screen.delta_q_params.qf = qf;
+                    jpeg_screen.delta_q_params.qf = qf;
                     let qt = {
                         let mut qt = 0f32;
                         for i in 0..NUM_QUANT_TBLS {
-                            qt += screen.delta_q_params.qf[i];
+                            qt += jpeg_screen.delta_q_params.qf[i];
                         }
                         qt
                     };
                     let q_step = (DELTA_Q_STEP * qt, DELTA_Q_STEP * (DCTSIZE2 - 1) as f32 * qt);
                     let q_steps = q_step.0 + q_step.1;
                     let q_steps_i = 1f32 / q_steps;
-                    screen.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
+                    jpeg_screen.delta_q_params.q_steps_i = q_steps_i * SCALE_QD_I_F;
 
-                    screen.delta_q_params.m = (MIN_DCT_COMP_SIZE * screen.max_blocks_in_mcu) as f32;
+                    jpeg_screen.delta_q_params.m =
+                        (MIN_DCT_COMP_SIZE * jpeg_screen.max_blocks_in_mcu) as f32;
 
-                    (screen.max_blocks_in_mcu, q_steps)
+                    (jpeg_screen.max_blocks_in_mcu, q_steps)
                 } else {
                     (0, 0f32)
                 };
@@ -334,8 +367,8 @@ impl JpegShared {
 
 impl Encoder {
     pub unsafe fn once(&mut self) {
-        self.shared.once();
-        self.shared_mut.once();
+        self.jpeg_shared.once();
+        self.jpeg_shared_mut.once();
     }
 
     #[named]
@@ -350,33 +383,28 @@ impl Encoder {
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> Option<()> {
-        for s in ScreenIndex::all() {
-            let bias = s.index_into_mut(&mut self.lossless_shared.color_bias);
-            let color_bias = *s.index_into(&color_bias);
-            *bias = color_bias;
-        }
-
-        let shared_mut_params = self.shared.init(
-            quality,
+        self.lossless_shared.init(color_bias);
+        self.shared.init(
+            downsample,
             #[cfg(not(feature = "o3ds"))]
             rel_stream,
             #[cfg(not(feature = "o3ds"))]
             delta_prog,
             #[cfg(not(feature = "o3ds"))]
             core_count,
-            hq,
-            downsample,
         );
+
+        let shared_mut_params = self.jpeg_shared.init(quality, hq, &mut self.shared);
         #[cfg(feature = "o3ds")]
         {
             let _ = shared_mut_params;
         };
         #[cfg(not(feature = "o3ds"))]
         {
-            self.shared_mut.init(delta_prog, shared_mut_params);
+            self.jpeg_shared_mut.init(delta_prog, shared_mut_params);
 
             for w in WorkIndex::all() {
-                let sem = self.shared.work_sem.get_mut(&w);
+                let sem = self.jpeg_shared.work_sem.get_mut(&w);
                 if *sem > 0 {
                     unsafe {
                         let _ = svcCloseHandle(*sem);
@@ -389,17 +417,17 @@ impl Encoder {
                     ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
                     return None;
                 }
-                self.shared_mut
+                self.jpeg_shared_mut
                     .work_inited
                     .get_mut(&w)
                     .store(false, Ordering::Release);
-                self.shared_mut
+                self.jpeg_shared_mut
                     .work_sem_count
                     .get_mut(&w)
                     .store(core_count.get() as u8, Ordering::Release);
             }
             for s in ScreenIndex::all() {
-                let sem = self.shared.screen_sem.get_mut(&s);
+                let sem = self.jpeg_shared.screen_sem.get_mut(&s);
                 if *sem > 0 {
                     unsafe {
                         let _ = svcCloseHandle(*sem);
@@ -413,24 +441,24 @@ impl Encoder {
                     return None;
                 }
 
-                self.shared_mut
+                self.jpeg_shared_mut
                     .screen_bool
                     .get_mut(&s)
                     .store(false, Ordering::Release);
-                *self.shared_mut.last_restart_interval.get_mut(&s) = 0;
+                *self.jpeg_shared_mut.last_restart_interval.get_mut(&s) = 0;
             }
 
             unsafe {
                 ptr::write_bytes(
-                    self.shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
+                    self.jpeg_shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
                     0,
-                    self.shared_mut.dq_prev_coeffs_top.len(),
+                    self.jpeg_shared_mut.dq_prev_coeffs_top.len(),
                 );
 
                 ptr::write_bytes(
-                    self.shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
+                    self.jpeg_shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
                     0,
-                    self.shared_mut.dq_prev_coeffs_bot.len(),
+                    self.jpeg_shared_mut.dq_prev_coeffs_bot.len(),
                 );
             }
         }

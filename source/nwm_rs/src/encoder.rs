@@ -64,17 +64,12 @@ pub struct CheckerParams {
 #[cfg(feature = "o3ds")]
 pub struct JpegScreenShared {
     comp_infos: *const CompInfos,
-    pub max_h_samp_factor: usize,
-    pub max_v_samp_factor: usize,
     pub max_blocks_in_mcu: usize,
     pub mcu_row_size: usize,
     pub mcu_col_size: usize,
     pub mcus_per_row: usize,
     pub mcu_rows: u16,
     pub mcus: u16,
-    pub downsample: u8,
-    pub width: u16,
-    pub height: u16,
     #[cfg(not(feature = "mem3"))]
     pub checker: CheckerParams,
 
@@ -86,8 +81,6 @@ pub struct JpegScreenShared {
 #[cfg(not(feature = "o3ds"))]
 pub struct JpegScreenShared {
     comp_infos: *const CompInfos,
-    pub max_h_samp_factor: usize,
-    pub max_v_samp_factor: usize,
     pub max_blocks_in_mcu: usize,
     pub mcu_row_size: usize,
     pub mcu_col_size: usize,
@@ -95,9 +88,6 @@ pub struct JpegScreenShared {
     pub mcu_rows: u16,
     pub mcus: u16,
     delta_q_params: DeltaQParams,
-    pub downsample: u8,
-    pub width: u16,
-    pub height: u16,
     pub checker: CheckerParams,
 
     quant_tbls: QuantTbls,
@@ -116,11 +106,8 @@ pub struct JpegShared {
 
 #[cfg(not(feature = "o3ds"))]
 pub struct JpegShared {
-    pub rel_stream: bool,
-    pub delta_prog: bool,
     pub quality: [u32; RP_SCREEN_COUNT as usize],
     pub div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
-    pub core_count: CoreCount,
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
     pub last_restart_range: u32,
     pub jpeg_tbls: JpegTbls,
@@ -156,16 +143,31 @@ pub struct LosslessShared {
     pub color_bias: [u8; RP_SCREEN_COUNT as usize],
 }
 
-pub struct Encoder {
-    pub shared: JpegShared,
-    pub shared_mut: JpegSharedMut,
-    pub lossless_shared: LosslessShared,
-    pub bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
-    pub info: [CInfo; WORK_COUNT as usize],
+pub struct ScreenShared {
+    pub max_h_samp_factor: usize,
+    pub max_v_samp_factor: usize,
+    pub downsample: u8,
+    pub width: u16,
+    pub height: u16,
 }
 
-pub unsafe fn get_jpeg_shared() -> &'static JpegShared {
-    unsafe { &(*ENCODER).shared }
+pub struct EncoderShared {
+    #[cfg(not(feature = "o3ds"))]
+    pub rel_stream: bool,
+    #[cfg(not(feature = "o3ds"))]
+    pub delta_prog: bool,
+    #[cfg(not(feature = "o3ds"))]
+    pub core_count: CoreCount,
+    pub screens: [ScreenShared; RP_SCREEN_COUNT as usize],
+}
+
+pub struct Encoder {
+    pub jpeg_shared: JpegShared,
+    pub jpeg_shared_mut: JpegSharedMut,
+    pub lossless_shared: LosslessShared,
+    pub shared: EncoderShared,
+    pub bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
+    pub info: [CInfo; WORK_COUNT as usize],
 }
 
 #[cfg(not(feature = "o3ds"))]

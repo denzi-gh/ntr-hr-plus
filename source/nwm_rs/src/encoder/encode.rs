@@ -80,6 +80,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.shared.screens);
         #[cfg(not(feature = "mem3"))]
+        let jpeg_screen = s.index_into(&self.worker.jpeg_shared.screens);
+        #[cfg(not(feature = "mem3"))]
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
 
         #[cfg(not(feature = "o3ds"))]
@@ -97,12 +99,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 if src.len() == 0 {
                     wait_syn(
                         cname!(),
-                        *self.worker.shared.work_sem.get(&w),
+                        *self.worker.jpeg_shared.work_sem.get(&w),
                         c_str!("work_sem"),
                     )?;
                 }
 
-                let shared_mut = &mut *self.worker.shared_mut.cell;
+                let shared_mut = &mut *self.worker.jpeg_shared_mut.cell;
 
                 let prev = if is_top {
                     shared_mut.dq_prev_coeffs_top.as_mut_ptr()
@@ -124,7 +126,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
                 (prev as *mut JBlock).add(
                     self.worker.info.restart_interval as usize
-                        * screen.max_blocks_in_mcu
+                        * jpeg_screen.max_blocks_in_mcu
                         * self.worker.thread_index.get() as usize,
                 )
             } else {
@@ -144,8 +146,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let mut mcu_curr_start = 0;
             let mut mcu_curr_count = 0;
 
-            'f: for mcu_y in 0..screen.mcu_rows {
-                let params = &screen.checker.mcu_row_params[mcu_y as usize];
+            'f: for mcu_y in 0..jpeg_screen.mcu_rows {
+                let params = &jpeg_screen.checker.mcu_row_params[mcu_y as usize];
                 let mcu_col_count = params.mcu_col_end - params.mcu_col_start;
 
                 for mcu_i in 0..mcu_col_count {
@@ -487,7 +489,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let ret = Some(if self.worker.shared.delta_prog {
             JpegEncodeRet::JpegDqRet(JpegDqRet {
                 delta_q: unsafe {
-                    let shared_mut = &mut *self.worker.shared_mut.cell;
+                    let shared_mut = &mut *self.worker.jpeg_shared_mut.cell;
                     let delta_q = *shared_mut.work_delta_q.get(&w);
 
                     let c = shared_mut.work_sem_count.get_mut(&w);
@@ -506,7 +508,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             } else {
                                 release_sem(
                                     cname!(),
-                                    *self.worker.shared.screen_sem.get(&s),
+                                    *self.worker.jpeg_shared.screen_sem.get(&s),
                                     c_str!("screen_sem"),
                                 );
                             }
@@ -516,7 +518,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 },
             })
         } else {
-            JpegEncodeRet::JpegRet(JpegRet { mcus: screen.mcus })
+            JpegEncodeRet::JpegRet(JpegRet {
+                mcus: jpeg_screen.mcus,
+            })
         });
         #[cfg(feature = "o3ds")]
         let ret = Some(());
@@ -540,7 +544,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         #[cfg(not(feature = "o3ds"))]
         let is_top = self.worker.info.is_top;
         #[cfg(not(feature = "o3ds"))]
-        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
 
         /* Compress and encode */
         #[cfg(not(feature = "o3ds"))]
@@ -569,13 +573,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         #[cfg(not(feature = "o3ds"))]
         let mut delta_cache = false;
         let is_top = self.worker.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
         for mcu_col_num in 0..screen.mcus_per_row {
             #[cfg(not(feature = "o3ds"))]
             if self.worker.shared.delta_prog {
                 let s = is_top_index(self.worker.info.is_top);
                 let w = self.worker.info.work_index;
-                let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
+                let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
 
                 if row_i == 0 && mcu_col_num == 0 {
                     if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
@@ -595,7 +599,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             if need_sync {
                                 if wait_syn(
                                     cname!(),
-                                    *self.worker.shared.screen_sem.get(&s),
+                                    *self.worker.jpeg_shared.screen_sem.get(&s),
                                     c_str!("screen_sem"),
                                 )
                                 .is_none()
@@ -621,7 +625,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         unsafe {
                             release_sem_count(
                                 cname!(),
-                                *self.worker.shared.work_sem.get(&w),
+                                *self.worker.jpeg_shared.work_sem.get(&w),
                                 c_str!("work_sem"),
                                 self.worker.info.core_count.get() as s32 - 1,
                             );
@@ -629,7 +633,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     } else {
                         if wait_syn(
                             cname!(),
-                            *self.worker.shared.work_sem.get(&w),
+                            *self.worker.jpeg_shared.work_sem.get(&w),
                             c_str!("work_sem"),
                         )
                         .is_none()
@@ -696,8 +700,12 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let w = self.worker.info.work_index;
         let s = is_top_index(is_top);
         let color_bias = *s.index_into(&self.worker.lossless_shared.color_bias);
+        let screen = s.index_into(&self.worker.shared.screens);
         #[cfg(not(feature = "mem3"))]
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
+
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         Some(LosslessEncodeRet::LosslessRet(LosslessRet {}))
     }

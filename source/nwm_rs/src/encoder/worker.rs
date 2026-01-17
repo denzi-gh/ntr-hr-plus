@@ -13,11 +13,11 @@ pub struct HuffState {
 
 pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 
-#[derive(ConstDefault)]
 pub struct JpegWorker<'a> {
-    pub shared: &'a JpegShared,
+    pub shared: &'a EncoderShared,
+    pub jpeg_shared: &'a JpegShared,
     #[cfg(not(feature = "o3ds"))]
-    pub shared_mut: JpegSharedMutCell,
+    pub jpeg_shared_mut: JpegSharedMutCell,
     pub bufs: &'a mut WorkerBufs,
     pub info: &'a CInfo,
     #[cfg(not(feature = "mem3"))]
@@ -95,9 +95,10 @@ impl Encoder {
     ) -> JpegWorker<'a> {
         JpegWorker {
             shared: &self.shared,
+            jpeg_shared: &self.jpeg_shared,
             #[cfg(not(feature = "o3ds"))]
-            shared_mut: JpegSharedMutCell {
-                cell: &mut self.shared_mut,
+            jpeg_shared_mut: JpegSharedMutCell {
+                cell: &mut self.jpeg_shared_mut,
             },
             bufs: thread_index.index_into_mut(&mut self.bufs),
             info: work_index.index_into_mut(&mut self.info),
@@ -145,6 +146,7 @@ impl Encoder {
         thread_index: ThreadIndex,
     ) -> LosslessWorker<'a> {
         LosslessWorker {
+            shared: &self.shared,
             lossless_shared: &self.lossless_shared,
             bufs: thread_index.index_into_mut(&mut self.bufs),
             info: work_index.index_into_mut(&mut self.info),
@@ -156,6 +158,7 @@ impl Encoder {
 
 #[derive(ConstDefault)]
 pub struct LosslessWorker<'a> {
+    pub shared: &'a EncoderShared,
     pub lossless_shared: &'a LosslessShared,
     pub bufs: &'a mut WorkerBufs,
     pub info: &'a CInfo,

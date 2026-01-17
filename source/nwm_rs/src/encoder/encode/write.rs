@@ -83,7 +83,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     /* Returns the precision used (0 = 8bits, 1 = 16bits) for baseline checking */
     {
         let s = is_top_index(self.worker.info.is_top);
-        let screen = s.index_into(&self.worker.shared.screens);
+        let screen = s.index_into(&self.worker.jpeg_shared.screens);
         let qtbl = &screen.quant_tbls.quant_tbls[index];
 
         self.write_marker(M_DQT);
@@ -99,9 +99,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
     pub fn write_dht(&mut self, mut index: usize, is_ac: bool) {
         let tbl = if is_ac {
-            &self.worker.shared.jpeg_tbls.huff_tbls.ac_huff_tbls[index]
+            &self.worker.jpeg_shared.jpeg_tbls.huff_tbls.ac_huff_tbls[index]
         } else {
-            &self.worker.shared.jpeg_tbls.huff_tbls.dc_huff_tbls[index]
+            &self.worker.jpeg_shared.jpeg_tbls.huff_tbls.dc_huff_tbls[index]
         };
         if is_ac {
             index |= 0x10; /* output index has AC bit set */
@@ -142,7 +142,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let infos = unsafe {
             &(*is_top_index(self.worker.info.is_top)
-                .index_into(&self.worker.shared.screens)
+                .index_into(&self.worker.jpeg_shared.screens)
                 .comp_infos)
                 .infos
         };
@@ -182,7 +182,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         for info in unsafe {
             &(*is_top_index(self.worker.info.is_top)
-                .index_into(&self.worker.shared.screens)
+                .index_into(&self.worker.jpeg_shared.screens)
                 .comp_infos)
                 .infos
         } {

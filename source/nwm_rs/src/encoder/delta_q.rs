@@ -117,11 +117,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let s = is_top_index(self.worker.info.is_top);
         let screen = s.index_into(&self.worker.shared.screens);
+        let jpeg_screen = s.index_into(&self.worker.jpeg_shared.screens);
         let w = self.worker.info.work_index;
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
-        let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
+        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
 
         let delta_q = unsafe {
             shared_mut
@@ -134,9 +135,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let cache_next_i = shared_mut.delta_q_cache_next.get_mut(&w);
 
         let prev_delta_q = *delta_q;
-        let delta_q0 = &self.worker.shared.delta_q0_tbls[prev_delta_q as usize];
-        let div_parts = &screen.divisors.divisors;
-        let div_shifts = &self.worker.shared.div_delta_q_shifts[DELTA_Q_COUNT as usize - 1];
+        let delta_q0 = &self.worker.jpeg_shared.delta_q0_tbls[prev_delta_q as usize];
+        let div_parts = &jpeg_screen.divisors.divisors;
+        let div_shifts = &self.worker.jpeg_shared.div_delta_q_shifts[DELTA_Q_COUNT as usize - 1];
 
         let mut delta_cache_start = 0;
         let mut blkn_start = 0;
@@ -151,7 +152,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
-            let comp = unsafe { ci.index_into(&(*screen.comp_infos).infos) };
+            let comp = unsafe { ci.index_into(&(*jpeg_screen.comp_infos).infos) };
             let qni = comp.quant_tbl_no;
             let mcu_we = comp.h_samp_exp;
             let mcu_he = comp.v_samp_exp;
@@ -159,7 +160,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let count = *ci.index_into(&DELTA_Q_CACHE_COUNTS);
 
             dq_cache_gen_unique_indices(rand32, &mut indices, count, unsafe {
-                core::intrinsics::unchecked_shl(screen.mcus_per_row as u8, mcu_we + mcu_he)
+                core::intrinsics::unchecked_shl(jpeg_screen.mcus_per_row as u8, mcu_we + mcu_he)
             });
 
             for qi in 0..count {
@@ -184,7 +185,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
                 let prev = unsafe {
                     prev.add(
-                        mcu_i as usize * screen.max_blocks_in_mcu + mcu_r as usize + blkn_start,
+                        mcu_i as usize * jpeg_screen.max_blocks_in_mcu
+                            + mcu_r as usize
+                            + blkn_start,
                     )
                 };
 
@@ -249,7 +252,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         const TARGET_FRAME_RATE: u32 = 60;
         let s_1 = is_top_index(!self.worker.info.is_top);
-        let screen_1 = s_1.index_into(&self.worker.shared.screens);
+        let screen_1 = s_1.index_into(&self.worker.jpeg_shared.screens);
 
         let frame_time = entries::work_thread::get_frame_time(s)
             .load(Ordering::Acquire)
@@ -271,7 +274,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let frame_rate_1 = frame_rate_get_clamp_min(frame_time_1);
         let frame_rate_1 = frame_rate_clamp_max(frame_rate_1, s_1);
 
-        let quality = *s.index_into(&self.worker.shared.quality);
+        let quality = *s.index_into(&self.worker.jpeg_shared.quality);
         let qr =
             (DELTA_Q_COUNT as u32 / 6 + DELTA_Q_COUNT as u32 * quality * quality / 12000) as u8;
         let (qc, qc_1) = if s.get() == RP_SCREEN_TOP as u32 {
@@ -290,13 +293,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let current_qos = entries::thread_nwm::rp_delta_q_qos() as f32;
 
-        let mcus = screen.mcus as f32;
+        let mcus = jpeg_screen.mcus as f32;
         let mcus_1 = screen_1.mcus as f32;
         let frame_rate_f = 1f32 / (frame_rate * mcus + frame_rate_1 * mcus_1);
 
         let mcusi = 1f32 / mcus;
         // let mcusi_1 = 1f32 / mcus_1;
-        let qos_adj = screen.qos_adj;
+        let qos_adj = jpeg_screen.qos_adj;
         let qos_b = current_qos * frame_rate_f * qos_adj;
 
         let comp_size = unsafe {
@@ -311,7 +314,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let blkn = (comp_size >> entries::thread_nwm::JPEG_COMP_COUNT_SIZE_NBITS)
                 & ((1 << entries::thread_nwm::JPEG_COMP_COUNT_BLKN_NBITS) - 1);
             if blkn > 0 {
-                size as f32 * mcus * screen.max_blocks_in_mcu as f32 / blkn as f32
+                size as f32 * mcus * jpeg_screen.max_blocks_in_mcu as f32 / blkn as f32
             } else {
                 0f32
             }
@@ -379,17 +382,17 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let nbits = {
             let mut ret = 0f32;
-            let qf = &screen.delta_q_params.qf;
+            let qf = &jpeg_screen.delta_q_params.qf;
             for i in 0..NUM_QUANT_TBLS {
                 ret += (qnv[i].dc.nbits as f32 / qnc[i] as f32
                     + qnv[i].ac.nbits as f32 / qnc[i] as f32)
                     * qf[i];
             }
-            ret + screen.delta_q_params.m // todo
+            ret + jpeg_screen.delta_q_params.m // todo
         };
 
         {
-            let q_steps_i = screen.delta_q_params.q_steps_i;
+            let q_steps_i = jpeg_screen.delta_q_params.q_steps_i;
             let comp_d = if comp_size > 0f32 {
                 qos - comp_size
             } else {
@@ -467,7 +470,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let d_qshifts = unsafe {
                     &self
                         .worker
-                        .shared
+                        .jpeg_shared
                         .delta_q_tbls
                         .get_unchecked(*delta_q as usize)
                         .get_unchecked(n)
@@ -476,7 +479,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let dq_shifts_prev = unsafe {
                     &self
                         .worker
-                        .shared
+                        .jpeg_shared
                         .delta_q_tbls
                         .get_unchecked(prev_delta_q as usize)
                         .get_unchecked(n)

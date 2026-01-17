@@ -17,12 +17,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let mut blkn = 0;
         let is_top = self.worker.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
-        let div_parts = &screen.divisors.divisors;
+        let jpeg_screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
+        let div_parts = &jpeg_screen.divisors.divisors;
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         #[cfg(not(feature = "o3ds"))]
-        let shared_mut = unsafe { &mut *self.worker.shared_mut.cell };
+        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
 
         #[cfg(not(feature = "o3ds"))]
         let cache = shared_mut.delta_q_cache.get_mut(&w);
@@ -31,7 +32,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         #[cfg(not(feature = "o3ds"))]
         let delta_q = *shared_mut.work_delta_q.get(&w) as usize;
         #[cfg(not(feature = "o3ds"))]
-        let delta_q0 = unsafe { self.worker.shared.delta_q0_tbls.get_unchecked(delta_q) };
+        let delta_q0 = unsafe { self.worker.jpeg_shared.delta_q0_tbls.get_unchecked(delta_q) };
         #[cfg(not(feature = "o3ds"))]
         let mut delta_cache_start = 0;
 
@@ -39,7 +40,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let _need_wait_for_nwm =
             self.worker.shared.delta_prog && self.worker.thread_index.get() == 0;
 
-        let comp_infos = unsafe { &*screen.comp_infos };
+        let comp_infos = unsafe { &*jpeg_screen.comp_infos };
         for ci in CompIndex::all() {
             let comp = ci.index_into(&comp_infos.infos);
 
@@ -47,16 +48,24 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let div_shifts = if self.worker.shared.delta_prog {
                 unsafe {
                     self.worker
-                        .shared
+                        .jpeg_shared
                         .div_delta_q_shifts
                         .get_unchecked(delta_q)
                         .get_unchecked(comp.quant_tbl_no as usize)
                 }
             } else {
-                unsafe { screen.div_shifts.get_unchecked(comp.quant_tbl_no as usize) }
+                unsafe {
+                    jpeg_screen
+                        .div_shifts
+                        .get_unchecked(comp.quant_tbl_no as usize)
+                }
             };
             #[cfg(feature = "o3ds")]
-            let div_shifts = unsafe { screen.div_shifts.get_unchecked(comp.quant_tbl_no as usize) };
+            let div_shifts = unsafe {
+                jpeg_screen
+                    .div_shifts
+                    .get_unchecked(comp.quant_tbl_no as usize)
+            };
 
             #[cfg(not(feature = "o3ds"))]
             let rp_shifts = unsafe {
@@ -200,7 +209,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let mut blkn = 0;
 
         let is_top = self.worker.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
         let comp_infos = unsafe { &*screen.comp_infos };
 
         for ci in 0..MAX_COMPONENTS {
@@ -213,7 +222,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let dc_tbl = if self.worker.shared.delta_prog {
                     unsafe {
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .dq_entropy_tbls
                             .dc_derived_tbls
@@ -222,7 +231,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 } else {
                     unsafe {
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .entropy_tbls
                             .dc_derived_tbls
@@ -232,7 +241,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let ac_tbl = if self.worker.shared.delta_prog {
                     unsafe {
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .dq_entropy_tbls
                             .ac_derived_tbls
@@ -241,7 +250,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 } else {
                     unsafe {
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .entropy_tbls
                             .ac_derived_tbls
@@ -256,13 +265,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 unsafe {
                     (
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .entropy_tbls
                             .dc_derived_tbls
                             .get_unchecked(comp.dc_tbl_no as usize),
                         self.worker
-                            .shared
+                            .jpeg_shared
                             .jpeg_tbls
                             .entropy_tbls
                             .ac_derived_tbls

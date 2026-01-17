@@ -138,27 +138,37 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 input,
                 &mut self.worker.bufs.color,
                 width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+                &self
+                    .worker
+                    .jpeg_shared
+                    .jpeg_tbls
+                    .color_conv_tbls
+                    .rgb_ycc_tab,
             ),
             ColorSpace::BGR => cconvert::<2, 1, 0, false, S, START_STEP>(
                 input,
                 &mut self.worker.bufs.color,
                 width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
+                &self
+                    .worker
+                    .jpeg_shared
+                    .jpeg_tbls
+                    .color_conv_tbls
+                    .rgb_ycc_tab,
             ),
             ColorSpace::RGB565 => cconvert2::<S, _, START_STEP>(
                 input,
                 rgb565_comps,
                 &mut self.worker.bufs.color,
                 width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+                &self.worker.jpeg_shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB5A1 => cconvert2::<S, _, START_STEP>(
                 input,
                 rgb5a1_comps,
                 &mut self.worker.bufs.color,
                 width,
-                &self.worker.shared.jpeg_tbls.color_conv_tbls,
+                &self.worker.jpeg_shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB4 => todo!(),
         }
