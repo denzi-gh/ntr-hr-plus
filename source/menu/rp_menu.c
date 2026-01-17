@@ -314,7 +314,7 @@ static const char *getCompFmtProtName(enum CompressionFormat fmt, enum Compressi
 			switch (prot) {
 				default:
 				case CompressionProtocolUDP:
-					return "Lossless UDP";
+					return "Uncompressed UDP";
 					break;
 
 				case CompressionProtocolReliableStream:
@@ -353,7 +353,7 @@ static const char *getCompFmtProtDesc(enum CompressionFormat fmt, enum Compressi
 			switch (prot) {
 				default:
 				case CompressionProtocolUDP:
-					return "Lossless low latency.\nNeed NTRViewer-HR.";
+					return "Uncompressed low latency.\nNeed NTRViewer-HR.";
 					break;
 
 				case CompressionProtocolReliableStream:
