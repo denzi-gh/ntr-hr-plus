@@ -34,9 +34,15 @@ pub struct JpegRet {
 }
 
 #[cfg(not(feature = "o3ds"))]
-pub enum Ret {
+pub enum JpegEncodeRet {
     JpegRet(JpegRet),
     JpegDqRet(JpegDqRet),
+}
+
+pub struct LosslessRet {}
+
+pub enum LosslessEncodeRet {
+    LosslessRet(LosslessRet),
 }
 
 #[cfg(not(feature = "mem3"))]
@@ -146,9 +152,14 @@ pub struct JpegSharedMut {
     pub rand32: Rand32,
 }
 
+pub struct LosslessShared {
+    pub color_bias: [u8; RP_SCREEN_COUNT as usize],
+}
+
 pub struct Jpeg {
     pub shared: JpegShared,
     pub shared_mut: JpegSharedMut,
+    pub lossless_shared: LosslessShared,
     pub bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],
     pub info: [CInfo; WORK_COUNT as usize],
 }

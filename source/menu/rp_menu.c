@@ -1319,7 +1319,7 @@ void rpCheckReliableStreamForNFC(void) {
 			compProt = CompressionProtocolUDP;
 			updateFlagFromCompFmtProt(&dstFlag, NULL, NULL, &compProt);
 		}
-		config.dstPort = (config.dstPort & 0xffff) | dstFlag;
+		config.dstPort = (config.dstPort & RP_CONFIG_PORT_MASK) | dstFlag;
 		rpStartupFromMenu(&config);
 	}
 }

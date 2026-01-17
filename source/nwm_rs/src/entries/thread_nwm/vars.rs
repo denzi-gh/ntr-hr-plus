@@ -1024,7 +1024,7 @@ pub fn get_lossless_compression() -> bool {
     unsafe { LOSSLESS_COMPRESSION.load(Ordering::Acquire) }
 }
 
-pub fn _get_lossless_compression_bias() -> u8 {
+pub fn get_lossless_compression_bias() -> u8 {
     unsafe { LOSSLESS_COMPRESSION_BIAS.load(Ordering::Acquire) }
 }
 

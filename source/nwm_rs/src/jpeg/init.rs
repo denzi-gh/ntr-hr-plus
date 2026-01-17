@@ -346,9 +346,16 @@ impl Jpeg {
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
         hq: [u32; RP_SCREEN_COUNT as usize],
         downsample: [u32; RP_SCREEN_COUNT as usize],
+        color_bias: [u8; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
     ) -> Option<()> {
+        for s in ScreenIndex::all() {
+            let bias = s.index_into_mut(&mut self.lossless_shared.color_bias);
+            let color_bias = *s.index_into(&color_bias);
+            *bias = color_bias;
+        }
+
         let shared_mut_params = self.shared.init(
             quality,
             #[cfg(not(feature = "o3ds"))]

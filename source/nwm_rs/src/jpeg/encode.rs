@@ -49,7 +49,7 @@ fn get_bpp_for_format(c: ColorSpace) -> u8 {
 }
 
 #[cfg(not(feature = "o3ds"))]
-type EncodeRet = Ret;
+type EncodeRet = JpegEncodeRet;
 
 #[cfg(feature = "o3ds")]
 type EncodeRet = ();
@@ -485,7 +485,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         #[cfg(not(feature = "o3ds"))]
         let ret = Some(if self.worker.shared.delta_prog {
-            Ret::JpegDqRet(JpegDqRet {
+            JpegEncodeRet::JpegDqRet(JpegDqRet {
                 delta_q: unsafe {
                     let shared_mut = &mut *self.worker.shared_mut.cell;
                     let delta_q = *shared_mut.work_delta_q.get(&w);
@@ -516,7 +516,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 },
             })
         } else {
-            Ret::JpegRet(JpegRet { mcus: screen.mcus })
+            JpegEncodeRet::JpegRet(JpegRet { mcus: screen.mcus })
         });
         #[cfg(feature = "o3ds")]
         let ret = Some(());
@@ -664,4 +664,41 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 #[cfg(not(feature = "o3ds"))]
 pub const fn j_max_half_factor(v: usize) -> usize {
     v / 2
+}
+
+pub struct LosslessEncode<'a, 'b> {
+    pub worker: &'b mut LosslessWorker<'a>,
+    pub dst: WorkerDst,
+}
+
+impl<'a, 'b> LosslessEncode<'a, 'b> {
+    #[named]
+    #[allow(unused_macros)]
+    #[inline(never)]
+    pub fn lossless_encode<F, G>(
+        &mut self,
+        #[cfg(not(feature = "mem3"))] src: &[u8],
+        #[cfg(feature = "mem3")] src: *const u8,
+        #[cfg(feature = "mem3")] pitch: u32,
+        #[cfg(not(feature = "o3ds"))] mut pre_progress: F,
+        #[cfg(feature = "mem3")]
+        #[allow(unused)]
+        mut progress: G,
+    ) -> Option<LosslessEncodeRet>
+    where
+        F: FnMut(),
+        G: FnMut(),
+    {
+        #[cfg(not(feature = "mem3"))]
+        let bpp = get_bpp_for_format(self.worker.info.color_space);
+        let is_top = self.worker.info.is_top;
+        #[cfg(not(feature = "o3ds"))]
+        let w = self.worker.info.work_index;
+        let s = is_top_index(is_top);
+        let color_bias = *s.index_into(&self.worker.lossless_shared.color_bias);
+        #[cfg(not(feature = "mem3"))]
+        let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
+
+        Some(LosslessEncodeRet::LosslessRet(LosslessRet {}))
+    }
 }

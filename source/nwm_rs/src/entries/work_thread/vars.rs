@@ -552,9 +552,10 @@ pub struct WorkAcquire(Impl);
 
 pub enum EncodeRet {
     #[cfg(not(feature = "o3ds"))]
-    JpegRet(jpeg::Ret),
+    JpegRet(jpeg::JpegEncodeRet),
     #[cfg(feature = "o3ds")]
     JpegRet,
+    LosslessRet(jpeg::LosslessEncodeRet),
 }
 
 pub struct WorkRet(#[cfg(not(feature = "o3ds"))] Impl, EncodeRet);
@@ -581,7 +582,7 @@ impl Drop for WorkRet {
 
                 let s = is_top_index(bctx.is_top);
 
-                if let EncodeRet::JpegRet(jpeg::Ret::JpegRet(jpeg_ret)) = &self.1 {
+                if let EncodeRet::JpegRet(jpeg::JpegEncodeRet::JpegRet(jpeg_ret)) = &self.1 {
                     let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
                         / jpeg_ret.mcus as f32;
                     unsafe {
@@ -688,11 +689,12 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
 
     let info = unsafe { TERM_INFOS.get(&w) };
     let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
-    let (delta_prog, delta_q) = if let EncodeRet::JpegRet(jpeg::Ret::JpegDqRet(dq_ret)) = ret {
-        (true, dq_ret.delta_q as u16)
-    } else {
-        (false, 0)
-    };
+    let (delta_prog, delta_q) =
+        if let EncodeRet::JpegRet(jpeg::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
+            (true, dq_ret.delta_q as u16)
+        } else {
+            (false, 0)
+        };
     let hdr = (downsample as u16)
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
         | (delta_prog as u16)
@@ -965,7 +967,6 @@ impl WorkAcquire {
 
         #[cfg(not(feature = "o3ds"))]
         let s = is_top_index(bctx.is_top);
-        let mut worker = unsafe { (*jpeg::JPEG).get_worker(w, t) };
 
         #[cfg(not(feature = "o3ds"))]
         let dst = {
@@ -1003,18 +1004,43 @@ impl WorkAcquire {
             dst
         };
 
-        let jpeg_ret = worker.encode(
-            dst,
-            src,
-            #[cfg(feature = "mem3")]
-            bctx.pitch,
+        let ret = if entries::thread_nwm::get_lossless_compression() {
+            let mut worker = unsafe { (*jpeg::JPEG).get_lossless_worker(w, t) };
+            let lossless_ret = worker.encode_lossless(
+                dst,
+                src,
+                #[cfg(feature = "mem3")]
+                bctx.pitch,
+                #[cfg(not(feature = "o3ds"))]
+                pre_progress,
+                #[cfg(feature = "mem3")]
+                progress,
+            )?;
+            EncodeRet::LosslessRet(lossless_ret)
+        } else {
+            let mut worker = unsafe { (*jpeg::JPEG).get_worker(w, t) };
+            let jpeg_ret = worker.encode(
+                dst,
+                src,
+                #[cfg(feature = "mem3")]
+                bctx.pitch,
+                #[cfg(not(feature = "o3ds"))]
+                pre_progress,
+                #[cfg(feature = "mem3")]
+                progress,
+            )?;
+            #[cfg(feature = "o3ds")]
+            let _ = jpeg_ret;
+
             #[cfg(not(feature = "o3ds"))]
-            pre_progress,
-            #[cfg(feature = "mem3")]
-            progress,
-        )?;
-        #[cfg(feature = "o3ds")]
-        let _ = jpeg_ret;
+            {
+                EncodeRet::JpegRet(jpeg_ret)
+            }
+            #[cfg(feature = "o3ds")]
+            {
+                EncodeRet::JpegRet
+            }
+        };
 
         if reset_threads() {
             return None;
@@ -1023,10 +1049,7 @@ impl WorkAcquire {
         Some(WorkRet(
             #[cfg(not(feature = "o3ds"))]
             self.0,
-            #[cfg(not(feature = "o3ds"))]
-            EncodeRet::JpegRet(jpeg_ret),
-            #[cfg(feature = "o3ds")]
-            EncodeRet::JpegRet,
+            ret,
         ))
     }
 }

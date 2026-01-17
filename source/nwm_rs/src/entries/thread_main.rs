@@ -233,7 +233,7 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
 
         let dst_port = RP_CONFIG.dst_port().load(Ordering::Acquire);
         let dst_flags = dst_port & RP_CONFIG_FLAGS_DATA_MASK;
-        let dst_port = dst_port & 0xffff;
+        let dst_port = dst_port & RP_CONFIG_PORT_MASK;
         if dst_port == 0 {
             RP_CONFIG
                 .dst_port()
@@ -277,18 +277,21 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
             jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
         ];
+        let color_bias = entries::thread_nwm::get_lossless_compression_bias();
+        let color_bias = [color_bias, color_bias];
         #[cfg(not(feature = "o3ds"))]
         jpeg.init(
             quality,
             core_count,
             chroma_ss,
             downsample,
+            color_bias,
             entries::thread_nwm::get_reliable_stream() != entries::thread_nwm::ReliableStream::None,
             entries::thread_nwm::get_reliable_stream_delta_prog(),
         )?;
 
         #[cfg(feature = "o3ds")]
-        jpeg.init(quality, chroma_ss, downsample)?;
+        jpeg.init(quality, chroma_ss, downsample, color_bias)?;
         entries::work_thread::init(quality, chroma_ss, downsample);
 
         #[cfg(not(feature = "o3ds"))]
