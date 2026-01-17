@@ -3,6 +3,20 @@
 
 use super::*;
 
+pub enum StartStep {
+    Normal,
+    Even,
+    Odd,
+}
+
+fn get_start_step(start_step: &StartStep) -> (usize, usize) {
+    match start_step {
+        StartStep::Normal => (0, 1),
+        StartStep::Even => (0, 2),
+        StartStep::Odd => (1, 2),
+    }
+}
+
 impl<'a, 'b> JpegEncode<'a, 'b> {
     // input count DOWNSAMPLE_FACTOR
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
@@ -13,8 +27,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP>(
             input,
             0,
-            0,
-            1,
+            StartStep::Normal,
             RP_DOWNSAMPLE_QUARTER,
         );
     }
@@ -28,8 +41,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP>(
             input,
             0,
-            0,
-            1,
+            StartStep::Normal,
             RP_DOWNSAMPLE_QUARTER,
         );
     }
@@ -40,7 +52,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
-        self.color_convert::<S, H_SAMP, V_SAMP>(input, output_base, 0, 1, RP_DOWNSAMPLE_NONE);
+        self.color_convert::<S, H_SAMP, V_SAMP>(
+            input,
+            output_base,
+            StartStep::Normal,
+            RP_DOWNSAMPLE_NONE,
+        );
     }
 
     // input count S
@@ -49,17 +66,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
-        let start = if self.worker.info.even_odd == false {
-            0
+        let start_step = if self.worker.info.even_odd == false {
+            StartStep::Even
         } else {
-            1
+            StartStep::Odd
         };
 
         self.color_convert::<S, H_SAMP, V_SAMP>(
             input,
             output_base,
-            start,
-            2,
+            start_step,
             RP_DOWNSAMPLE_EVEN_ODD,
         );
     }
@@ -70,10 +86,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         &mut self,
         input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
-        start: usize,
-        step: usize,
+        start_step: StartStep,
         downsample: u8,
     ) {
+        let (_, step) = get_start_step(&start_step);
         let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
@@ -120,16 +136,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 input,
                 &mut self.worker.bufs.color,
                 width,
-                start,
-                step,
+                start_step,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::BGR => cconvert::<2, 1, 0, 3, { S }>(
                 input,
                 &mut self.worker.bufs.color,
                 width,
-                start,
-                step,
+                start_step,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::RGB565 => cconvert2::<{ S }, _>(
@@ -137,8 +151,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 rgb565_comps,
                 &mut self.worker.bufs.color,
                 width,
-                start,
-                step,
+                start_step,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB5A1 => cconvert2::<{ S }, _>(
@@ -146,8 +159,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 rgb5a1_comps,
                 &mut self.worker.bufs.color,
                 width,
-                start,
-                step,
+                start_step,
                 &self.worker.shared.jpeg_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB4 => todo!(),
@@ -189,10 +201,10 @@ pub fn cconvert<const R: usize, const G: usize, const B: usize, const P: usize, 
     input: &mut impl Iterator<Item = *const u8>,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
-    start: usize,
-    step: usize,
+    start_step: StartStep,
     tab: &[i32; TABLE_SIZE],
 ) {
+    let (start, step) = get_start_step(&start_step);
     let out_width = width / step;
     let [output0, output1, output2] = output;
     let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, out_width * N) };
@@ -233,12 +245,12 @@ pub fn cconvert2<const N: usize, F>(
     comps: F,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
     width: usize,
-    start: usize,
-    step: usize,
+    start_step: StartStep,
     tab: &ColorConvTabs,
 ) where
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
 {
+    let (start, step) = get_start_step(&start_step);
     let out_width = width / step;
     let [output0, output1, output2] = output;
     let output0 = unsafe { slice::from_raw_parts_mut(output0.ptr, out_width * N) };
