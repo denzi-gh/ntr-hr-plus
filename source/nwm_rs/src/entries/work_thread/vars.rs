@@ -382,22 +382,26 @@ impl WorkFrame {
         let core_count_other = core_count_all - 1;
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
-        let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
-        let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
 
-        #[cfg(not(feature = "mem3"))]
-        let (mcus_per_row, mcu_rows) = if downsample == RP_DOWNSAMPLE_CHECKER {
-            (
-                jpeg_screen.checker.mcus_per_row as u32,
-                jpeg_screen.checker.mcu_rows as u32,
-            )
+        let (mcus_per_row, mcu_rows) = if entries::thread_nwm::get_lossless_compression() {
+            (1, bctx.height() / encoder::LOSSLESS_BLOCK_SIZE as u32)
         } else {
-            (jpeg_screen.mcus_per_row as u32, jpeg_screen.mcu_rows as u32)
+            let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
+            let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
+            #[cfg(not(feature = "mem3"))]
+            if downsample == RP_DOWNSAMPLE_CHECKER {
+                (
+                    jpeg_screen.checker.mcus_per_row as u32,
+                    jpeg_screen.checker.mcu_rows as u32,
+                )
+            } else {
+                (jpeg_screen.mcus_per_row as u32, jpeg_screen.mcu_rows as u32)
+            }
+            #[cfg(feature = "mem3")]
+            (0, jpeg_screen.mcu_rows as u32)
         };
-        #[cfg(feature = "mem3")]
-        let mcu_rows = jpeg_screen.mcu_rows as u32;
 
         let mcu_rows_per_thread = unsafe {
             core::intrinsics::unchecked_div(mcu_rows + core_count_all - 1, core_count_all)
@@ -406,7 +410,7 @@ impl WorkFrame {
         let n = mcu_rows_per_thread;
         let n_last = mcu_rows - mcu_rows_per_thread * core_count_other;
 
-        let last_row_last_n_range = jpeg_shared.last_restart_range;
+        let last_row_last_n_range = unsafe { (*encoder::ENCODER).shared.last_restart_range };
         const LAST_ROW_LAST_N_F: u32 = 4;
 
         let mut curr = l.load(Ordering::Acquire);
@@ -474,6 +478,8 @@ impl WorkFrame {
         let restart_in_rows = v_adjusted as s32;
         #[cfg(not(feature = "mem3"))]
         let restart_interval = restart_in_rows as u32 * mcus_per_row;
+        #[cfg(feature = "mem3")]
+        let _ = mcus_per_row;
 
         let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
         let cinfo = encoder::CInfo {
@@ -944,10 +950,14 @@ impl WorkAcquire {
             };
             let pitch = bctx.pitch();
 
-            let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
-            let mcu_size = is_top_index(bctx.is_top)
-                .index_into(&jpeg_shared.screens)
-                .mcu_col_size;
+            let mcu_size = if entries::thread_nwm::get_lossless_compression() {
+                encoder::LOSSLESS_BLOCK_SIZE
+            } else {
+                let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
+                is_top_index(bctx.is_top)
+                    .index_into(&jpeg_shared.screens)
+                    .mcu_col_size
+            };
             let j_start = mcu_size * pitch as usize * i_start as usize;
             let j_count = mcu_size * pitch as usize * i_count as usize;
 
@@ -1103,16 +1113,18 @@ pub struct BlitCtx {
 
 pub type RowIndices = RangedArray<u32, RP_CORE_COUNT_MAX>;
 
-#[cfg(not(feature = "mem3"))]
 impl BlitCtx {
+    #[cfg(not(feature = "mem3"))]
     pub fn pitch(&self) -> u32 {
         self.bpp() * self.width()
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn src_len(&self) -> u32 {
         self.height() * self.pitch()
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn width(&self) -> u32 {
         GSP_SCREEN_WIDTH
     }
@@ -1125,6 +1137,7 @@ impl BlitCtx {
         }
     }
 
+    #[cfg(not(feature = "mem3"))]
     pub fn bpp(&self) -> u32 {
         let format = self.format;
         if format == 0 {

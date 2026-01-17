@@ -57,6 +57,10 @@ impl EncoderShared {
             self.delta_prog = delta_prog;
             self.core_count = core_count;
         }
+        #[cfg(feature = "o3ds")]
+        let delta_prog = false;
+
+        self.last_restart_range = if delta_prog { 64 } else { 32 };
 
         for s in ScreenIndex::all() {
             let screen = s.index_into_mut(&mut self.screens);
@@ -163,7 +167,6 @@ impl JpegShared {
             }
         }
 
-        self.last_restart_range = if delta_prog { 64 } else { 32 };
         self.set_comp_infos(
             hq,
             #[cfg(not(feature = "o3ds"))]

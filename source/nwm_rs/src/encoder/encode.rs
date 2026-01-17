@@ -707,6 +707,30 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
+        #[cfg(not(feature = "mem3"))]
+        {
+            match screen.downsample {
+                RP_DOWNSAMPLE_QUARTER => {}
+                RP_DOWNSAMPLE_EVEN_ODD => {}
+                _ => {
+                    if vss {
+                        // vss == true
+                    } else {
+                        // vss == false
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "mem3")]
+        {
+            match screen.downsample {
+                RP_DOWNSAMPLE_QUARTER => {}
+                RP_DOWNSAMPLE_EVEN_ODD => {}
+                _ => {}
+            }
+        }
+
         Some(LosslessEncodeRet::LosslessRet(LosslessRet {}))
     }
 }

@@ -3,6 +3,8 @@
 
 use super::*;
 
+pub const LOSSLESS_BLOCK_SIZE: usize = 16;
+
 const CONST_BITS: usize = 14;
 pub const DCTSIZE: usize = 8;
 pub const DCTSIZE2: usize = DCTSIZE * DCTSIZE;

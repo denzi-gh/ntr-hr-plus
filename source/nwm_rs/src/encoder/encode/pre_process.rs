@@ -3,6 +3,8 @@
 
 use super::*;
 
+impl<'a, 'b> LosslessEncode<'a, 'b> {}
+
 impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
         let mut bias = 0;
