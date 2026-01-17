@@ -382,7 +382,7 @@ impl WorkFrame {
         let core_count_other = core_count_all - 1;
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
-        let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+        let jpeg_shared = unsafe { encoder::get_jpeg_shared() };
         let jpeg_screen = curr_s.index_into(&jpeg_shared.screens);
 
         let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
@@ -476,14 +476,14 @@ impl WorkFrame {
         let restart_interval = restart_in_rows as u32 * mcus_per_row;
 
         let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
-        let cinfo = jpeg::CInfo {
+        let cinfo = encoder::CInfo {
             is_top: bctx.is_top,
             color_space: match bctx.format {
-                0 => jpeg::ColorSpace::XBGR,
-                1 => jpeg::ColorSpace::BGR,
-                2 => jpeg::ColorSpace::RGB565,
-                3 => jpeg::ColorSpace::RGB5A1,
-                _ => jpeg::ColorSpace::RGB4,
+                0 => encoder::ColorSpace::XBGR,
+                1 => encoder::ColorSpace::BGR,
+                2 => encoder::ColorSpace::RGB565,
+                3 => encoder::ColorSpace::RGB5A1,
+                _ => encoder::ColorSpace::RGB4,
             },
             #[cfg(not(feature = "mem3"))]
             restart_interval: restart_interval as u16,
@@ -498,7 +498,7 @@ impl WorkFrame {
         }
 
         unsafe {
-            (*jpeg::JPEG).set_info(cinfo);
+            (*encoder::ENCODER).set_info(cinfo);
         }
 
         for j in ThreadIndex::up_to(&thread_index_last) {
@@ -552,10 +552,10 @@ pub struct WorkAcquire(Impl);
 
 pub enum EncodeRet {
     #[cfg(not(feature = "o3ds"))]
-    JpegRet(jpeg::JpegEncodeRet),
+    JpegRet(encoder::JpegEncodeRet),
     #[cfg(feature = "o3ds")]
     JpegRet,
-    LosslessRet(jpeg::LosslessEncodeRet),
+    LosslessRet(encoder::LosslessEncodeRet),
 }
 
 pub struct WorkRet(#[cfg(not(feature = "o3ds"))] Impl, EncodeRet);
@@ -582,7 +582,7 @@ impl Drop for WorkRet {
 
                 let s = is_top_index(bctx.is_top);
 
-                if let EncodeRet::JpegRet(jpeg::JpegEncodeRet::JpegRet(jpeg_ret)) = &self.1 {
+                if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegRet(jpeg_ret)) = &self.1 {
                     let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
                         / jpeg_ret.mcus as f32;
                     unsafe {
@@ -690,7 +690,7 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
     let info = unsafe { TERM_INFOS.get(&w) };
     let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
     let (delta_prog, delta_q) =
-        if let EncodeRet::JpegRet(jpeg::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
+        if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
             (true, dq_ret.delta_q as u16)
         } else {
             (false, 0)
@@ -937,14 +937,14 @@ impl WorkAcquire {
         } else {
             let (i_start, i_count) = match downsample {
                 RP_DOWNSAMPLE_QUARTER => (
-                    *bctx.i_start.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
-                    *bctx.i_count.get(&t) * jpeg::DOWNSAMPLE_FACTOR as u32,
+                    *bctx.i_start.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
+                    *bctx.i_count.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
                 ),
                 RP_DOWNSAMPLE_EVEN_ODD | _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
             };
             let pitch = bctx.pitch();
 
-            let jpeg_shared = unsafe { jpeg::get_jpeg_shared() };
+            let jpeg_shared = unsafe { encoder::get_jpeg_shared() };
             let mcu_size = is_top_index(bctx.is_top)
                 .index_into(&jpeg_shared.screens)
                 .mcu_col_size;
@@ -974,7 +974,7 @@ impl WorkAcquire {
                 entries::thread_nwm::ReliableStream::None => {
                     let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
                     (
-                        jpeg::WorkderDstUser {
+                        encoder::WorkderDstUser {
                             none_info: ninfo as *const _,
                         },
                         ninfo.info.pos.load(Ordering::Acquire),
@@ -987,25 +987,25 @@ impl WorkAcquire {
                         } else {
                             return None;
                         };
-                    let hdr = jpeg::ArqRpHdr { w, t };
+                    let hdr = encoder::ArqRpHdr { w, t };
 
-                    (jpeg::WorkderDstUser { kcp_hdr: hdr }, dst)
+                    (encoder::WorkderDstUser { kcp_hdr: hdr }, dst)
                 }
             };
 
-            let dst = unsafe { (*jpeg::JPEG).worker_dst(s, w, dst, user) };
+            let dst = unsafe { (*encoder::ENCODER).worker_dst(s, w, dst, user) };
             dst
         };
 
         #[cfg(feature = "o3ds")]
         let dst = {
             let dst = unsafe { entries::thread_nwm::nwm_info() };
-            let dst = unsafe { (*jpeg::JPEG).worker_dst(dst) };
+            let dst = unsafe { (*encoder::ENCODER).worker_dst(dst) };
             dst
         };
 
         let ret = if entries::thread_nwm::get_lossless_compression() {
-            let mut worker = unsafe { (*jpeg::JPEG).get_lossless_worker(w, t) };
+            let mut worker = unsafe { (*encoder::ENCODER).get_lossless_worker(w, t) };
             let lossless_ret = worker.encode_lossless(
                 dst,
                 src,
@@ -1018,7 +1018,7 @@ impl WorkAcquire {
             )?;
             EncodeRet::LosslessRet(lossless_ret)
         } else {
-            let mut worker = unsafe { (*jpeg::JPEG).get_worker(w, t) };
+            let mut worker = unsafe { (*encoder::ENCODER).get_worker(w, t) };
             let jpeg_ret = worker.encode(
                 dst,
                 src,

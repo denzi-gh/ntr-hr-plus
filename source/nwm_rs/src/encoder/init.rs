@@ -332,7 +332,7 @@ impl JpegShared {
     }
 }
 
-impl Jpeg {
+impl Encoder {
     pub unsafe fn once(&mut self) {
         self.shared.once();
         self.shared_mut.once();

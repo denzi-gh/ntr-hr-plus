@@ -83,7 +83,7 @@ pub struct CInfo {
     pub even_odd: bool,
 }
 
-impl Jpeg {
+impl Encoder {
     pub fn set_info(&mut self, info: CInfo) {
         *info.work_index.index_into_mut(&mut self.info) = info;
     }

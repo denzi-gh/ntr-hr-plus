@@ -113,7 +113,7 @@ impl WorkerDst {
     fn dq_update_size(&mut self, size: u32) {
         if self.delta_prog {
             let comp_size = unsafe {
-                (*JPEG)
+                (*ENCODER)
                     .shared_mut
                     .compressed_size
                     .get_mut(&self.s)

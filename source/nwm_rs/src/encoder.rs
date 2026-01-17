@@ -156,7 +156,7 @@ pub struct LosslessShared {
     pub color_bias: [u8; RP_SCREEN_COUNT as usize],
 }
 
-pub struct Jpeg {
+pub struct Encoder {
     pub shared: JpegShared,
     pub shared_mut: JpegSharedMut,
     pub lossless_shared: LosslessShared,
@@ -165,7 +165,7 @@ pub struct Jpeg {
 }
 
 pub unsafe fn get_jpeg_shared() -> &'static JpegShared {
-    unsafe { &(*JPEG).shared }
+    unsafe { &(*ENCODER).shared }
 }
 
 #[cfg(not(feature = "o3ds"))]

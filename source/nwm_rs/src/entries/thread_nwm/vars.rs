@@ -1123,7 +1123,7 @@ pub fn nwm_info(work_index: WorkIndex) -> &'static mut NwmWorkInfo {
     unsafe { NWM_INFOS.get_mut(&work_index) }
 }
 
-const RP_CB_HDR_SIZE: usize = jpeg::jround_up(
+const RP_CB_HDR_SIZE: usize = encoder::jround_up(
     NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize,
     mem::size_of::<usize>(),
 );
@@ -1321,7 +1321,7 @@ pub fn rp_clear_size(w: WorkIndex) {
 }
 
 #[cfg(feature = "o3ds")]
-pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
+pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool) -> bool {
     let mut size = RP_CB_PACKET_SIZE as usize;
     const TERM_FLAG: u8 = 0x10;
     if term {
@@ -1356,7 +1356,7 @@ pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool) -> bool {
 
 #[named]
 #[cfg(not(feature = "o3ds"))]
-pub unsafe fn rp_send_buffer(dst: &mut jpeg::WorkerDst, term: bool, rel_stream: bool) -> bool {
+pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool, rel_stream: bool) -> bool {
     let rp_packet_data_size = get_packet_data_size_v(rel_stream);
     let mut size = rp_packet_data_size;
     const TERM_FLAG: u8 = 0x10;

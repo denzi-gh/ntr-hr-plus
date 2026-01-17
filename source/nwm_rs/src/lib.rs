@@ -52,7 +52,7 @@ mod dbg;
 mod vars;
 mod entries;
 mod fix;
-mod jpeg;
+mod encoder;
 mod utils;
 
 #[panic_handler]

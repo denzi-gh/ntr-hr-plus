@@ -32,10 +32,10 @@ pub const NWM_BUFFER_SIZE: usize =
     (SEND_BUFS_SIZE / WORK_COUNT) as usize / mem::size_of::<usize>() * mem::size_of::<usize>();
 
 fn once_jpeg() -> Option<()> {
-    let jpeg = request_mem_from_pool::<{ mem::size_of::<jpeg::Jpeg>() }>()?;
+    let jpeg = request_mem_from_pool::<{ mem::size_of::<encoder::Encoder>() }>()?;
     unsafe {
-        jpeg::JPEG = jpeg.to_ptr() as *mut jpeg::Jpeg;
-        let jpeg = &mut *jpeg::JPEG;
+        encoder::ENCODER = jpeg.to_ptr() as *mut encoder::Encoder;
+        let jpeg = &mut *encoder::ENCODER;
 
         jpeg.once();
     }
@@ -255,7 +255,7 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
         #[cfg(not(feature = "o3ds"))]
         entries::thread_nwm::init_reliable_stream_cb(qos)?;
 
-        let jpeg = &mut *jpeg::JPEG;
+        let encoder = &mut *encoder::ENCODER;
         let quality = RP_CONFIG.quality().load(Ordering::Acquire);
         let chroma_ss = [
             RP_CONFIG
@@ -274,13 +274,13 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
                 .load(Ordering::Acquire),
         ];
         let quality = [
-            jpeg::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
-            jpeg::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
+            encoder::downsample_quality_scale(downsample[RP_SCREEN_TOP as usize] as u8, quality),
+            encoder::downsample_quality_scale(downsample[RP_SCREEN_BOT as usize] as u8, quality),
         ];
         let color_bias = entries::thread_nwm::get_lossless_compression_bias();
         let color_bias = [color_bias, color_bias];
         #[cfg(not(feature = "o3ds"))]
-        jpeg.init(
+        encoder.init(
             quality,
             core_count,
             chroma_ss,
@@ -291,7 +291,7 @@ fn init(#[cfg(not(feature = "o3ds"))] nwm_bufs: &NwmBufs) -> Option<Init> {
         )?;
 
         #[cfg(feature = "o3ds")]
-        jpeg.init(quality, chroma_ss, downsample, color_bias)?;
+        encoder.init(quality, chroma_ss, downsample, color_bias)?;
         entries::work_thread::init(quality, chroma_ss, downsample);
 
         #[cfg(not(feature = "o3ds"))]
