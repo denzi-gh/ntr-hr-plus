@@ -807,7 +807,7 @@ fn nwm_send_next_buffer(
                 lossless_buf as *mut u8,
                 RP_LOSSLESS_HDR_SIZE as usize,
             );
-            *lossless_buf.add(1) |= w.get() as u8 & 0x3;
+            *lossless_buf.add(1) |= t.get() as u8 & 0x3;
         }
     }
 
