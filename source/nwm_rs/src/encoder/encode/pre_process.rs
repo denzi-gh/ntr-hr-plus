@@ -3,130 +3,125 @@
 
 use super::*;
 
-impl<'a, 'b> LosslessEncode<'a, 'b> {}
-
-impl<'a, 'b> JpegEncode<'a, 'b> {
-    pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
-        let mut bias = 0;
-        let input = unsafe { slice::from_raw_parts(input, width) };
-        let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
-        for (input, output) in input.as_chunks::<{ SAMP_FACTOR }>().0.iter().zip(output) {
-            *output = ((input[0] as u16 + input[1] as u16 + bias as u16) >> 1) as u8;
-            bias ^= 1; /* 1=>2, 2=>1 */
-        }
+pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
+    let mut bias = 0;
+    let input = unsafe { slice::from_raw_parts(input, width) };
+    let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
+    for (input, output) in input.as_chunks::<{ SAMP_FACTOR }>().0.iter().zip(output) {
+        *output = ((input[0] as u16 + input[1] as u16 + bias as u16) >> 1) as u8;
+        bias ^= 1; /* 1=>2, 2=>1 */
     }
+}
 
-    pub fn h2v2_downsample(width: usize, input: *const u8, output: *mut u8) {
-        let input0 = unsafe { slice::from_raw_parts(input, width) };
-        let input1 = unsafe { slice::from_raw_parts(input.add(width), width) };
-        let input0 = input0.as_chunks::<{ SAMP_FACTOR }>().0.iter();
-        let input1 = input1.as_chunks::<{ SAMP_FACTOR }>().0.iter();
-        let mut bias = 1;
-        let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
+pub fn h2v2_downsample(width: usize, input: *const u8, output: *mut u8) {
+    let input0 = unsafe { slice::from_raw_parts(input, width) };
+    let input1 = unsafe { slice::from_raw_parts(input.add(width), width) };
+    let input0 = input0.as_chunks::<{ SAMP_FACTOR }>().0.iter();
+    let input1 = input1.as_chunks::<{ SAMP_FACTOR }>().0.iter();
+    let mut bias = 1;
+    let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
 
-        for ((input0, input1), output) in input0.zip(input1).zip(output) {
-            *output = ((input0[0] as u16
-                + input0[1] as u16
-                + input1[0] as u16
-                + input1[1] as u16
-                + bias as u16)
-                >> 2) as u8;
-            bias ^= 3; /* 1=>2, 2=>1 */
-        }
+    for ((input0, input1), output) in input0.zip(input1).zip(output) {
+        *output = ((input0[0] as u16
+            + input0[1] as u16
+            + input1[0] as u16
+            + input1[1] as u16
+            + bias as u16)
+            >> 2) as u8;
+        bias ^= 3; /* 1=>2, 2=>1 */
     }
+}
 
-    pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(&mut self, output_base: usize) {
-        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(
+    bufs: &mut WorkerBufs,
+    output_base: usize,
+) {
+    let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
-        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
-        let out_width = width / SAMP_FACTOR;
+    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+    let out_width = width / SAMP_FACTOR;
 
-        for ci in CompIndex::all() {
-            if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                unsafe {
-                    let input = ci.index_into(&self.worker.bufs.color).buf.full.as_ptr();
-                    let output = self
-                        .worker
-                        .bufs
-                        .prep
-                        .full
-                        .get_mut(ci, H_SAMP, V_SAMP)
-                        .as_mut_ptr()
-                        .add(output_base * out_width);
-                    if V_SAMP {
-                        Self::h2v2_downsample(width, input, output);
-                    } else {
-                        Self::h2v1_downsample(width, input, output);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn downsample_quarter<const H_SAMP: bool, const V_SAMP: bool>(
-        &mut self,
-        output_base: usize,
-        ci: CompIndex,
-    ) {
-        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
-
-        let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER);
-        let out_width = width / SAMP_FACTOR;
-
+    for ci in CompIndex::all() {
         if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
             unsafe {
-                let prep = ci
-                    .index_into_mut(&mut self.worker.bufs.prep.quarter.prep)
-                    .as_ptr();
-                let output = self
-                    .worker
-                    .bufs
+                let input = ci.index_into(&bufs.color).buf.full.as_ptr();
+                let output = bufs
                     .prep
-                    .quarter
-                    .buf
+                    .full
                     .get_mut(ci, H_SAMP, V_SAMP)
                     .as_mut_ptr()
                     .add(output_base * out_width);
                 if V_SAMP {
-                    Self::h2v2_downsample(width, prep, output);
+                    h2v2_downsample(width, input, output);
                 } else {
-                    Self::h2v1_downsample(width, prep, output);
+                    h2v1_downsample(width, input, output);
                 }
             }
         }
     }
+}
 
-    pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
-        &mut self,
-        output_base: usize,
-    ) {
-        let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+pub fn downsample_quarter<const H_SAMP: bool, const V_SAMP: bool>(
+    bufs: &mut WorkerBufs,
+    output_base: usize,
+    ci: CompIndex,
+) {
+    let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
 
-        let width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD);
-        let out_width = width / SAMP_FACTOR;
+    let width = downsample_screen_width(RP_DOWNSAMPLE_QUARTER);
+    let out_width = width / SAMP_FACTOR;
 
-        for ci in CompIndex::all() {
-            if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                unsafe {
-                    let input = ci.index_into(&self.worker.bufs.color).buf.even_odd.as_ptr();
-                    let output = self
-                        .worker
-                        .bufs
-                        .prep
-                        .even_odd
-                        .get_mut(ci, H_SAMP, V_SAMP)
-                        .as_mut_ptr()
-                        .add(output_base * out_width);
-                    if V_SAMP {
-                        Self::h2v2_downsample(width, input, output);
-                    } else {
-                        Self::h2v1_downsample(width, input, output);
-                    }
+    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
+        unsafe {
+            let prep = ci.index_into_mut(&mut bufs.prep.quarter.prep).as_ptr();
+            let output = bufs
+                .prep
+                .quarter
+                .buf
+                .get_mut(ci, H_SAMP, V_SAMP)
+                .as_mut_ptr()
+                .add(output_base * out_width);
+            if V_SAMP {
+                h2v2_downsample(width, prep, output);
+            } else {
+                h2v1_downsample(width, prep, output);
+            }
+        }
+    }
+}
+
+pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
+    bufs: &mut WorkerBufs,
+    output_base: usize,
+) {
+    let _ssamp_const = SubSampConst::<H_SAMP, V_SAMP>::ASSERT;
+
+    let width = downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD);
+    let out_width = width / SAMP_FACTOR;
+
+    for ci in CompIndex::all() {
+        if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
+            unsafe {
+                let input = ci.index_into(&bufs.color).buf.even_odd.as_ptr();
+                let output = bufs
+                    .prep
+                    .even_odd
+                    .get_mut(ci, H_SAMP, V_SAMP)
+                    .as_mut_ptr()
+                    .add(output_base * out_width);
+                if V_SAMP {
+                    h2v2_downsample(width, input, output);
+                } else {
+                    h2v1_downsample(width, input, output);
                 }
             }
         }
     }
+}
 
+impl<'a, 'b> LosslessEncode<'a, 'b> {}
+
+impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn pre_process_quarter_rem(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
@@ -194,7 +189,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 unsafe {
                     let input = ci.index_into(&self.worker.bufs.color).buf.full.as_ptr();
                     if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                        Self::h2v2_downsample(
+                        h2v2_downsample(
                             width,
                             input,
                             ci.index_into_mut(&mut self.worker.bufs.prep.quarter.prep)
@@ -211,13 +206,13 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .get_mut(ci, H_SAMP, V_SAMP)
                             .as_mut_ptr()
                             .add(out_width * (output_base * SAMP_FACTOR + prep_base));
-                        Self::h2v2_downsample(width, input, output);
+                        h2v2_downsample(width, input, output);
                     }
                 }
             }
         }
         for ci in CompIndex::all() {
-            self.downsample_quarter::<H_SAMP, V_SAMP>(output_base, ci);
+            downsample_quarter::<H_SAMP, V_SAMP>(&mut self.worker.bufs, output_base, ci);
         }
     }
 
@@ -234,7 +229,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         const V_SAMP: bool = true;
         for output_base in 0..DCTSIZE {
             self.color_convert_even_odd::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, output_base);
-            self.downsample_even_odd::<H_SAMP, V_SAMP>(output_base);
+            downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.worker.bufs, output_base);
         }
     }
 
@@ -244,7 +239,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         const V_SAMP: bool = true;
         for output_base in 0..DCTSIZE {
             self.color_convert_full::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, output_base);
-            self.downsample_full::<H_SAMP, V_SAMP>(output_base);
+            downsample_full::<H_SAMP, V_SAMP>(&mut self.worker.bufs, output_base);
         }
     }
 
@@ -274,7 +269,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         .get_mut(ci, H_SAMP, V_SAMP)
                         .as_mut_ptr()
                         .add(out_width * output_base);
-                    Self::h2v2_downsample(width, input, output);
+                    h2v2_downsample(width, input, output);
                 }
             }
         }
@@ -295,7 +290,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 unsafe {
                     let input = ci.index_into(&self.worker.bufs.color).buf.full.as_ptr();
                     if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                        Self::h2v2_downsample(
+                        h2v2_downsample(
                             width,
                             input,
                             ci.index_into_mut(&mut self.worker.bufs.prep.quarter.prep)
@@ -311,10 +306,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .get_mut(ci, H_SAMP, V_SAMP)
                             .as_mut_ptr()
                             .add(out_width * output_base);
-                        Self::h2v2_downsample(width, input, output);
+                        h2v2_downsample(width, input, output);
                     }
 
-                    self.downsample_quarter::<H_SAMP, V_SAMP>(output_base, ci);
+                    downsample_quarter::<H_SAMP, V_SAMP>(&mut self.worker.bufs, output_base, ci);
                 }
             }
         }
@@ -328,7 +323,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         const V_SAMP: bool = false;
         for base in 0..DCTSIZE {
             self.color_convert_full::<1, H_SAMP, V_SAMP>(src, base);
-            self.downsample_full::<H_SAMP, V_SAMP>(base);
+            downsample_full::<H_SAMP, V_SAMP>(&mut self.worker.bufs, base);
         }
     }
 
@@ -340,7 +335,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         const V_SAMP: bool = false;
         for base in 0..DCTSIZE {
             self.color_convert_even_odd::<1, H_SAMP, V_SAMP>(src, base);
-            self.downsample_even_odd::<H_SAMP, V_SAMP>(base);
+            downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.worker.bufs, base);
         }
     }
 }
