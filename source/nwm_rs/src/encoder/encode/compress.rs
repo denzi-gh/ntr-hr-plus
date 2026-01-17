@@ -413,7 +413,7 @@ fn color_bias_2(r: u8, g: u8, b: u8) -> u16 {
 }
 
 impl<'a, 'b> LosslessEncode<'a, 'b> {
-    fn copy_rgba(&mut self) {
+    fn copy_rgba8(&mut self) {
         let is_top = self.worker.info.is_top;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.shared.screens);
@@ -468,12 +468,92 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
     }
 
+    fn copy_rgb8(&mut self) {
+        let is_top = self.worker.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
+        unsafe {
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                    let input = self.worker.bufs.data.lossless.ptr;
+                    const CHUNK: usize = 4;
+                    const P: usize = 3;
+                    const CHUNK_P: usize = P * CHUNK;
+                    const CHUNK_U32: usize = CHUNK_P / mem::size_of::<u32>();
+
+                    match *s.index_into(&self.worker.lossless_shared.color_bias) {
+                        RP_COLOR_BIAS_NONE => {
+                            for input in slice::from_raw_parts(
+                                input as *const [u32; CHUNK_U32],
+                                width / CHUNK,
+                            )
+                            .iter()
+                            {
+                                for c in 0..CHUNK {
+                                    self.dst.write_bytes(slice::from_raw_parts(
+                                        (input.as_ptr() as *const u8).add(c * P),
+                                        P,
+                                    ));
+                                }
+                            }
+                        }
+                        RP_COLOR_BIAS_1 => {
+                            for input in slice::from_raw_parts(
+                                input as *const [u32; CHUNK_U32],
+                                width / CHUNK,
+                            )
+                            .iter()
+                            {
+                                for c in 0..CHUNK {
+                                    let input = (input.as_ptr() as *const u8).add(c * P);
+                                    let output =
+                                        color_bias_1(*input.add(2), *input.add(1), *input.add(0));
+                                    self.dst.write_bytes(slice::from_raw_parts(
+                                        &output as *const u16 as *const u8,
+                                        mem::size_of::<u16>(),
+                                    ));
+                                }
+                            }
+                        }
+                        RP_COLOR_BIAS_2 => {
+                            let mut localbuf: [u8; 0] = const_default();
+                            let mut buf = EncodeBuffer::init(
+                                &mut self.worker.bit_enc_state,
+                                &mut self.dst,
+                                &mut localbuf,
+                                true,
+                            );
+                            for input in slice::from_raw_parts(
+                                input as *const [u32; CHUNK_U32],
+                                width / CHUNK,
+                            )
+                            .iter()
+                            {
+                                for c in 0..CHUNK {
+                                    let input = (input.as_ptr() as *const u8).add(c * P);
+                                    let output =
+                                        color_bias_2(*input.add(2), *input.add(1), *input.add(0));
+                                    buf.put_bits(output as u32, 12);
+                                }
+                            }
+                            buf.store();
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
     pub fn copy_encode(&mut self) {
         match self.worker.info.color_space {
-            ColorSpace::RGBA8 => self.copy_rgba(),
-            ColorSpace::RGB8 => todo!(),
-            ColorSpace::RGB565 => todo!(),
-            ColorSpace::RGB5A1 => todo!(),
+            ColorSpace::RGBA8 => self.copy_rgba8(),
+            ColorSpace::RGB8 => self.copy_rgb8(),
+            ColorSpace::RGB565 => {}
+            ColorSpace::RGB5A1 => {}
             ColorSpace::RGB4 => todo!(),
         }
     }

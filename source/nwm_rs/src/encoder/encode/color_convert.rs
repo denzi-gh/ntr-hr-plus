@@ -208,20 +208,20 @@ pub fn pconvert(
     }
 }
 
-const fn cconvert_chunk() -> usize {
-    4
+const fn cconvert_chunk(a: bool) -> usize {
+    if a { 1 } else { 4 }
 }
 
 const fn cconvert_p(a: bool) -> usize {
     if a { 4 } else { 3 }
 }
 
-const fn cconvert_chunk_p(p: usize, step: usize) -> usize {
-    cconvert_chunk() * p * step
+const fn cconvert_chunk_p(c: usize, p: usize, step: usize) -> usize {
+    c * p * step
 }
 
-const fn cconvert_chunk_u32(p: usize, step: usize) -> usize {
-    cconvert_chunk_p(p, step) / mem::size_of::<u32>()
+const fn cconvert_chunk_u32(c: usize, p: usize, step: usize) -> usize {
+    cconvert_chunk_p(c, p, step) / mem::size_of::<u32>()
 }
 
 const fn cconvert_step(start_step: StartStep) -> usize {
@@ -242,12 +242,12 @@ pub fn cconvert<
     width: usize,
     tab: &[i32; TABLE_SIZE],
 ) {
-    let chunk_u32 = cconvert_chunk_u32(cconvert_p(A), cconvert_step(START_STEP));
+    let chunk_u32 = cconvert_chunk_u32(cconvert_chunk(A), cconvert_p(A), cconvert_step(START_STEP));
     match chunk_u32 {
         3 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 3>(input, output, width, tab),
-        4 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 4>(input, output, width, tab),
+        1 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 1>(input, output, width, tab),
         6 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 6>(input, output, width, tab),
-        8 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 8>(input, output, width, tab),
+        2 => cconvert1_chunk_u32::<R, G, B, A, N, START_STEP, 2>(input, output, width, tab),
         _ => panic!(),
     }
 }
@@ -276,21 +276,22 @@ pub fn cconvert1_chunk_u32<
                 let output1 = output[1].ptr.add(out_width * i);
                 let output2 = output[2].ptr.add(out_width * i);
 
-                for x in 0..out_width / cconvert_chunk() {
-                    let input_0 = *(input.add(x * cconvert_chunk_p(cconvert_p(A), step))
+                for x in 0..out_width / cconvert_chunk(A) {
+                    let input_0 = *(input
+                        .add(x * cconvert_chunk_p(cconvert_chunk(A), cconvert_p(A), step))
                         as *const [u32; CHUNK_U32]);
                     let input = input_0.as_ptr() as *const u8;
 
-                    for c in 0..cconvert_chunk() {
+                    for c in 0..cconvert_chunk(A) {
                         let input = input.add((c * step + start) * cconvert_p(A));
 
                         let r = *input.add(R);
                         let g = *input.add(G);
                         let b = *input.add(B);
 
-                        let output0 = output0.add(x * cconvert_chunk() + c);
-                        let output1 = output1.add(x * cconvert_chunk() + c);
-                        let output2 = output2.add(x * cconvert_chunk() + c);
+                        let output0 = output0.add(x * cconvert_chunk(A) + c);
+                        let output1 = output1.add(x * cconvert_chunk(A) + c);
+                        let output2 = output2.add(x * cconvert_chunk(A) + c);
 
                         pconvert(r, g, b, output0, output1, output2, tab);
                     }
@@ -298,6 +299,14 @@ pub fn cconvert1_chunk_u32<
             }
         }
     }
+}
+
+const fn cconvert2_chunk() -> usize {
+    2
+}
+
+const fn cconvert2_p() -> usize {
+    mem::size_of::<u16>()
 }
 
 // input count N
@@ -310,10 +319,10 @@ pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
 ) where
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
 {
-    let chunk_u32 = cconvert_chunk_u32(2, cconvert_step(START_STEP));
+    let chunk_u32 = cconvert_chunk_u32(cconvert2_chunk(), cconvert2_p(), cconvert_step(START_STEP));
     match chunk_u32 {
-        2 => cconvert2_chunk_u32::<N, F, START_STEP, 3>(input, comps, output, width, tab),
-        4 => cconvert2_chunk_u32::<N, F, START_STEP, 4>(input, comps, output, width, tab),
+        1 => cconvert2_chunk_u32::<N, F, START_STEP, 1>(input, comps, output, width, tab),
+        2 => cconvert2_chunk_u32::<N, F, START_STEP, 2>(input, comps, output, width, tab),
         _ => panic!(),
     }
 }
@@ -329,7 +338,7 @@ pub fn cconvert2_chunk_u32<const N: usize, F, const START_STEP: StartStep, const
     F: Fn(u16, &ColorConvTabs) -> (u8, u8, u8),
 {
     let (start, step) = get_start_step(START_STEP);
-    const P: usize = mem::size_of::<u16>();
+    const P: usize = cconvert2_p();
     let out_width = width / step;
     for i in 0..N {
         if let Some(input) = input.next() {
@@ -338,17 +347,17 @@ pub fn cconvert2_chunk_u32<const N: usize, F, const START_STEP: StartStep, const
                 let output1 = output[1].ptr.add(out_width * i);
                 let output2 = output[2].ptr.add(out_width * i);
 
-                for x in 0..out_width / cconvert_chunk() {
-                    let input_0 =
-                        *(input.add(x * cconvert_chunk_p(P, step)) as *const [u32; CHUNK_U32]);
+                for x in 0..out_width / cconvert2_chunk() {
+                    let input_0 = *(input.add(x * cconvert_chunk_p(cconvert2_chunk(), P, step))
+                        as *const [u32; CHUNK_U32]);
                     let input = input_0.as_ptr() as *const u8;
 
-                    for c in 0..cconvert_chunk() {
+                    for c in 0..cconvert2_chunk() {
                         let input = input.add((c * step + start) * P);
 
-                        let output0 = output0.add(x * cconvert_chunk() + c);
-                        let output1 = output1.add(x * cconvert_chunk() + c);
-                        let output2 = output2.add(x * cconvert_chunk() + c);
+                        let output0 = output0.add(x * cconvert2_chunk() + c);
+                        let output1 = output1.add(x * cconvert2_chunk() + c);
+                        let output2 = output2.add(x * cconvert2_chunk() + c);
 
                         let (r, g, b) = comps(*(input as *const u16), tab);
 
