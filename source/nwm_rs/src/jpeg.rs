@@ -23,11 +23,20 @@ pub use vars::*;
 pub use worker::*;
 pub use worker_dst::*;
 
+#[cfg(not(feature = "o3ds"))]
 pub struct JpegDqRet {
-    #[cfg(not(feature = "o3ds"))]
     pub delta_q: u8,
-    #[cfg(not(feature = "o3ds"))]
+}
+
+#[cfg(not(feature = "o3ds"))]
+pub struct JpegRet {
     pub mcus: u16,
+}
+
+#[cfg(not(feature = "o3ds"))]
+pub enum Ret {
+    JpegRet(JpegRet),
+    JpegDqRet(JpegDqRet),
 }
 
 #[cfg(not(feature = "mem3"))]

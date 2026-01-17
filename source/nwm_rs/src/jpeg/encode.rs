@@ -48,6 +48,12 @@ fn get_bpp_for_format(c: ColorSpace) -> u8 {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
+type EncodeRet = Ret;
+
+#[cfg(feature = "o3ds")]
+type EncodeRet = ();
+
 impl<'a, 'b> JpegEncode<'a, 'b> {
     #[named]
     #[allow(unused_macros)]
@@ -61,7 +67,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         #[cfg(feature = "mem3")]
         #[allow(unused)]
         mut progress: G,
-    ) -> Option<JpegDqRet>
+    ) -> Option<EncodeRet>
     where
         F: FnMut(),
         G: FnMut(),
@@ -75,8 +81,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let screen = s.index_into(&self.worker.shared.screens);
         #[cfg(not(feature = "mem3"))]
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
-        #[allow(unused)]
-        let mcus = screen.mcus;
 
         #[cfg(not(feature = "o3ds"))]
         if !self.worker.shared.rel_stream && self.worker.thread_index.get() == 0 {
@@ -467,8 +471,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.flush_mcu();
 
         #[cfg(not(feature = "o3ds"))]
-        let mut delta_q = 0;
-        #[cfg(not(feature = "o3ds"))]
         if !self.worker.shared.rel_stream {
             if self.worker.thread_index == thread_index_last(self.worker.shared.core_count) {
                 self.write_trailer();
@@ -482,40 +484,42 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.write_term();
 
         #[cfg(not(feature = "o3ds"))]
-        if self.worker.shared.delta_prog {
-            unsafe {
-                let shared_mut = &mut *self.worker.shared_mut.cell;
-                delta_q = *shared_mut.work_delta_q.get(&w);
+        let ret = Some(if self.worker.shared.delta_prog {
+            Ret::JpegDqRet(JpegDqRet {
+                delta_q: unsafe {
+                    let shared_mut = &mut *self.worker.shared_mut.cell;
+                    let delta_q = *shared_mut.work_delta_q.get(&w);
 
-                let c = shared_mut.work_sem_count.get_mut(&w);
+                    let c = shared_mut.work_sem_count.get_mut(&w);
 
-                if c.fetch_sub(1, Ordering::AcqRel) == 1 {
-                    c.store(self.worker.info.core_count.get() as u8, Ordering::Release);
-                    shared_mut
-                        .work_inited
-                        .get_mut(&w)
-                        .store(false, Ordering::Release);
+                    if c.fetch_sub(1, Ordering::AcqRel) == 1 {
+                        c.store(self.worker.info.core_count.get() as u8, Ordering::Release);
+                        shared_mut
+                            .work_inited
+                            .get_mut(&w)
+                            .store(false, Ordering::Release);
 
-                    if rp_need_core_syn!() {
-                        let b = shared_mut.screen_bool.get_mut(&s);
-                        if b.swap(true, Ordering::AcqRel) {
-                            b.store(false, Ordering::Release);
-                        } else {
-                            release_sem(
-                                cname!(),
-                                *self.worker.shared.screen_sem.get(&s),
-                                c_str!("screen_sem"),
-                            );
+                        if rp_need_core_syn!() {
+                            let b = shared_mut.screen_bool.get_mut(&s);
+                            if b.swap(true, Ordering::AcqRel) {
+                                b.store(false, Ordering::Release);
+                            } else {
+                                release_sem(
+                                    cname!(),
+                                    *self.worker.shared.screen_sem.get(&s),
+                                    c_str!("screen_sem"),
+                                );
+                            }
                         }
                     }
-                }
-            }
-        }
-
-        #[cfg(not(feature = "o3ds"))]
-        let ret = Some(JpegDqRet { delta_q, mcus });
+                    delta_q
+                },
+            })
+        } else {
+            Ret::JpegRet(JpegRet { mcus: screen.mcus })
+        });
         #[cfg(feature = "o3ds")]
-        let ret = Some(JpegDqRet {});
+        let ret = Some(());
         ret
     }
 

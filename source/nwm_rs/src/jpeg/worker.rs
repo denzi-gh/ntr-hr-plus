@@ -35,7 +35,7 @@ pub struct JpegSharedMutCell {
 
 #[cfg(not(feature = "o3ds"))]
 impl<'a> JpegWorker<'a> {
-    pub fn encode<F>(&'a mut self, dst: WorkerDst, src: &[u8], pre_progress: F) -> Option<JpegDqRet>
+    pub fn encode<F>(&'a mut self, dst: WorkerDst, src: &[u8], pre_progress: F) -> Option<Ret>
     where
         F: FnMut(),
     {
@@ -49,7 +49,7 @@ impl<'a> JpegWorker<'a> {
         &'a mut self,
         dst: WorkerDst,
         #[cfg(not(feature = "mem3"))] src: &[u8],
-    ) -> Option<JpegDqRet> {
+    ) -> Option<()> {
         JpegEncode { worker: self, dst }.encode::<fn() -> (), fn() -> ()>(src)
     }
 }
@@ -62,7 +62,7 @@ impl<'a> JpegWorker<'a> {
         #[cfg(feature = "mem3")] src: *const u8,
         #[cfg(feature = "mem3")] pitch: u32,
         progress: G,
-    ) -> Option<JpegDqRet>
+    ) -> Option<()>
     where
         G: FnMut(),
     {

@@ -550,12 +550,16 @@ impl WorkOtherReady {
 
 pub struct WorkAcquire(Impl);
 
-pub struct JpegRet(
-    #[cfg(not(feature = "o3ds"))] Impl,
-    #[cfg(not(feature = "o3ds"))] jpeg::JpegDqRet,
-);
+pub enum EncodeRet {
+    #[cfg(not(feature = "o3ds"))]
+    JpegRet(jpeg::Ret),
+    #[cfg(feature = "o3ds")]
+    JpegRet,
+}
 
-impl Drop for JpegRet {
+pub struct WorkRet(#[cfg(not(feature = "o3ds"))] Impl, EncodeRet);
+
+impl Drop for WorkRet {
     #[named]
     #[allow(unused_macros)]
     fn drop(&mut self) {
@@ -567,23 +571,19 @@ impl Drop for JpegRet {
 
             let f = syn.work_done_count.fetch_add(1, Ordering::AcqRel);
             let core_count = core_count_in_use();
+
             if f == core_count.get() - 1 {
                 entries::thread_screen::reset_no_skip_frame(bctx.is_top);
 
-                #[cfg(not(feature = "o3ds"))]
-                if !unsafe { send_term_dsts(w, self.1.delta_q as u16) } {
+                if !unsafe { send_term_dsts(w, &self.1) } {
                     set_reset_threads();
                 }
 
                 let s = is_top_index(bctx.is_top);
 
-                #[cfg(not(feature = "o3ds"))]
-                let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
-                #[cfg(feature = "o3ds")]
-                let delta_prog = false;
-                if !delta_prog {
+                if let EncodeRet::JpegRet(jpeg::Ret::JpegRet(jpeg_ret)) = &self.1 {
                     let comp_size = entries::thread_nwm::rp_get_size(w) as f32 * u8::BITS as f32
-                        / self.1.mcus as f32;
+                        / jpeg_ret.mcus as f32;
                     unsafe {
                         (*config_consts::OV_STATS).s[s.get() as usize].comp_size =
                             (comp_size * 1000f32) as s32
@@ -624,7 +624,7 @@ pub unsafe fn set_term_dst(dst: *mut u8, w: WorkIndex, t: ThreadIndex) -> bool {
 
 #[named]
 #[cfg(not(feature = "o3ds"))]
-unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
+unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
     if *unsafe { TERM_DSTS.get(&w).get(&ThreadIndex::init(0)) } == ptr::null_mut() {
         return true;
     }
@@ -688,7 +688,11 @@ unsafe fn send_term_dsts(w: WorkIndex, delta_q: u16) -> bool {
 
     let info = unsafe { TERM_INFOS.get(&w) };
     let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
-    let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
+    let (delta_prog, delta_q) = if let EncodeRet::JpegRet(jpeg::Ret::JpegDqRet(dq_ret)) = ret {
+        (true, dq_ret.delta_q as u16)
+    } else {
+        (false, 0)
+    };
     let hdr = (downsample as u16)
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
         | (delta_prog as u16)
@@ -915,7 +919,7 @@ unsafe fn rp_term_notify() {
 }
 
 impl WorkAcquire {
-    pub fn send_frame(self) -> Option<JpegRet> {
+    pub fn send_frame(self) -> Option<WorkRet> {
         let bctx = self.0.bctx_mut();
         let w = self.0.w;
         let t = self.0.t;
@@ -988,15 +992,7 @@ impl WorkAcquire {
                 }
             };
 
-            let dst = unsafe {
-                (*jpeg::JPEG).worker_dst(
-                    #[cfg(not(feature = "o3ds"))]
-                    s,
-                    w,
-                    dst,
-                    user,
-                )
-            };
+            let dst = unsafe { (*jpeg::JPEG).worker_dst(s, w, dst, user) };
             dst
         };
 
@@ -1024,11 +1020,13 @@ impl WorkAcquire {
             return None;
         }
 
-        Some(JpegRet(
+        Some(WorkRet(
             #[cfg(not(feature = "o3ds"))]
             self.0,
             #[cfg(not(feature = "o3ds"))]
-            jpeg_ret,
+            EncodeRet::JpegRet(jpeg_ret),
+            #[cfg(feature = "o3ds")]
+            EncodeRet::JpegRet,
         ))
     }
 }

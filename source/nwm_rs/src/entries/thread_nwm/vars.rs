@@ -933,6 +933,15 @@ unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
     Some(())
 }
 
+unsafe fn init_lossless_compression(flags: u32) {
+    unsafe {
+        let lossless_compression = flags & RP_CONFIG_FLAG_LOSSLESS > 0;
+        LOSSLESS_COMPRESSION.store(lossless_compression, Ordering::Release);
+        let bias = (flags & RP_CONFIG_FLAG_LOSSLESS_DATA) >> RP_CONFIG_FLAG_LOSSLESS_DATA_SHIFT;
+        LOSSLESS_COMPRESSION_BIAS.store(bias as u8, Ordering::Release);
+    }
+}
+
 static mut MIN_SEND_INTERVAL_TICK: u32 = const_default();
 static mut MIN_SEND_INTERVAL_NS: DurationNs = const_default();
 
@@ -958,10 +967,11 @@ static mut CUR_SEG_MEM_COUNT: u32 = 0;
 
 static mut RP_OUTPUT_NEXT_TICK: u32 = const_default();
 
-pub unsafe fn init(#[cfg(not(feature = "o3ds"))] dst_flags: u32, qos: u32) -> Option<()> {
+pub unsafe fn init(dst_flags: u32, qos: u32) -> Option<()> {
     unsafe {
         #[cfg(not(feature = "o3ds"))]
         init_reliable_stream(dst_flags, qos)?;
+        init_lossless_compression(dst_flags);
         init_min_send_interval(qos);
 
         #[cfg(not(feature = "o3ds"))]
@@ -993,6 +1003,9 @@ static mut RELIABLE_STREAM: AtomicBool = const_default();
 #[cfg(not(feature = "o3ds"))]
 static mut RELIABLE_STREAM_DELTA_PROG: AtomicBool = const_default();
 
+static mut LOSSLESS_COMPRESSION: AtomicBool = const_default();
+static mut LOSSLESS_COMPRESSION_BIAS: AtomicU8 = const_default();
+
 #[cfg(not(feature = "o3ds"))]
 pub fn get_reliable_stream() -> ReliableStream {
     if unsafe { RELIABLE_STREAM.load(Ordering::Acquire) } {
@@ -1005,6 +1018,14 @@ pub fn get_reliable_stream() -> ReliableStream {
 #[cfg(not(feature = "o3ds"))]
 pub fn get_reliable_stream_delta_prog() -> bool {
     unsafe { RELIABLE_STREAM_DELTA_PROG.load(Ordering::Acquire) }
+}
+
+pub fn get_lossless_compression() -> bool {
+    unsafe { LOSSLESS_COMPRESSION.load(Ordering::Acquire) }
+}
+
+pub fn _get_lossless_compression_bias() -> u8 {
+    unsafe { LOSSLESS_COMPRESSION_BIAS.load(Ordering::Acquire) }
 }
 
 #[cfg(not(feature = "o3ds"))]
@@ -1077,10 +1098,7 @@ unsafe fn set_packet_data_size() {
 }
 
 #[cfg(not(feature = "o3ds"))]
-pub unsafe fn init_nwm_infos(
-    #[cfg(not(feature = "o3ds"))] nwm_bufs: &entries::thread_main::NwmBufs,
-    core_count: CoreCount,
-) {
+pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_count: CoreCount) {
     unsafe {
         let packet_data_size = PACKET_DATA_SIZE;
         for i in WorkIndex::all() {
@@ -1121,7 +1139,12 @@ static mut DATA_BUF_HDRS: RangedArray<DataHdr, WORK_COUNT> = const_default();
 
 impl DataHdr {
     fn init(frame_id: u8, is_top: bool, downsample: u8) -> Self {
-        Self([frame_id, is_top as u8, 2 | downsample << 2, 0])
+        Self([
+            frame_id,
+            is_top as u8,
+            2 | downsample << 2 | get_lossless_compression() as u8,
+            0,
+        ])
     }
 }
 
