@@ -710,7 +710,14 @@ fn nwm_send_next_buffer(
 
     let send_pos = dinfo.send_pos;
     let data_buf = send_pos;
-    let packet_buf = unsafe { data_buf.sub(DATA_HDR_SIZE as usize) };
+
+    let lossless = get_lossless_compression();
+    let lossless_buf = if lossless {
+        unsafe { data_buf.sub(RP_LOSSLESS_HDR_SIZE as usize) }
+    } else {
+        data_buf
+    };
+    let packet_buf = unsafe { lossless_buf.sub(DATA_HDR_SIZE as usize) };
 
     let size = unsafe { pos.offset_from_unsigned(send_pos) as u32 };
     let packet_data_size = get_packet_data_size() as u32;
@@ -792,7 +799,19 @@ fn nwm_send_next_buffer(
     }
     data_buf_hdr.0[3] += 1;
 
-    let packet_size = total_size + DATA_HDR_SIZE;
+    if lossless {
+        let lossless_data_hdr = unsafe { LOSSLESS_DATA_BUF_HDRS.get_mut(&w) };
+        unsafe {
+            ptr::copy(
+                lossless_data_hdr.0.as_ptr(),
+                lossless_buf as *mut u8,
+                RP_LOSSLESS_HDR_SIZE as usize,
+            );
+            *lossless_buf.add(1) |= w.get() as u8 & 0x3;
+        }
+    }
+
+    let packet_size = total_size + DATA_HDR_SIZE + if lossless { RP_LOSSLESS_HDR_SIZE } else { 0 };
     if unsafe { rp_output(packet_buf, packet_size as usize) }.is_none() {
         return false;
     }
@@ -891,9 +910,10 @@ unsafe fn ip_checksum(data: *mut u8, mut length: usize) -> u16 {
     utils::htons(!acc as u16)
 }
 
+#[allow(unused_macros)]
 #[named]
-#[cfg(not(feature = "o3ds"))]
 unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
+    #[cfg(not(feature = "o3ds"))]
     let mut nwm_lock = if let Some(l) = NwmCbLock::lock(cname!()) {
         l
     } else {
@@ -903,16 +923,21 @@ unsafe fn init_reliable_stream(flags: u32, qos: u32) -> Option<()> {
     unsafe {
         let reliable_stream = flags & RP_CONFIG_FLAG_RELIABLE_STREAM > 0;
         RELIABLE_STREAM.store(reliable_stream, Ordering::Release);
+
+        #[cfg(not(feature = "o3ds"))]
         RELIABLE_STREAM_DELTA_PROG.store(
             reliable_stream && flags & RP_CONFIG_FLAG_RELIABLE_STREAM_DELTA > 0,
             Ordering::Release,
         );
+
         MAX_QOS = qos;
 
         set_packet_data_size();
 
         match get_reliable_stream() {
             ReliableStream::None => {}
+
+            #[cfg(not(feature = "o3ds"))]
             ReliableStream::KCP => {
                 let kcp = &mut nwm_lock.get().ikcp;
 
@@ -969,9 +994,8 @@ static mut RP_OUTPUT_NEXT_TICK: u32 = const_default();
 
 pub unsafe fn init(dst_flags: u32, qos: u32) -> Option<()> {
     unsafe {
-        #[cfg(not(feature = "o3ds"))]
-        init_reliable_stream(dst_flags, qos)?;
         init_lossless_compression(dst_flags);
+        init_reliable_stream(dst_flags, qos)?;
         init_min_send_interval(qos);
 
         #[cfg(not(feature = "o3ds"))]
@@ -991,14 +1015,14 @@ pub unsafe fn init(dst_flags: u32, qos: u32) -> Option<()> {
     Some(())
 }
 
-#[cfg(not(feature = "o3ds"))]
 #[derive(PartialEq, Eq)]
 pub enum ReliableStream {
     None,
+
+    #[cfg(not(feature = "o3ds"))]
     KCP,
 }
 
-#[cfg(not(feature = "o3ds"))]
 static mut RELIABLE_STREAM: AtomicBool = const_default();
 #[cfg(not(feature = "o3ds"))]
 static mut RELIABLE_STREAM_DELTA_PROG: AtomicBool = const_default();
@@ -1006,13 +1030,15 @@ static mut RELIABLE_STREAM_DELTA_PROG: AtomicBool = const_default();
 static mut LOSSLESS_COMPRESSION: AtomicBool = const_default();
 static mut LOSSLESS_COMPRESSION_BIAS: AtomicU8 = const_default();
 
-#[cfg(not(feature = "o3ds"))]
 pub fn get_reliable_stream() -> ReliableStream {
+    #[cfg(not(feature = "o3ds"))]
     if unsafe { RELIABLE_STREAM.load(Ordering::Acquire) } {
         ReliableStream::KCP
     } else {
         ReliableStream::None
     }
+    #[cfg(feature = "o3ds")]
+    ReliableStream::None
 }
 
 #[cfg(not(feature = "o3ds"))]
@@ -1050,15 +1076,12 @@ pub type NwmWorkInfo = RangedArray<NwmThreadInfo, RP_CORE_COUNT_MAX>;
 pub type NwmInfo = RangedArray<NwmWorkInfo, WORK_COUNT>;
 #[cfg(not(feature = "o3ds"))]
 static mut NWM_INFOS: NwmInfo = const_default();
-#[cfg(not(feature = "o3ds"))]
 static mut PACKET_DATA_SIZE: usize = 0;
 
-#[cfg(not(feature = "o3ds"))]
 pub fn get_packet_data_size() -> usize {
     unsafe { PACKET_DATA_SIZE }
 }
 
-#[cfg(not(feature = "o3ds"))]
 pub const fn get_packet_data_size_v(rel_stream: bool) -> usize {
     if rel_stream {
         get_packet_data_size_const::<true>()
@@ -1067,51 +1090,77 @@ pub const fn get_packet_data_size_v(rel_stream: bool) -> usize {
     }
 }
 
-#[cfg(not(feature = "o3ds"))]
 pub const fn get_packet_data_size_const<const REL_STREAM: bool>() -> usize {
     if REL_STREAM {
-        PACKET_DATA_SIZE_KCP
+        ARQ_RP_DATA_SIZE as usize
     } else {
-        PACKET_DATA_SIZE_COMPAT
+        RP_DATA_SIZE as usize
     }
 }
 
-#[cfg(not(feature = "o3ds"))]
-const PACKET_DATA_SIZE_COMPAT: usize = {
-    let size = (PACKET_SIZE - DATA_HDR_SIZE) as usize;
-    assert!(size % mem::size_of::<usize>() == 0);
-    size
-};
+pub const fn get_lossless_packet_data_size_v(rel_stream: bool) -> usize {
+    if rel_stream {
+        get_lossless_packet_data_size_const::<true>()
+    } else {
+        get_lossless_packet_data_size_const::<false>()
+    }
+}
 
-#[cfg(not(feature = "o3ds"))]
-pub const PACKET_DATA_SIZE_KCP: usize =
-    (PACKET_SIZE - ARQ_OVERHEAD_SIZE - ARQ_DATA_HDR_SIZE) as usize;
+pub const fn get_lossless_packet_data_size_const<const REL_STREAM: bool>() -> usize {
+    if REL_STREAM {
+        ARQ_RP_DATA_SIZE as usize
+    } else {
+        RP_LOSSLESS_DATA_SIZE as usize
+    }
+}
 
-#[cfg(not(feature = "o3ds"))]
 unsafe fn set_packet_data_size() {
     unsafe {
-        PACKET_DATA_SIZE = match get_reliable_stream() {
-            ReliableStream::None => get_packet_data_size_const::<false>(),
-            ReliableStream::KCP => get_packet_data_size_const::<true>(),
+        PACKET_DATA_SIZE = if get_lossless_compression() {
+            match get_reliable_stream() {
+                ReliableStream::None => get_lossless_packet_data_size_v(false),
+                #[cfg(not(feature = "o3ds"))]
+                ReliableStream::KCP => get_lossless_packet_data_size_v(true),
+            }
+        } else {
+            match get_reliable_stream() {
+                ReliableStream::None => get_packet_data_size_v(false),
+                #[cfg(not(feature = "o3ds"))]
+                ReliableStream::KCP => get_packet_data_size_v(true),
+            }
         }
     }
 }
 
 #[cfg(not(feature = "o3ds"))]
 pub unsafe fn init_nwm_infos(nwm_bufs: &entries::thread_main::NwmBufs, core_count: CoreCount) {
+    let packet_data_size = get_packet_data_size();
+    let lossless = get_lossless_compression();
+    let packet_size = if lossless {
+        packet_data_size + RP_LOSSLESS_HDR_SIZE as usize
+    } else {
+        packet_data_size
+    };
+
     unsafe {
-        let packet_data_size = PACKET_DATA_SIZE;
         for i in WorkIndex::all() {
             for j in ThreadIndex::up_to(&thread_index_last(core_count)) {
                 let ninfo = NWM_INFOS.get_mut(&i).get_mut(&j);
                 let buf_size = (entries::thread_main::NWM_BUFFER_SIZE / core_count.get() as usize
                     - RP_CB_HDR_SIZE)
-                    / packet_data_size
-                    * packet_data_size
+                    / packet_size
+                    * packet_size
                     + RP_CB_HDR_SIZE;
                 let buf = nwm_bufs.get(&i).add(j.get() as usize * buf_size);
 
-                ninfo.buf = buf.add(RP_CB_HDR_SIZE);
+                ninfo.buf = buf.add(
+                    RP_CB_HDR_SIZE
+                        + if lossless {
+                            RP_LOSSLESS_HDR_SIZE as usize
+                        } else {
+                            0
+                        },
+                );
                 ninfo.buf_packet_last = buf.add(buf_size as usize - packet_data_size);
             }
         }
@@ -1138,12 +1187,31 @@ struct DataHdr([u8; DATA_HDR_SIZE as usize]);
 static mut DATA_BUF_HDRS: RangedArray<DataHdr, WORK_COUNT> = const_default();
 
 impl DataHdr {
-    fn init(frame_id: u8, is_top: bool, downsample: u8) -> Self {
+    fn init(frame_id: u8, is_top: bool, downsample: u8, lossless: u8) -> Self {
         Self([
             frame_id,
             is_top as u8,
-            2 | downsample << 2 | get_lossless_compression() as u8,
+            2 | downsample << 2 | lossless as u8,
             0,
+        ])
+    }
+}
+
+pub fn rp_lossless_huffman_hdr(is_table: bool, huff_tbl_no: u8) -> u8 {
+    is_table as u8 | ((huff_tbl_no & 0x7) << 1)
+}
+
+#[derive(ConstDefault)]
+pub struct LosslessDataHdr([u8; RP_LOSSLESS_HDR_SIZE as usize]);
+pub static mut LOSSLESS_DATA_BUF_HDRS: RangedArray<LosslessDataHdr, WORK_COUNT> = const_default();
+
+impl LosslessDataHdr {
+    pub fn init(huff_tbl_no: u8, chroma_ss: u8, color_bias: u8, rest_int: u8) -> Self {
+        Self([
+            rp_lossless_huffman_hdr(false, huff_tbl_no)
+                | ((chroma_ss & 0x3) << 4)
+                | ((color_bias & 0x3) << 6),
+            (rest_int & 0xf) << 2,
         ])
     }
 }
@@ -1191,7 +1259,8 @@ pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool, downsam
         }
 
         let hdr = DATA_BUF_HDRS.get_mut(&w);
-        *hdr = DataHdr::init(frame_id, is_top, downsample);
+        let lossless = get_lossless_compression();
+        *hdr = DataHdr::init(frame_id, is_top, downsample, lossless as u8);
 
         true
     }
@@ -1201,7 +1270,8 @@ pub unsafe fn nwm_done_acquire(w: WorkIndex, frame_id: u8, is_top: bool, downsam
 pub unsafe fn nwm_start_frame(frame_id: u8, is_top: bool, downsample: u8) {
     unsafe {
         let hdr = DATA_BUF_HDRS.get_mut(&WorkIndex::init(0));
-        *hdr = DataHdr::init(frame_id, is_top, downsample);
+        let lossless = get_lossless_compression();
+        *hdr = DataHdr::init(frame_id, is_top, downsample, lossless as u8);
     }
 }
 
@@ -1322,14 +1392,21 @@ pub fn rp_clear_size(w: WorkIndex) {
 
 #[cfg(feature = "o3ds")]
 pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool) -> bool {
-    let mut size = RP_CB_PACKET_SIZE as usize;
+    let mut size = get_packet_data_size();
     const TERM_FLAG: u8 = 0x10;
     if term {
         size -= dst.free_in_bytes as usize;
     }
 
+    let lossless = get_lossless_compression();
+
     let data_buf = unsafe { dst.dst.sub(size) };
-    let packet_buf = unsafe { data_buf.sub(DATA_HDR_SIZE as usize) };
+    let lossless_buf = if lossless {
+        unsafe { data_buf.sub(RP_LOSSLESS_HDR_SIZE as usize) }
+    } else {
+        data_buf
+    };
+    let packet_buf = unsafe { lossless_buf.sub(DATA_HDR_SIZE as usize) };
     let data_buf_hdr = unsafe { DATA_BUF_HDRS.get_mut(&WorkIndex::init(0)) };
     unsafe {
         ptr::copy(
@@ -1338,18 +1415,28 @@ pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool) -> bool {
             DATA_HDR_SIZE as usize,
         );
     }
+    if lossless {
+        let lossless_data_hdr = unsafe { LOSSLESS_DATA_BUF_HDRS.get_mut(&WorkIndex::init(0)) };
+        unsafe {
+            ptr::copy(
+                lossless_data_hdr.0.as_ptr(),
+                lossless_buf as *mut u8,
+                RP_LOSSLESS_HDR_SIZE as usize,
+            );
+        }
+    }
     if term {
         unsafe { *packet_buf.add(1) |= TERM_FLAG };
     }
     data_buf_hdr.0[3] += 1;
 
-    let packet_size = size as u32 + DATA_HDR_SIZE;
+    let packet_size = size as u32 + DATA_HDR_SIZE + if lossless { RP_LOSSLESS_HDR_SIZE } else { 0 };
     if unsafe { rp_output(packet_buf, packet_size as usize) }.is_none() {
         return false;
     }
 
-    dst.dst = unsafe { nwm_info() };
-    dst.free_in_bytes = RP_CB_PACKET_SIZE as u16;
+    dst.dst = unsafe { nwm_info().add(if lossless { RP_LOSSLESS_HDR_SIZE } else { 0 } as usize) };
+    dst.free_in_bytes = get_packet_data_size() as u16;
 
     true
 }
@@ -1357,7 +1444,7 @@ pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool) -> bool {
 #[named]
 #[cfg(not(feature = "o3ds"))]
 pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool, rel_stream: bool) -> bool {
-    let rp_packet_data_size = get_packet_data_size_v(rel_stream);
+    let rp_packet_data_size = get_packet_data_size();
     let mut size = rp_packet_data_size;
     const TERM_FLAG: u8 = 0x10;
     if term {
@@ -1365,7 +1452,7 @@ pub unsafe fn rp_send_buffer(dst: &mut encoder::WorkerDst, term: bool, rel_strea
     }
 
     dst.dst = if !rel_stream {
-        let ninfo = unsafe { dst.user.none_info };
+        let ninfo = unsafe { dst.user.ninfo };
         let ninfo = unsafe { &*ninfo };
         let dinfo = &ninfo.info;
 

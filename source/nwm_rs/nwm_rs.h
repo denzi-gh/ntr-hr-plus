@@ -32,8 +32,7 @@ struct rp_cb {
 #endif
 #ifdef OLD_3DS
 #define RP_CB_HDR_SIZE ROUND_UP(NWM_HDR_SIZE + DATA_HDR_SIZE, sizeof(void *))
-#define RP_CB_PACKET_SIZE (PACKET_SIZE - DATA_HDR_SIZE)
-#define RP_CB_SIZE (RP_CB_PACKET_SIZE + RP_CB_HDR_SIZE)
+#define RP_CB_SIZE (RP_DATA_SIZE + RP_CB_HDR_SIZE)
 struct rp_cb {
 	char buf[RP_CB_SIZE];
 };

@@ -45,6 +45,7 @@ pub unsafe fn init(
     quality: [u32; RP_SCREEN_COUNT as usize],
     chroma_ss: [u32; RP_SCREEN_COUNT as usize],
     downsample: [u32; RP_SCREEN_COUNT as usize],
+    color_bias: [u8; RP_SCREEN_COUNT as usize],
 ) {
     unsafe {
         LAST_ROW_LAST_N.store(0, Ordering::Release);
@@ -68,10 +69,11 @@ pub unsafe fn init(
         {
             TERM_INFOS = const_default();
         }
-        JPEG_QUALITY = quality;
-        JPEG_CHROMA_SS = chroma_ss;
-        JPEG_DOWNSAMPLE = downsample;
-        JPEG_EVEN_ODD = const_default();
+        ENCODE_JPEG_QUALITY = quality;
+        ENCODE_CHROMA_SS = chroma_ss;
+        ENCODE_DOWNSAMPLE = downsample;
+        ENCODE_LOSSLESS_COLOR_BIAS = color_bias;
+        ENCODE_EVEN_ODD = const_default();
     }
 }
 
@@ -274,7 +276,7 @@ pub struct WorkFrame(WorkReady);
 impl WorkFrame {
     pub fn frame_release(self) -> Option<WorkAcquire> {
         let bctx = self.0.0.bctx();
-        let downsample = unsafe { *is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+        let downsample = unsafe { *is_top_index(bctx.is_top).index_into(&ENCODE_DOWNSAMPLE) } as u8;
         #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_reliable_stream() == entries::thread_nwm::ReliableStream::None {
             if !unsafe {
@@ -305,6 +307,28 @@ impl WorkFrame {
 
         if !self.init_work() {
             return None;
+        }
+
+        let chroma_ss = unsafe { *is_top_index(bctx.is_top).index_into(&ENCODE_CHROMA_SS) } as u8;
+        let color_bias =
+            unsafe { *is_top_index(bctx.is_top).index_into(&ENCODE_LOSSLESS_COLOR_BIAS) };
+        let color_bias = cmp::max(
+            color_bias,
+            match bctx.format {
+                0 | 1 => RP_COLOR_BIAS_NONE,
+                2 | 3 => RP_COLOR_BIAS_1,
+                _ => todo!(),
+            },
+        );
+        let rest_int = *bctx.i_count.get(&ThreadIndex::init(0)) as u8;
+        unsafe {
+            let hdr = entries::thread_nwm::LOSSLESS_DATA_BUF_HDRS.get_mut(
+                #[cfg(not(feature = "o3ds"))]
+                &self.0.0.w,
+                #[cfg(feature = "o3ds")]
+                &WorkIndex::init(0),
+            );
+            *hdr = entries::thread_nwm::LosslessDataHdr::init(0, chroma_ss, color_bias, rest_int);
         }
 
         #[cfg(not(feature = "o3ds"))]
@@ -383,7 +407,7 @@ impl WorkFrame {
 
         let l = unsafe { &mut LAST_ROW_LAST_N };
 
-        let downsample = *unsafe { curr_s.index_into(&JPEG_DOWNSAMPLE) } as u8;
+        let downsample = *unsafe { curr_s.index_into(&ENCODE_DOWNSAMPLE) } as u8;
 
         let (mcus_per_row, mcu_rows) = if entries::thread_nwm::get_lossless_compression() {
             (1, bctx.height() / encoder::LOSSLESS_BLOCK_SIZE as u32)
@@ -481,12 +505,12 @@ impl WorkFrame {
         #[cfg(feature = "mem3")]
         let _ = mcus_per_row;
 
-        let even_odd = *unsafe { curr_s.index_into(&JPEG_EVEN_ODD) };
+        let even_odd = *unsafe { curr_s.index_into(&ENCODE_EVEN_ODD) };
         let cinfo = encoder::CInfo {
             is_top: bctx.is_top,
             color_space: match bctx.format {
-                0 => encoder::ColorSpace::XBGR,
-                1 => encoder::ColorSpace::BGR,
+                0 => encoder::ColorSpace::RGBA8,
+                1 => encoder::ColorSpace::RGB8,
                 2 => encoder::ColorSpace::RGB565,
                 3 => encoder::ColorSpace::RGB5A1,
                 _ => encoder::ColorSpace::RGB4,
@@ -500,7 +524,7 @@ impl WorkFrame {
         };
 
         if downsample == RP_DOWNSAMPLE_CHECKER || downsample == RP_DOWNSAMPLE_EVEN_ODD {
-            unsafe { *curr_s.index_into_mut(&mut JPEG_EVEN_ODD) = !even_odd };
+            unsafe { *curr_s.index_into_mut(&mut ENCODE_EVEN_ODD) = !even_odd };
         }
 
         unsafe {
@@ -694,7 +718,7 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
     };
 
     let info = unsafe { TERM_INFOS.get(&w) };
-    let downsample = unsafe { *is_top_index(info.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+    let downsample = unsafe { *is_top_index(info.is_top).index_into(&ENCODE_DOWNSAMPLE) } as u8;
     let (delta_prog, delta_q) =
         if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
             (true, dq_ret.delta_q as u16)
@@ -705,7 +729,7 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
         | (delta_prog as u16)
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS)
-        | (unsafe { *is_top_index(info.is_top).index_into(&JPEG_CHROMA_SS) as u16 })
+        | (unsafe { *is_top_index(info.is_top).index_into(&ENCODE_CHROMA_SS) as u16 })
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1)
         | (is_top_index(info.is_top).get() as u16)
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
@@ -713,7 +737,7 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
         | (if delta_prog {
             delta_q
         } else {
-            unsafe { *is_top_index(info.is_top).index_into(&JPEG_QUALITY) as u16 }
+            unsafe { *is_top_index(info.is_top).index_into(&ENCODE_JPEG_QUALITY) as u16 }
         });
 
     let need_even_odd = downsample == RP_DOWNSAMPLE_CHECKER || downsample == RP_DOWNSAMPLE_EVEN_ODD;
@@ -934,7 +958,7 @@ impl WorkAcquire {
 
         let src = bctx.src;
         #[cfg(not(feature = "mem3"))]
-        let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&JPEG_DOWNSAMPLE) } as u8;
+        let downsample = *unsafe { is_top_index(bctx.is_top).index_into(&ENCODE_DOWNSAMPLE) } as u8;
         #[cfg(not(feature = "mem3"))]
         let src_len = bctx.src_len() as usize;
         #[cfg(not(feature = "mem3"))]
@@ -984,9 +1008,7 @@ impl WorkAcquire {
                 entries::thread_nwm::ReliableStream::None => {
                     let ninfo = entries::thread_nwm::nwm_info(w).get(&t);
                     (
-                        encoder::WorkderDstUser {
-                            none_info: ninfo as *const _,
-                        },
+                        encoder::WorkderDstUser { ninfo },
                         ninfo.info.pos.load(Ordering::Acquire),
                     )
                 }
@@ -1166,7 +1188,8 @@ pub struct TermInfo {
 
 #[cfg(not(feature = "o3ds"))]
 static mut TERM_INFOS: RangedArray<TermInfo, WORK_COUNT> = const_default();
-static mut JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
-static mut JPEG_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
-static mut JPEG_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
-static mut JPEG_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();
+static mut ENCODE_JPEG_QUALITY: [u32; RP_SCREEN_COUNT as usize] = const_default();
+static mut ENCODE_LOSSLESS_COLOR_BIAS: [u8; RP_SCREEN_COUNT as usize] = const_default();
+static mut ENCODE_CHROMA_SS: [u32; RP_SCREEN_COUNT as usize] = const_default();
+static mut ENCODE_DOWNSAMPLE: [u32; RP_SCREEN_COUNT as usize] = const_default();
+static mut ENCODE_EVEN_ODD: [bool; RP_SCREEN_COUNT as usize] = const_default();

@@ -89,7 +89,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let mut cache_hit = false;
                     #[cfg(feature = "o3ds")]
                     let cache_hit = false;
-                    let output = unsafe { self.worker.bufs.mcu.get_unchecked_mut(blkn as usize) };
+                    let output = unsafe {
+                        self.worker
+                            .bufs
+                            .data
+                            .jpeg
+                            .mcu
+                            .get_unchecked_mut(blkn as usize)
+                    };
                     #[cfg(not(feature = "o3ds"))]
                     let prev = if self.worker.shared.delta_prog {
                         unsafe { prev.add(blkn as usize) }
@@ -284,8 +291,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 for _ in 0..mcu_width {
                     let last_dc_val = self.worker.last_dc_vals[ci];
                     let dst = &mut self.dst;
-                    let state = &mut self.worker.huff_state;
-                    let block = unsafe { self.worker.bufs.mcu.get_unchecked(blkn) };
+                    let state = &mut self.worker.bit_enc_state;
+                    let block = unsafe { self.worker.bufs.data.jpeg.mcu.get_unchecked(blkn) };
                     self.worker.last_dc_vals[ci] =
                         Self::encode_one_block(dst, state, block, last_dc_val, dc_tbl, ac_tbl);
 
@@ -297,7 +304,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
     pub fn encode_one_block(
         dst: &mut WorkerDst,
-        state: &mut HuffState,
+        state: &mut BitEncoderState,
         block: &[i16; DCTSIZE2],
         last_dc_val: i16,
         dc_derived_tbl: &DerivedTbl,
@@ -323,6 +330,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             &mut localbuf,
             #[cfg(not(feature = "o3ds"))]
             dst.rel_stream,
+            #[cfg(feature = "o3ds")]
+            false,
         );
 
         let (val1, bits, b0) = {
@@ -382,5 +391,90 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         buf.store();
 
         b0
+    }
+}
+
+fn color_bias_1(r: u8, g: u8, b: u8) -> u16 {
+    // TODO optional use table
+    let r = r >> 3;
+    let g = g >> 2;
+    let b = b >> 3;
+
+    ((r as u16) << 11) | ((g as u16) << 5) | b as u16
+}
+
+fn color_bias_2(r: u8, g: u8, b: u8) -> u16 {
+    // TODO optional use table
+    let r = r >> 4;
+    let g = g >> 4;
+    let b = b >> 4;
+
+    ((r as u16) << 8) | ((g as u16) << 4) | b as u16
+}
+
+impl<'a, 'b> LosslessEncode<'a, 'b> {
+    fn copy_rgba(&mut self) {
+        let is_top = self.worker.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.shared.screens);
+        unsafe {
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                    let input = self.worker.bufs.data.lossless.ptr;
+
+                    match *s.index_into(&self.worker.lossless_shared.color_bias) {
+                        RP_COLOR_BIAS_NONE => {
+                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
+                                self.dst.write_bytes(slice::from_raw_parts(
+                                    (input as *const u32 as *const u8).add(1),
+                                    3,
+                                ));
+                            }
+                        }
+                        RP_COLOR_BIAS_1 => {
+                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
+                                let input = input as *const u32 as *const u8;
+                                let output =
+                                    color_bias_1(*input.add(3), *input.add(2), *input.add(1));
+                                self.dst.write_bytes(slice::from_raw_parts(
+                                    &output as *const u16 as *const u8,
+                                    mem::size_of::<u16>(),
+                                ));
+                            }
+                        }
+                        RP_COLOR_BIAS_2 => {
+                            let mut localbuf: [u8; 0] = const_default();
+                            let mut buf = EncodeBuffer::init(
+                                &mut self.worker.bit_enc_state,
+                                &mut self.dst,
+                                &mut localbuf,
+                                true,
+                            );
+                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
+                                let input = input as *const u32 as *const u8;
+                                let output =
+                                    color_bias_2(*input.add(3), *input.add(2), *input.add(1));
+                                buf.put_bits(output as u32, 12);
+                            }
+                            buf.store();
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
+    pub fn copy_encode(&mut self) {
+        match self.worker.info.color_space {
+            ColorSpace::RGBA8 => self.copy_rgba(),
+            ColorSpace::RGB8 => todo!(),
+            ColorSpace::RGB565 => todo!(),
+            ColorSpace::RGB5A1 => todo!(),
+            ColorSpace::RGB4 => todo!(),
+        }
     }
 }

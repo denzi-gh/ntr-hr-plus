@@ -134,7 +134,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             }
         }
         match self.worker.info.color_space {
-            ColorSpace::XBGR => cconvert::<3, 2, 1, true, S, START_STEP>(
+            ColorSpace::RGBA8 => cconvert::<3, 2, 1, true, S, START_STEP>(
                 input,
                 &mut self.worker.bufs.color,
                 width,
@@ -145,7 +145,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     .color_conv_tbls
                     .rgb_ycc_tab,
             ),
-            ColorSpace::BGR => cconvert::<2, 1, 0, false, S, START_STEP>(
+            ColorSpace::RGB8 => cconvert::<2, 1, 0, false, S, START_STEP>(
                 input,
                 &mut self.worker.bufs.color,
                 width,

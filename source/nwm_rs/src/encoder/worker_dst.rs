@@ -6,7 +6,7 @@ use super::*;
 #[cfg(not(feature = "o3ds"))]
 #[derive(Copy, Clone)]
 pub union WorkderDstUser {
-    pub none_info: *const entries::thread_nwm::NwmThreadInfo,
+    pub ninfo: *const entries::thread_nwm::NwmThreadInfo,
     pub kcp_hdr: ArqRpHdr,
 }
 
@@ -79,7 +79,7 @@ impl WorkerDst {
     fn flush(&mut self) -> bool {
         unsafe {
             #[cfg(not(feature = "o3ds"))]
-            self.dq_update_size(entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32);
+            self.dq_update_size(entries::thread_nwm::get_packet_data_size() as u32);
             self.blkn = 0;
             #[cfg(not(feature = "o3ds"))]
             let ret = entries::thread_nwm::rp_send_buffer(self, false, self.rel_stream);
@@ -93,7 +93,7 @@ impl WorkerDst {
         unsafe {
             #[cfg(not(feature = "o3ds"))]
             self.dq_update_size(
-                entries::thread_nwm::PACKET_DATA_SIZE_KCP as u32 - self.free_in_bytes as u32,
+                entries::thread_nwm::get_packet_data_size() as u32 - self.free_in_bytes as u32,
             );
             self.blkn = 0;
             #[cfg(not(feature = "o3ds"))]

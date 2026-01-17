@@ -847,17 +847,32 @@ pub union WorkerPrepBufDownsample {
         WorkerBufComps<{ worker_buf_comps_size(downsample_screen_width(RP_DOWNSAMPLE_EVEN_ODD)) }>,
 }
 
+#[derive(Clone, Copy)]
+pub struct JpegWorkerData {
+    pub mcu: [JBlock; MAX_BLOCKS_IN_MCU],
+}
+
+#[derive(Clone, Copy)]
+pub struct LosslessWorkerData {
+    pub ptr: *const u8,
+}
+
+pub union WorkerData {
+    pub jpeg: JpegWorkerData,
+    pub lossless: LosslessWorkerData,
+}
+
 pub struct WorkerBufs {
     pub color: [WorkerColorBuf; MAX_COMPONENTS],
     pub prep: WorkerPrepBufDownsample,
-    pub mcu: [JBlock; MAX_BLOCKS_IN_MCU],
+    pub data: WorkerData,
 }
 
 #[derive(Default, Clone, Copy)]
 pub enum ColorSpace {
     #[default]
-    XBGR,
-    BGR,
+    RGBA8,
+    RGB8,
     RGB565,
     RGB5A1,
     RGB4,

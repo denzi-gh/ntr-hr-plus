@@ -6,9 +6,38 @@ use super::*;
 pub type BitBufType = u32;
 
 #[derive(ConstDefault)]
-pub struct HuffState {
+pub struct BitEncoderState {
     pub c: BitBufType,
     pub free_bits: isize,
+}
+
+impl BitEncoderState {
+    pub fn reset(&mut self) {
+        *self = const_default();
+        self.free_bits = BIT_BUF_SIZE as isize;
+    }
+
+    pub fn flush(&mut self, dst: &mut WorkerDst, no_escape: bool) {
+        let mut put_bits = BIT_BUF_SIZE as isize - self.free_bits;
+
+        let mut localbuf: [u8; mem::size_of::<BitBufType>() * 4] = const_default();
+        let put_buffer = self.c;
+        let mut buf = EncodeBuffer::<_>::init(self, dst, &mut localbuf, no_escape);
+
+        while put_bits >= 8 {
+            put_bits -= 8;
+            let temp = unsafe { core::intrinsics::unchecked_shr(put_buffer, put_bits) };
+            unsafe { buf.emit_byte(temp as u8) }
+        }
+        if put_bits > 0 {
+            /* fill partial byte with ones */
+            let temp = (put_buffer << (8 - put_bits))
+                | unsafe { core::intrinsics::unchecked_shr(0xFF, put_bits) };
+            unsafe { buf.emit_byte(temp as u8) }
+        }
+
+        buf.store();
+    }
 }
 
 pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
@@ -22,7 +51,7 @@ pub struct JpegWorker<'a> {
     pub info: &'a CInfo,
     #[cfg(not(feature = "mem3"))]
     pub thread_index: ThreadIndex,
-    pub huff_state: HuffState,
+    pub bit_enc_state: BitEncoderState,
     pub last_dc_vals: LastDcVals,
 }
 
@@ -104,7 +133,7 @@ impl Encoder {
             info: work_index.index_into_mut(&mut self.info),
             #[cfg(not(feature = "mem3"))]
             thread_index,
-            huff_state: const_default(),
+            bit_enc_state: const_default(),
             last_dc_vals: const_default(),
         }
     }
@@ -123,10 +152,7 @@ impl Encoder {
             #[cfg(not(feature = "o3ds"))]
             w,
             dst: dst as *mut u8,
-            #[cfg(not(feature = "o3ds"))]
             free_in_bytes: entries::thread_nwm::get_packet_data_size() as u16,
-            #[cfg(feature = "o3ds")]
-            free_in_bytes: RP_CB_PACKET_SIZE as u16,
             #[cfg(not(feature = "o3ds"))]
             user,
             #[cfg(not(feature = "o3ds"))]
@@ -152,6 +178,7 @@ impl Encoder {
             info: work_index.index_into_mut(&mut self.info),
             #[cfg(not(feature = "mem3"))]
             thread_index,
+            bit_enc_state: const_default(),
         }
     }
 }
@@ -164,6 +191,7 @@ pub struct LosslessWorker<'a> {
     pub info: &'a CInfo,
     #[cfg(not(feature = "mem3"))]
     pub thread_index: ThreadIndex,
+    pub bit_enc_state: BitEncoderState,
 }
 
 impl<'a> LosslessWorker<'a> {

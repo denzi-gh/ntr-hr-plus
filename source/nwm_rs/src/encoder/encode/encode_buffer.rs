@@ -3,6 +3,7 @@
 
 use super::*;
 
+#[derive(PartialEq)]
 pub enum EncodeBufferBase<'a, const N: usize> {
     Local(&'a [u8; N]),
     Dst,
@@ -10,10 +11,9 @@ pub enum EncodeBufferBase<'a, const N: usize> {
 pub struct EncodeBuffer<'a, 'b, 'c, const N: usize> {
     pub buf: *mut u8,
     pub base: EncodeBufferBase<'a, N>,
-    pub state: &'b mut HuffState,
+    pub state: &'b mut BitEncoderState,
     pub dst: &'c mut WorkerDst,
-    #[cfg(not(feature = "o3ds"))]
-    pub rel_stream: bool,
+    pub no_escape: bool,
 }
 
 impl<'a, 'b, 'c, const N: usize> EncodeBuffer<'a, 'b, 'c, N>
@@ -21,19 +21,26 @@ where
     'a: 'c,
 {
     pub fn init<'d: 'a>(
-        state: &'b mut HuffState,
+        state: &'b mut BitEncoderState,
         dst: &'a mut WorkerDst,
         buf: &'d mut [u8; N],
-        #[cfg(not(feature = "o3ds"))] rel_stream: bool,
+        no_escape: bool,
     ) -> Self {
-        if dst.free_in_bytes < N as u16 {
+        if N == 0 {
+            EncodeBuffer {
+                buf: ptr::null_mut(),
+                base: EncodeBufferBase::Dst,
+                state,
+                dst,
+                no_escape,
+            }
+        } else if dst.free_in_bytes < N as u16 {
             EncodeBuffer {
                 buf: buf.as_mut_ptr(),
                 base: EncodeBufferBase::Local(buf),
                 state,
                 dst,
-                #[cfg(not(feature = "o3ds"))]
-                rel_stream,
+                no_escape,
             }
         } else {
             EncodeBuffer {
@@ -41,31 +48,32 @@ where
                 base: EncodeBufferBase::Dst,
                 state,
                 dst,
-                #[cfg(not(feature = "o3ds"))]
-                rel_stream,
+                no_escape,
             }
         }
     }
 
     pub fn store(self) {
-        match self.base {
-            EncodeBufferBase::Local(buf) => {
-                let len = unsafe { self.buf.offset_from_unsigned(buf.as_ptr()) };
-                self.dst
-                    .write_bytes(unsafe { slice::from_raw_parts(buf.as_ptr(), len) });
+        if !self.buf.is_null() {
+            match self.base {
+                EncodeBufferBase::Local(buf) => {
+                    let len = unsafe { self.buf.offset_from_unsigned(buf.as_ptr()) };
+                    self.dst
+                        .write_bytes(unsafe { slice::from_raw_parts(buf.as_ptr(), len) });
+                }
+                EncodeBufferBase::Dst => unsafe { self.dst.advance_to(self.buf) },
             }
-            EncodeBufferBase::Dst => unsafe { self.dst.advance_to(self.buf) },
         }
     }
 
     pub unsafe fn emit_byte(&mut self, b: u8) {
         unsafe {
-            #[cfg(not(feature = "o3ds"))]
-            let rel_stream = self.rel_stream;
-            #[cfg(feature = "o3ds")]
-            let rel_stream = false;
-
-            if rel_stream {
+            if self.buf.is_null() {
+                self.dst.write_byte(b);
+                if !self.no_escape && b == 0xFF {
+                    self.dst.write_byte(0);
+                }
+            } else if self.no_escape {
                 *self.buf = b;
                 self.buf = self.buf.add(1);
             } else {
@@ -78,21 +86,21 @@ where
 
     unsafe fn flush(&mut self) {
         unsafe {
-            #[cfg(not(feature = "o3ds"))]
-            let rel_stream = self.rel_stream;
-            #[cfg(feature = "o3ds")]
-            let rel_stream = false;
-
-            if !rel_stream && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
+            if !self.no_escape && (self.state.c & 0x80808080 & !(self.state.c + 0x01010101) > 0) {
                 self.emit_byte((self.state.c >> 24) as u8);
                 self.emit_byte((self.state.c >> 16) as u8);
                 self.emit_byte((self.state.c >> 8) as u8);
                 self.emit_byte(self.state.c as u8);
+            } else if self.buf.is_null() {
+                self.dst.write_byte((self.state.c >> 24) as u8);
+                self.dst.write_byte((self.state.c >> 16) as u8);
+                self.dst.write_byte((self.state.c >> 8) as u8);
+                self.dst.write_byte(self.state.c as u8);
             } else {
                 *self.buf = (self.state.c >> 24) as u8;
                 *self.buf.add(1) = (self.state.c >> 16) as u8;
                 *self.buf.add(2) = (self.state.c >> 8) as u8;
-                *self.buf.add(3) = (self.state.c) as u8;
+                *self.buf.add(3) = self.state.c as u8;
                 self.buf = self.buf.add(4);
             }
         }

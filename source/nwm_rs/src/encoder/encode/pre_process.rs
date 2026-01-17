@@ -137,7 +137,19 @@ pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
     }
 }
 
-impl<'a, 'b> LosslessEncode<'a, 'b> {}
+impl<'a, 'b> LosslessEncode<'a, 'b> {
+    // src count 1
+    pub fn pre_process_full_nohsamp_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+        const _H_SAMP: bool = false;
+        const _V_SAMP: bool = false;
+
+        self.worker.bufs.data.lossless.ptr = if let Some(src) = src.next() {
+            src
+        } else {
+            ptr::null()
+        };
+    }
+}
 
 impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn pre_process_quarter_rem(

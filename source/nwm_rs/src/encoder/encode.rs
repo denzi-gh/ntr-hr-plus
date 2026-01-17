@@ -42,8 +42,8 @@ pub struct JpegEncode<'a, 'b> {
 #[cfg(not(feature = "mem3"))]
 fn get_bpp_for_format(c: ColorSpace) -> u8 {
     match c {
-        ColorSpace::XBGR => 4,
-        ColorSpace::BGR => 3,
+        ColorSpace::RGBA8 => 4,
+        ColorSpace::RGB8 => 3,
         _ => 2,
     }
 }
@@ -696,10 +696,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         #[cfg(not(feature = "mem3"))]
         let bpp = get_bpp_for_format(self.worker.info.color_space);
         let is_top = self.worker.info.is_top;
-        #[cfg(not(feature = "o3ds"))]
-        let w = self.worker.info.work_index;
         let s = is_top_index(is_top);
-        let color_bias = *s.index_into(&self.worker.lossless_shared.color_bias);
         let screen = s.index_into(&self.worker.shared.screens);
         #[cfg(not(feature = "mem3"))]
         let pitch = GSP_SCREEN_WIDTH as usize * bpp as usize;
@@ -707,30 +704,91 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
+        self.worker.bufs.data.lossless.ptr = ptr::null();
+
         #[cfg(not(feature = "mem3"))]
-        {
-            match screen.downsample {
-                RP_DOWNSAMPLE_QUARTER => {}
-                RP_DOWNSAMPLE_EVEN_ODD => {}
-                _ => {
-                    if vss {
-                        // vss == true
+        let height = src.len() / pitch;
+        #[cfg(not(feature = "mem3"))]
+        let src_iter = &mut src.chunks_exact(pitch).map(|x| x.as_ptr());
+
+        #[cfg(feature = "mem3")]
+        let height = if is_top {
+            GSP_SCREEN_HEIGHT_TOP
+        } else {
+            GSP_SCREEN_HEIGHT_BOTTOM
+        } as usize;
+        #[cfg(feature = "mem3")]
+        let src_iter = {
+            let src = unsafe { slice::from_raw_parts(src, pitch as usize * height) };
+            &mut src.chunks_exact(pitch as usize).map(|x| x.as_ptr())
+        };
+
+        self.worker.bit_enc_state.reset();
+
+        match screen.downsample {
+            RP_DOWNSAMPLE_QUARTER => {}
+            RP_DOWNSAMPLE_EVEN_ODD => {}
+            _ => {
+                if vss {
+                    // vss == true
+                } else {
+                    // vss == false
+
+                    if hss {
+                        // hss == true
                     } else {
-                        // vss == false
+                        // hss == false
+
+                        let n = height;
+                        #[allow(unused)]
+                        for i in 0..n {
+                            self.process(
+                                |this| {
+                                    /* Pre-process */
+                                    this.pre_process_full_nohsamp_novsamp(src_iter);
+                                    #[cfg(not(feature = "o3ds"))]
+                                    if i == j_max_half_factor(n) {
+                                        pre_progress();
+                                    }
+                                    true
+                                },
+                                || {},
+                            );
+                        }
                     }
                 }
             }
         }
 
-        #[cfg(feature = "mem3")]
-        {
-            match screen.downsample {
-                RP_DOWNSAMPLE_QUARTER => {}
-                RP_DOWNSAMPLE_EVEN_ODD => {}
-                _ => {}
-            }
-        }
+        self.worker.bit_enc_state.flush(&mut self.dst, true);
+
+        self.dst.term();
 
         Some(LosslessEncodeRet::LosslessRet(LosslessRet {}))
+    }
+
+    fn process<F, G>(&mut self, do_pre_process: F, do_progress: G)
+    where
+        F: FnOnce(&mut Self) -> bool,
+        G: FnOnce(),
+    {
+        if !do_pre_process(self) {
+            return;
+        }
+
+        /* Compress and encode */
+        self.do_process();
+
+        do_progress();
+    }
+
+    #[named]
+    #[allow(unused_macros)]
+    fn do_process(&mut self) {
+        unsafe {
+            if !self.worker.bufs.data.lossless.ptr.is_null() {
+                self.copy_encode();
+            }
+        }
     }
 }

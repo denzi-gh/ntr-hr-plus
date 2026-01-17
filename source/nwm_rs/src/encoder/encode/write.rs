@@ -206,36 +206,17 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 
     pub fn reset_mcu(&mut self) {
-        self.worker.huff_state = const_default();
-        self.worker.huff_state.free_bits = BIT_BUF_SIZE as isize;
+        self.worker.bit_enc_state.reset();
         self.worker.last_dc_vals = const_default();
     }
 
     pub fn flush_mcu(&mut self) {
-        let mut put_bits = BIT_BUF_SIZE as isize - self.worker.huff_state.free_bits;
-
-        let mut localbuf: [u8; mem::size_of::<BitBufType>() * 4] = const_default();
-        let put_buffer = self.worker.huff_state.c;
-        let mut buf = EncodeBuffer::<_>::init(
-            &mut self.worker.huff_state,
+        self.worker.bit_enc_state.flush(
             &mut self.dst,
-            &mut localbuf,
             #[cfg(not(feature = "o3ds"))]
             self.worker.shared.rel_stream,
+            #[cfg(feature = "o3ds")]
+            false,
         );
-
-        while put_bits >= 8 {
-            put_bits -= 8;
-            let temp = unsafe { core::intrinsics::unchecked_shr(put_buffer, put_bits) };
-            unsafe { buf.emit_byte(temp as u8) }
-        }
-        if put_bits > 0 {
-            /* fill partial byte with ones */
-            let temp = (put_buffer << (8 - put_bits))
-                | unsafe { core::intrinsics::unchecked_shr(0xFF, put_bits) };
-            unsafe { buf.emit_byte(temp as u8) }
-        }
-
-        buf.store();
     }
 }
