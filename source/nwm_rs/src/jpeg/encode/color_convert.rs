@@ -80,7 +80,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 
     // input count S
-    #[inline(always)]
     pub fn color_convert<
         const S: usize,
         const H_SAMP: bool,
@@ -220,7 +219,6 @@ const fn cconvert_step(start_step: StartStep) -> usize {
 }
 
 // input count N
-#[inline(always)]
 pub fn cconvert<
     const R: usize,
     const G: usize,
@@ -245,7 +243,6 @@ pub fn cconvert<
 }
 
 // input count N
-#[inline(always)]
 pub fn cconvert1_chunk_u32<
     const R: usize,
     const G: usize,
@@ -294,7 +291,6 @@ pub fn cconvert1_chunk_u32<
 }
 
 // input count N
-#[inline(always)]
 pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
     input: &mut impl Iterator<Item = *const u8>,
     comps: F,
@@ -313,7 +309,6 @@ pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
 }
 
 // input count N
-#[inline(always)]
 pub fn cconvert2_chunk_u32<const N: usize, F, const START_STEP: StartStep, const CHUNK_U32: usize>(
     input: &mut impl Iterator<Item = *const u8>,
     comps: F,

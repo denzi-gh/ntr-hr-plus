@@ -79,7 +79,6 @@ pub unsafe fn forward_dct(
     }
 }
 
-#[inline(always)]
 unsafe fn convsamp(
     width: usize,
     h_samp: bool,
@@ -125,7 +124,6 @@ unsafe fn do_forward_dct(
     ret
 }
 
-#[inline(always)]
 unsafe fn do_convsamp(width: usize, input: *const u8, ypos: u16, xpos: u16, output: &mut JBlock) {
     let xmax = xpos as usize + DCTSIZE;
     let self_input = width >= xmax;
@@ -264,7 +262,6 @@ fn fdct_ifast(inout: &mut JBlock) {
     }
 }
 
-#[inline(always)]
 #[cfg(not(feature = "o3ds"))]
 fn quantize(
     delta_q: bool,
@@ -297,7 +294,6 @@ fn quantize(
     }
 }
 
-#[inline(always)]
 #[cfg(not(feature = "o3ds"))]
 fn do_quantize_delta_q(
     update_prev: bool,
@@ -335,7 +331,6 @@ fn do_quantize_delta_q(
     }
 }
 
-#[inline(always)]
 #[cfg(not(feature = "o3ds"))]
 fn do_quantize_update_prev<const UPDATE_PREV: bool>(
     rescale_prev: bool,
@@ -364,7 +359,6 @@ fn do_quantize_update_prev<const UPDATE_PREV: bool>(
     }
 }
 
-#[inline(always)]
 fn do_quantize<
     const DELTA_Q: bool,
     const UPDATE_PREV: bool,
