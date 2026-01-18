@@ -115,10 +115,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn compute_dq(&mut self, prev: *mut JBlock) {
         let need_ov_stats = unsafe { (*config_consts::NTR_CONFIG).ex.plg.overlayStats > 0 };
 
-        let s = is_top_index(self.worker.info.is_top);
-        let screen = s.index_into(&self.worker.shared.screens);
+        let s = is_top_index(self.worker.data.info.is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
         let jpeg_screen = s.index_into(&self.worker.jpeg_shared.screens);
-        let w = self.worker.info.work_index;
+        let w = self.worker.data.info.work_index;
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
@@ -128,7 +128,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             shared_mut
                 .delta_q
                 .get_mut(&s)
-                .get_unchecked_mut(self.worker.info.even_odd as usize)
+                .get_unchecked_mut(self.worker.data.info.even_odd as usize)
         };
         let rand32 = &mut shared_mut.rand32;
         let cache = shared_mut.delta_q_cache.get_mut(&w);
@@ -145,7 +145,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let mut qnv: [QuantizeRet; NUM_QUANT_TBLS] = const_default();
         let mut qnc: [u8; NUM_QUANT_TBLS] = const_default();
 
-        let _need_wait_for_nwm = self.worker.thread_index.get() == 0;
+        let _need_wait_for_nwm = self.worker.data.thread_index.get() == 0;
 
         for ci in CompIndex::all() {
             *cache_next_i.get_mut(&ci) = 0;
@@ -194,12 +194,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let qn = if prev_delta_q == DELTA_Q_COUNT - 1 {
                     unsafe {
                         forward_dct(
-                            self.worker.shared.delta_prog,
+                            self.worker.data.shared.delta_prog,
                             false,
                             false,
                             false,
                             screen.downsample,
-                            &self.worker.bufs.prep,
+                            &self.worker.data.bufs.prep,
                             ci,
                             hss,
                             vss,
@@ -216,12 +216,12 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 } else {
                     unsafe {
                         forward_dct(
-                            self.worker.shared.delta_prog,
+                            self.worker.data.shared.delta_prog,
                             false,
                             true,
                             false,
                             screen.downsample,
-                            &self.worker.bufs.prep,
+                            &self.worker.data.bufs.prep,
                             ci,
                             hss,
                             vss,
@@ -251,7 +251,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         }
 
         const TARGET_FRAME_RATE: u32 = 60;
-        let s_1 = is_top_index(!self.worker.info.is_top);
+        let s_1 = is_top_index(!self.worker.data.info.is_top);
         let screen_1 = s_1.index_into(&self.worker.jpeg_shared.screens);
 
         let frame_time = entries::work_thread::get_frame_time(s)
@@ -286,8 +286,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         };
         let (qc, qc_1) = unsafe {
             (
-                qc.get_unchecked_mut(self.worker.info.even_odd as usize),
-                qc_1.get_unchecked_mut(self.worker.info.even_odd as usize),
+                qc.get_unchecked_mut(self.worker.data.info.even_odd as usize),
+                qc_1.get_unchecked_mut(self.worker.data.info.even_odd as usize),
             )
         };
 
@@ -306,7 +306,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             shared_mut
                 .compressed_size
                 .get(&s)
-                .get_unchecked(self.worker.info.even_odd as usize)
+                .get_unchecked(self.worker.data.info.even_odd as usize)
                 .load(Ordering::Acquire)
         };
         let comp_size = {

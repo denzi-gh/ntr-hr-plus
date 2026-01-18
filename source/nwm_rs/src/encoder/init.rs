@@ -206,7 +206,6 @@ impl JpegShared {
         unsafe {
             ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
         }
-        self.jpeg_tbls = JpegTbls::once();
         #[cfg(not(feature = "o3ds"))]
         self.once_delta_q_tbls();
     }
@@ -232,11 +231,11 @@ impl JpegShared {
             }
 
             let comp_infos = if hq == RP_CHROMASS_444 {
-                &self.jpeg_tbls.comp_infos_444
+                &shared.encode_tbls.comp_infos_444
             } else if hq == RP_CHROMASS_422 {
-                &self.jpeg_tbls.comp_infos_422
+                &shared.encode_tbls.comp_infos_422
             } else {
-                &self.jpeg_tbls.comp_infos_420
+                &shared.encode_tbls.comp_infos_420
             };
             jpeg_screen.comp_infos = comp_infos;
             jpeg_screen.max_blocks_in_mcu = 0;
@@ -370,6 +369,7 @@ impl JpegShared {
 
 impl Encoder {
     pub unsafe fn once(&mut self) {
+        self.shared.encode_tbls = EncodeTbls::once();
         self.jpeg_shared.once();
         self.jpeg_shared_mut.once();
     }

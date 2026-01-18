@@ -905,7 +905,7 @@ pub const M_RST0: u8 = 0xd0;
  */
 
 #[derive(ConstDefault)]
-pub struct JpegTbls {
+pub struct EncodeTbls {
     pub huff_tbls: HuffTbls,
     pub entropy_tbls: EntropyTbls,
     #[cfg(not(feature = "o3ds"))]
@@ -918,7 +918,7 @@ pub struct JpegTbls {
     pub comp_infos_444: CompInfos,
 }
 
-impl JpegTbls {
+impl EncodeTbls {
     pub fn once() -> Self {
         let mut tbls: Self = const_default();
         tbls.huff_tbls.once();

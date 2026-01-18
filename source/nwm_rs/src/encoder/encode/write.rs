@@ -21,7 +21,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             self.write_dht(i as usize, true);
         }
         #[cfg(not(feature = "o3ds"))]
-        if self.worker.shared.core_count.get() > 1 {
+        if self.worker.data.shared.core_count.get() > 1 {
             self.write_dri();
         }
         self.write_sos();
@@ -82,7 +82,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     /* Emit a DQT marker */
     /* Returns the precision used (0 = 8bits, 1 = 16bits) for baseline checking */
     {
-        let s = is_top_index(self.worker.info.is_top);
+        let s = is_top_index(self.worker.data.info.is_top);
         let screen = s.index_into(&self.worker.jpeg_shared.screens);
         let qtbl = &screen.quant_tbls.quant_tbls[index];
 
@@ -99,9 +99,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
     pub fn write_dht(&mut self, mut index: usize, is_ac: bool) {
         let tbl = if is_ac {
-            &self.worker.jpeg_shared.jpeg_tbls.huff_tbls.ac_huff_tbls[index]
+            &self.worker.data.shared.encode_tbls.huff_tbls.ac_huff_tbls[index]
         } else {
-            &self.worker.jpeg_shared.jpeg_tbls.huff_tbls.dc_huff_tbls[index]
+            &self.worker.data.shared.encode_tbls.huff_tbls.dc_huff_tbls[index]
         };
         if is_ac {
             index |= 0x10; /* output index has AC bit set */
@@ -130,7 +130,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn write_dri(&mut self) {
         self.write_marker(M_DRI);
         self.write_2bytes(4); /* fixed length */
-        self.write_2bytes(self.worker.info.restart_interval);
+        self.write_2bytes(self.worker.data.info.restart_interval);
     }
 
     pub fn write_sos(&mut self) {
@@ -141,7 +141,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.write_byte(MAX_COMPONENTS as u8);
 
         let infos = unsafe {
-            &(*is_top_index(self.worker.info.is_top)
+            &(*is_top_index(self.worker.data.info.is_top)
                 .index_into(&self.worker.jpeg_shared.screens)
                 .comp_infos)
                 .infos
@@ -174,14 +174,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         self.write_byte(8);
 
-        let s = is_top_index(self.worker.info.is_top).index_into(&self.worker.shared.screens);
+        let s = is_top_index(self.worker.data.info.is_top).index_into(&self.worker.data.shared.screens);
         self.write_2bytes(s.height);
         self.write_2bytes(s.width);
 
         self.write_byte(MAX_COMPONENTS as u8);
 
         for info in unsafe {
-            &(*is_top_index(self.worker.info.is_top)
+            &(*is_top_index(self.worker.data.info.is_top)
                 .index_into(&self.worker.jpeg_shared.screens)
                 .comp_infos)
                 .infos
@@ -194,7 +194,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
     #[cfg(not(feature = "o3ds"))]
     pub fn write_rst(&mut self) {
-        self.write_marker(M_RST0 + self.worker.thread_index.get() as u8);
+        self.write_marker(M_RST0 + self.worker.data.thread_index.get() as u8);
     }
 
     pub fn write_trailer(&mut self) {
@@ -206,15 +206,15 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 
     pub fn reset_mcu(&mut self) {
-        self.worker.bit_enc_state.reset();
+        self.worker.data.bit_enc_state.reset();
         self.worker.last_dc_vals = const_default();
     }
 
     pub fn flush_mcu(&mut self) {
-        self.worker.bit_enc_state.flush(
+        self.worker.data.bit_enc_state.flush(
             &mut self.dst,
             #[cfg(not(feature = "o3ds"))]
-            self.worker.shared.rel_stream,
+            self.worker.data.shared.rel_stream,
             #[cfg(feature = "o3ds")]
             false,
         );

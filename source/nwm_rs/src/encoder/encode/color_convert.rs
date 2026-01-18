@@ -18,7 +18,7 @@ const fn get_start_step(start_step: StartStep) -> (usize, usize) {
     }
 }
 
-impl<'a, 'b> JpegEncode<'a, 'b> {
+impl<'a> WorkerCommon<'a> {
     // input count DOWNSAMPLE_FACTOR
     pub fn color_convert_quarter_vsamp<const H_SAMP: bool>(
         &mut self,
@@ -64,7 +64,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
-        if self.worker.info.even_odd == false {
+        if self.info.even_odd == false {
             self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Even }>(
                 input,
                 output_base,
@@ -97,7 +97,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
 
         for ci in CompIndex::all() {
-            let color = ci.index_into_mut(&mut self.worker.bufs.color);
+            let color = ci.index_into_mut(&mut self.bufs.color);
             if downsample == RP_DOWNSAMPLE_QUARTER || need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
                 unsafe {
                     match downsample {
@@ -113,7 +113,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let output = unsafe {
                     match downsample {
                         RP_DOWNSAMPLE_EVEN_ODD => self
-                            .worker
                             .bufs
                             .prep
                             .even_odd
@@ -121,7 +120,6 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .as_mut_ptr()
                             .add(output_base),
                         _ => self
-                            .worker
                             .bufs
                             .prep
                             .full
@@ -133,42 +131,32 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 color.ptr = output;
             }
         }
-        match self.worker.info.color_space {
+        match self.info.color_space {
             ColorSpace::RGBA8 => cconvert::<3, 2, 1, true, S, START_STEP>(
                 input,
-                &mut self.worker.bufs.color,
+                &mut self.bufs.color,
                 width,
-                &self
-                    .worker
-                    .jpeg_shared
-                    .jpeg_tbls
-                    .color_conv_tbls
-                    .rgb_ycc_tab,
+                &self.shared.encode_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::RGB8 => cconvert::<2, 1, 0, false, S, START_STEP>(
                 input,
-                &mut self.worker.bufs.color,
+                &mut self.bufs.color,
                 width,
-                &self
-                    .worker
-                    .jpeg_shared
-                    .jpeg_tbls
-                    .color_conv_tbls
-                    .rgb_ycc_tab,
+                &self.shared.encode_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
             ColorSpace::RGB565 => cconvert2::<S, _, START_STEP>(
                 input,
                 rgb565_comps,
-                &mut self.worker.bufs.color,
+                &mut self.bufs.color,
                 width,
-                &self.worker.jpeg_shared.jpeg_tbls.color_conv_tbls,
+                &self.shared.encode_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB5A1 => cconvert2::<S, _, START_STEP>(
                 input,
                 rgb5a1_comps,
-                &mut self.worker.bufs.color,
+                &mut self.bufs.color,
                 width,
-                &self.worker.jpeg_shared.jpeg_tbls.color_conv_tbls,
+                &self.shared.encode_tbls.color_conv_tbls,
             ),
             ColorSpace::RGB4 => todo!(),
         }

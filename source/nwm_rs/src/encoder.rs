@@ -100,7 +100,6 @@ pub struct JpegScreenShared {
 pub struct JpegShared {
     pub quality: [u32; RP_SCREEN_COUNT as usize],
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
-    pub jpeg_tbls: JpegTbls,
 }
 
 #[cfg(not(feature = "o3ds"))]
@@ -108,7 +107,7 @@ pub struct JpegShared {
     pub quality: [u32; RP_SCREEN_COUNT as usize],
     pub div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
-    pub jpeg_tbls: JpegTbls,
+    pub encode_tbls: EncodeTbls,
     pub delta_q_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub work_sem: RangedArray<Handle, WORK_COUNT>,
@@ -158,6 +157,7 @@ pub struct EncoderShared {
     pub core_count: CoreCount,
     pub screens: [ScreenShared; RP_SCREEN_COUNT as usize],
     pub last_restart_range: u32,
+    pub encode_tbls: EncodeTbls,
 }
 
 pub struct Encoder {

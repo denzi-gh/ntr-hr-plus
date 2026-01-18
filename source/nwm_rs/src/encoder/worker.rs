@@ -43,15 +43,10 @@ impl BitEncoderState {
 pub const BIT_BUF_SIZE: usize = mem::size_of::<BitBufType>() * 8;
 
 pub struct JpegWorker<'a> {
-    pub shared: &'a EncoderShared,
+    pub data: WorkerCommon<'a>,
     pub jpeg_shared: &'a JpegShared,
     #[cfg(not(feature = "o3ds"))]
     pub jpeg_shared_mut: JpegSharedMutCell,
-    pub bufs: &'a mut WorkerBufs,
-    pub info: &'a CInfo,
-    #[cfg(not(feature = "mem3"))]
-    pub thread_index: ThreadIndex,
-    pub bit_enc_state: BitEncoderState,
     pub last_dc_vals: LastDcVals,
 }
 
@@ -123,17 +118,19 @@ impl Encoder {
         thread_index: ThreadIndex,
     ) -> JpegWorker<'a> {
         JpegWorker {
-            shared: &self.shared,
+            data: WorkerCommon {
+                shared: &self.shared,
+                bufs: thread_index.index_into_mut(&mut self.bufs),
+                info: work_index.index_into_mut(&mut self.info),
+                #[cfg(not(feature = "mem3"))]
+                thread_index,
+                bit_enc_state: const_default(),
+            },
             jpeg_shared: &self.jpeg_shared,
             #[cfg(not(feature = "o3ds"))]
             jpeg_shared_mut: JpegSharedMutCell {
                 cell: &mut self.jpeg_shared_mut,
             },
-            bufs: thread_index.index_into_mut(&mut self.bufs),
-            info: work_index.index_into_mut(&mut self.info),
-            #[cfg(not(feature = "mem3"))]
-            thread_index,
-            bit_enc_state: const_default(),
             last_dc_vals: const_default(),
         }
     }
@@ -172,26 +169,33 @@ impl Encoder {
         thread_index: ThreadIndex,
     ) -> LosslessWorker<'a> {
         LosslessWorker {
-            shared: &self.shared,
+            data: WorkerCommon {
+                shared: &self.shared,
+                bufs: thread_index.index_into_mut(&mut self.bufs),
+                info: work_index.index_into_mut(&mut self.info),
+                #[cfg(not(feature = "mem3"))]
+                thread_index,
+                bit_enc_state: const_default(),
+            },
             lossless_shared: &self.lossless_shared,
-            bufs: thread_index.index_into_mut(&mut self.bufs),
-            info: work_index.index_into_mut(&mut self.info),
-            #[cfg(not(feature = "mem3"))]
-            thread_index,
-            bit_enc_state: const_default(),
         }
     }
 }
 
 #[derive(ConstDefault)]
-pub struct LosslessWorker<'a> {
+pub struct WorkerCommon<'a> {
     pub shared: &'a EncoderShared,
-    pub lossless_shared: &'a LosslessShared,
     pub bufs: &'a mut WorkerBufs,
     pub info: &'a CInfo,
     #[cfg(not(feature = "mem3"))]
     pub thread_index: ThreadIndex,
     pub bit_enc_state: BitEncoderState,
+}
+
+#[derive(ConstDefault)]
+pub struct LosslessWorker<'a> {
+    pub data: WorkerCommon<'a>,
+    pub lossless_shared: &'a LosslessShared,
 }
 
 impl<'a> LosslessWorker<'a> {

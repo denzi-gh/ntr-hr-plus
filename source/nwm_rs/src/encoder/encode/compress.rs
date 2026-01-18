@@ -13,10 +13,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         #[cfg(not(feature = "o3ds"))] rescale_prev_shr: bool,
     ) {
         #[cfg(not(feature = "o3ds"))]
-        let w = self.worker.info.work_index;
+        let w = self.worker.data.info.work_index;
         let mut blkn = 0;
-        let is_top = self.worker.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.shared.screens);
+        let is_top = self.worker.data.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
         let jpeg_screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
         let div_parts = &jpeg_screen.divisors.divisors;
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
@@ -38,14 +38,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         #[cfg(not(feature = "o3ds"))]
         let _need_wait_for_nwm =
-            self.worker.shared.delta_prog && self.worker.thread_index.get() == 0;
+            self.worker.data.shared.delta_prog && self.worker.data.thread_index.get() == 0;
 
         let comp_infos = unsafe { &*jpeg_screen.comp_infos };
         for ci in CompIndex::all() {
             let comp = ci.index_into(&comp_infos.infos);
 
             #[cfg(not(feature = "o3ds"))]
-            let div_shifts = if self.worker.shared.delta_prog {
+            let div_shifts = if self.worker.data.shared.delta_prog {
                 unsafe {
                     self.worker
                         .jpeg_shared
@@ -91,6 +91,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let cache_hit = false;
                     let output = unsafe {
                         self.worker
+                            .data
                             .bufs
                             .data
                             .jpeg
@@ -98,7 +99,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                             .get_unchecked_mut(blkn as usize)
                     };
                     #[cfg(not(feature = "o3ds"))]
-                    let prev = if self.worker.shared.delta_prog {
+                    let prev = if self.worker.data.shared.delta_prog {
                         unsafe { prev.add(blkn as usize) }
                     } else {
                         ptr::null_mut()
@@ -172,7 +173,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         unsafe {
                             forward_dct(
                                 #[cfg(not(feature = "o3ds"))]
-                                self.worker.shared.delta_prog,
+                                self.worker.data.shared.delta_prog,
                                 #[cfg(not(feature = "o3ds"))]
                                 true,
                                 #[cfg(not(feature = "o3ds"))]
@@ -180,7 +181,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                 #[cfg(not(feature = "o3ds"))]
                                 rescale_prev_shr,
                                 screen.downsample,
-                                &self.worker.bufs.prep,
+                                &self.worker.data.bufs.prep,
                                 ci,
                                 hss,
                                 vss,
@@ -215,7 +216,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     pub fn encode_mcu(&mut self) {
         let mut blkn = 0;
 
-        let is_top = self.worker.info.is_top;
+        let is_top = self.worker.data.info.is_top;
         let screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
         let comp_infos = unsafe { &*screen.comp_infos };
 
@@ -226,11 +227,11 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             #[cfg(not(feature = "o3ds"))]
             let (dc_tbl, ac_tbl) = {
-                let dc_tbl = if self.worker.shared.delta_prog {
+                let dc_tbl = if self.worker.data.shared.delta_prog {
                     unsafe {
                         self.worker
                             .jpeg_shared
-                            .jpeg_tbls
+                            .encode_tbls
                             .dq_entropy_tbls
                             .dc_derived_tbls
                             .get_unchecked(comp.dc_tbl_no as usize)
@@ -239,17 +240,17 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     unsafe {
                         self.worker
                             .jpeg_shared
-                            .jpeg_tbls
+                            .encode_tbls
                             .entropy_tbls
                             .dc_derived_tbls
                             .get_unchecked(comp.dc_tbl_no as usize)
                     }
                 };
-                let ac_tbl = if self.worker.shared.delta_prog {
+                let ac_tbl = if self.worker.data.shared.delta_prog {
                     unsafe {
                         self.worker
                             .jpeg_shared
-                            .jpeg_tbls
+                            .encode_tbls
                             .dq_entropy_tbls
                             .ac_derived_tbls
                             .get_unchecked(comp.ac_tbl_no as usize)
@@ -258,7 +259,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     unsafe {
                         self.worker
                             .jpeg_shared
-                            .jpeg_tbls
+                            .encode_tbls
                             .entropy_tbls
                             .ac_derived_tbls
                             .get_unchecked(comp.ac_tbl_no as usize)
@@ -272,14 +273,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 unsafe {
                     (
                         self.worker
-                            .jpeg_shared
-                            .jpeg_tbls
+                            .data
+                            .shared
+                            .encode_tbls
                             .entropy_tbls
                             .dc_derived_tbls
                             .get_unchecked(comp.dc_tbl_no as usize),
                         self.worker
-                            .jpeg_shared
-                            .jpeg_tbls
+                            .data
+                            .shared
+                            .encode_tbls
                             .entropy_tbls
                             .ac_derived_tbls
                             .get_unchecked(comp.ac_tbl_no as usize),
@@ -291,8 +294,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 for _ in 0..mcu_width {
                     let last_dc_val = self.worker.last_dc_vals[ci];
                     let dst = &mut self.dst;
-                    let state = &mut self.worker.bit_enc_state;
-                    let block = unsafe { self.worker.bufs.data.jpeg.mcu.get_unchecked(blkn) };
+                    let state = &mut self.worker.data.bit_enc_state;
+                    let block = unsafe { self.worker.data.bufs.data.jpeg.mcu.get_unchecked(blkn) };
                     self.worker.last_dc_vals[ci] =
                         Self::encode_one_block(dst, state, block, last_dc_val, dc_tbl, ac_tbl);
 
@@ -414,14 +417,14 @@ fn color_bias_2(r: u8, g: u8, b: u8) -> u16 {
 
 impl<'a, 'b> LosslessEncode<'a, 'b> {
     fn copy_rgba8(&mut self) {
-        let is_top = self.worker.info.is_top;
+        let is_top = self.worker.data.info.is_top;
         let s = is_top_index(is_top);
-        let screen = s.index_into(&self.worker.shared.screens);
+        let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
                 RP_DOWNSAMPLE_NONE => {
                     let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
-                    let input = self.worker.bufs.data.lossless.ptr;
+                    let input = self.worker.data.bufs.data.lossless.ptr;
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE => {
@@ -446,7 +449,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                         RP_COLOR_BIAS_2 => {
                             let mut localbuf: [u8; 0] = const_default();
                             let mut buf = EncodeBuffer::init(
-                                &mut self.worker.bit_enc_state,
+                                &mut self.worker.data.bit_enc_state,
                                 &mut self.dst,
                                 &mut localbuf,
                                 true,
@@ -469,14 +472,14 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     fn copy_rgb8(&mut self) {
-        let is_top = self.worker.info.is_top;
+        let is_top = self.worker.data.info.is_top;
         let s = is_top_index(is_top);
-        let screen = s.index_into(&self.worker.shared.screens);
+        let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
                 RP_DOWNSAMPLE_NONE => {
                     let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
-                    let input = self.worker.bufs.data.lossless.ptr;
+                    let input = self.worker.data.bufs.data.lossless.ptr;
                     const CHUNK: usize = 4;
                     const P: usize = 3;
                     const CHUNK_P: usize = P * CHUNK;
@@ -519,7 +522,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                         RP_COLOR_BIAS_2 => {
                             let mut localbuf: [u8; 0] = const_default();
                             let mut buf = EncodeBuffer::init(
-                                &mut self.worker.bit_enc_state,
+                                &mut self.worker.data.bit_enc_state,
                                 &mut self.dst,
                                 &mut localbuf,
                                 true,
@@ -549,12 +552,25 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     pub fn copy_encode(&mut self) {
-        match self.worker.info.color_space {
+        match self.worker.data.info.color_space {
             ColorSpace::RGBA8 => self.copy_rgba8(),
             ColorSpace::RGB8 => self.copy_rgb8(),
             ColorSpace::RGB565 => {}
             ColorSpace::RGB5A1 => {}
             ColorSpace::RGB4 => todo!(),
+        }
+    }
+
+    pub fn uncompressed_encode(&mut self) {
+        let is_top = self.worker.data.info.is_top;
+        let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
+        let input = &self.worker.data.bufs.prep;
+
+        match screen.downsample {
+            RP_DOWNSAMPLE_NONE => {}
+            _ => {}
         }
     }
 }
