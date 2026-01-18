@@ -138,6 +138,16 @@ pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
 }
 
 impl<'a, 'b> LosslessEncode<'a, 'b> {
+    // src count SAMP_FACTOR
+    pub fn pre_process_full(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = true;
+        self.worker
+            .data
+            .color_convert_full::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, 0);
+        downsample_full::<H_SAMP, V_SAMP>(&mut self.worker.data.bufs, 0);
+    }
+
     // src count 1
     pub fn pre_process_full_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
         const H_SAMP: bool = true;

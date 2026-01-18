@@ -562,40 +562,140 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
     }
 
-    pub fn uncompressed_encode(&mut self) {
+    fn do_uncompressed_encode<const HSS: bool, const VSS: bool>(&mut self) {
         unsafe {
             let is_top = self.worker.data.info.is_top;
-            let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
-            let hss = screen.max_h_samp_factor == SAMP_FACTOR;
-            let vss = screen.max_v_samp_factor == SAMP_FACTOR;
+            let s = is_top_index(is_top);
+            let bias = *s.index_into(&self.worker.lossless_shared.color_bias);
+            let bias = get_color_bias_from_format(bias, self.worker.data.info.color_space);
+            let screen = s.index_into(&self.worker.data.shared.screens);
             let input = &self.worker.data.bufs.prep;
             let need_hss = |ci| {
-                hss && if vss {
+                HSS && if VSS {
                     need_subsamp_ci::<true, true>(ci)
                 } else {
                     need_subsamp_ci::<true, false>(ci)
                 }
             };
-            let ci_0 = CompIndex::init(0);
-            let ci_1 = CompIndex::init(1);
-            let ci_2 = CompIndex::init(2);
-            let ci_0_hss = need_hss(ci_0);
-            let ci_1_hss = need_hss(ci_1);
-            let ci_2_hss = need_hss(ci_2);
+            let i_x: [u32; 3] = core::array::from_fn(|i| i as u32);
+            let ci_x = i_x.map(|x| CompIndex::init(x));
+            let ci_hss_x = ci_x.map(|x| need_hss(x));
             let width = downsample_screen_width(screen.downsample);
+            let width_x = ci_hss_x.map(|x| if x { width / SAMP_FACTOR } else { width });
 
-            let width_0 = if ci_0_hss { width / SAMP_FACTOR } else { width };
-            let width_1 = if ci_1_hss { width / SAMP_FACTOR } else { width };
-            let width_2 = if ci_2_hss { width / SAMP_FACTOR } else { width };
+            let (bw_x, bh_x) = if HSS {
+                if VSS {
+                    ([2, 1, 1], [2, 1, 1])
+                } else {
+                    ([2, 1, 1], [1, 1, 1])
+                }
+            } else {
+                ([1, 1, 1], [1, 1, 1])
+            };
 
-            match screen.downsample {
-                RP_DOWNSAMPLE_NONE => {
-                    let in_0 = input.full.get(ci_0, hss, vss).as_ptr();
-                    let in_1 = input.full.get(ci_1, hss, vss).as_ptr();
-                    let in_2 = input.full.get(ci_2, hss, vss).as_ptr();
+            let in_x = match screen.downsample {
+                RP_DOWNSAMPLE_NONE => ci_x.map(|x| input.full.get(x, HSS, VSS).as_ptr()),
+                _ => todo!(),
+            };
+
+            match bias {
+                RP_COLOR_BIAS_NONE => {
+                    for x in 0..if HSS { width / 2 } else { width } {
+                        for c in CompIndex::all() {
+                            let width_c = *c.index_into(&width_x);
+                            let bw_c = *c.index_into(&bw_x) as usize;
+                            let bh_c = *c.index_into(&bh_x) as usize;
+                            let ix = x * bw_c as usize;
+                            let iy = 0 as usize;
+                            for by in 0..bh_c {
+                                let iy = iy + by;
+                                for bx in 0..bw_c {
+                                    let ix = ix + bx;
+                                    let in_c = *c.index_into(&in_x);
+                                    self.dst.write_byte(*in_c.add(iy * width_c + ix));
+                                }
+                            }
+                        }
+                    }
+                }
+                RP_COLOR_BIAS_1 | RP_COLOR_BIAS_2 => {
+                    let bb_x = if bias == RP_COLOR_BIAS_1 {
+                        [5, 6, 5]
+                    } else {
+                        [4, 4, 4]
+                    };
+
+                    let mut localbuf: [u8; 0] = const_default();
+                    let mut buf = EncodeBuffer::init(
+                        &mut self.worker.data.bit_enc_state,
+                        &mut self.dst,
+                        &mut localbuf,
+                        true,
+                    );
+
+                    for x in 0..if HSS { width / 2 } else { width } {
+                        for c in CompIndex::all() {
+                            let bb_c = *c.index_into(&bb_x);
+                            let width_c = *c.index_into(&width_x);
+                            let bw_c = *c.index_into(&bw_x) as usize;
+                            let bh_c = *c.index_into(&bh_x) as usize;
+                            let ix = x * bw_c as usize;
+                            let iy = 0 as usize;
+                            for by in 0..bh_c {
+                                let iy = iy + by;
+                                for bx in 0..bw_c {
+                                    let ix = ix + bx;
+                                    let in_c = *c.index_into(&in_x);
+                                    let in_c = *in_c.add(iy * width_c + ix);
+                                    let in_c = in_c >> (8 - bb_c);
+                                    buf.put_bits(in_c as u32, bb_c);
+                                }
+                            }
+                        }
+                    }
+
+                    buf.store();
                 }
                 _ => {}
             }
         }
+    }
+
+    pub fn uncompressed_encode(&mut self) {
+        let is_top = self.worker.data.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
+        if hss {
+            if vss {
+                self.do_uncompressed_encode::<true, true>();
+            } else {
+                self.do_uncompressed_encode::<true, false>();
+            }
+        } else {
+            self.do_uncompressed_encode::<false, false>();
+        }
+    }
+}
+
+pub fn get_color_bias_from_format(bias: u8, format: ColorSpace) -> u8 {
+    cmp::max(
+        bias,
+        match format {
+            ColorSpace::RGBA8 | ColorSpace::RGB8 => RP_COLOR_BIAS_NONE,
+            ColorSpace::RGB565 | ColorSpace::RGB5A1 => RP_COLOR_BIAS_1,
+            _ => todo!(),
+        },
+    )
+}
+
+pub fn get_color_space_from_format(format: u32) -> ColorSpace {
+    match format {
+        0 => encoder::ColorSpace::RGBA8,
+        1 => encoder::ColorSpace::RGB8,
+        2 => encoder::ColorSpace::RGB565,
+        3 => encoder::ColorSpace::RGB5A1,
+        _ => encoder::ColorSpace::RGB4,
     }
 }

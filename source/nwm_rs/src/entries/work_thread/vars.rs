@@ -312,13 +312,9 @@ impl WorkFrame {
         let chroma_ss = unsafe { *is_top_index(bctx.is_top).index_into(&ENCODE_CHROMA_SS) } as u8;
         let color_bias =
             unsafe { *is_top_index(bctx.is_top).index_into(&ENCODE_LOSSLESS_COLOR_BIAS) };
-        let color_bias = cmp::max(
+        let color_bias = encoder::get_color_bias_from_format(
             color_bias,
-            match bctx.format {
-                0 | 1 => RP_COLOR_BIAS_NONE,
-                2 | 3 => RP_COLOR_BIAS_1,
-                _ => todo!(),
-            },
+            encoder::get_color_space_from_format(bctx.format),
         );
         let rest_int = *bctx.i_count.get(&ThreadIndex::init(0)) as u8;
         unsafe {
@@ -508,13 +504,7 @@ impl WorkFrame {
         let even_odd = *unsafe { curr_s.index_into(&ENCODE_EVEN_ODD) };
         let cinfo = encoder::CInfo {
             is_top: bctx.is_top,
-            color_space: match bctx.format {
-                0 => encoder::ColorSpace::RGBA8,
-                1 => encoder::ColorSpace::RGB8,
-                2 => encoder::ColorSpace::RGB565,
-                3 => encoder::ColorSpace::RGB5A1,
-                _ => encoder::ColorSpace::RGB4,
-            },
+            color_space: encoder::get_color_space_from_format(bctx.format),
             #[cfg(not(feature = "mem3"))]
             restart_interval: restart_interval as u16,
             work_index: w,
@@ -588,7 +578,10 @@ pub enum EncodeRet {
     LosslessRet(encoder::LosslessEncodeRet),
 }
 
-pub struct WorkRet(#[cfg(not(feature = "o3ds"))] Impl, EncodeRet);
+pub struct WorkRet(
+    #[cfg(not(feature = "o3ds"))] Impl,
+    #[allow(unused)] EncodeRet,
+);
 
 impl Drop for WorkRet {
     #[named]

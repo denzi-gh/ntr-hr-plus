@@ -736,9 +736,24 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             _ => {
                 if vss {
                     // vss == true
+                    let n = height / SAMP_FACTOR;
+                    #[allow(unused)]
+                    for i in 0..n {
+                        self.process(
+                            |this| {
+                                /* Pre-process */
+                                this.pre_process_full(src_iter);
+                                #[cfg(not(feature = "o3ds"))]
+                                if i == j_max_half_factor(n) {
+                                    pre_progress();
+                                }
+                                true
+                            },
+                            || {},
+                        );
+                    }
                 } else {
                     // vss == false
-
                     if hss {
                         // hss == true
                         let n = height;
