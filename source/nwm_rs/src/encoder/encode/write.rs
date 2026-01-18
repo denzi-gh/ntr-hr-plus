@@ -141,10 +141,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         self.write_byte(MAX_COMPONENTS as u8);
 
         let infos = unsafe {
-            &(*is_top_index(self.worker.data.info.is_top)
-                .index_into(&self.worker.jpeg_shared.screens)
-                .comp_infos)
-                .infos
+            &(**is_top_index(self.worker.data.info.is_top)
+                .index_into(&self.worker.data.shared.comp_infos))
+            .infos
         };
         for i in 0..MAX_COMPONENTS {
             let comp = &infos[i];
@@ -174,17 +173,17 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         self.write_byte(8);
 
-        let s = is_top_index(self.worker.data.info.is_top).index_into(&self.worker.data.shared.screens);
+        let s =
+            is_top_index(self.worker.data.info.is_top).index_into(&self.worker.data.shared.screens);
         self.write_2bytes(s.height);
         self.write_2bytes(s.width);
 
         self.write_byte(MAX_COMPONENTS as u8);
 
         for info in unsafe {
-            &(*is_top_index(self.worker.data.info.is_top)
-                .index_into(&self.worker.jpeg_shared.screens)
-                .comp_infos)
-                .infos
+            &(**is_top_index(self.worker.data.info.is_top)
+                .index_into(&self.worker.data.shared.comp_infos))
+            .infos
         } {
             self.write_byte(info.component_id);
             self.write_byte((info.h_samp_factor << 4) + info.v_samp_factor);

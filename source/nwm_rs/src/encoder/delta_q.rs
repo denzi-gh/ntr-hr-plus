@@ -152,7 +152,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             let mut indices: [u8; DELTA_Q_CACHE_MAX as usize] = const_default();
 
-            let comp = unsafe { ci.index_into(&(*jpeg_screen.comp_infos).infos) };
+            let comp = unsafe {
+                ci.index_into(&(**s.index_into(&self.worker.data.shared.comp_infos)).infos)
+            };
             let qni = comp.quant_tbl_no;
             let mcu_we = comp.h_samp_exp;
             let mcu_he = comp.v_samp_exp;

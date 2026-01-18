@@ -16,8 +16,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let w = self.worker.data.info.work_index;
         let mut blkn = 0;
         let is_top = self.worker.data.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
-        let jpeg_screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        let jpeg_screen = s.index_into(&self.worker.jpeg_shared.screens);
         let div_parts = &jpeg_screen.divisors.divisors;
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
@@ -40,7 +41,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let _need_wait_for_nwm =
             self.worker.data.shared.delta_prog && self.worker.data.thread_index.get() == 0;
 
-        let comp_infos = unsafe { &*jpeg_screen.comp_infos };
+        let comp_infos = unsafe { &**s.index_into(&self.worker.data.shared.comp_infos) };
         for ci in CompIndex::all() {
             let comp = ci.index_into(&comp_infos.infos);
 
@@ -217,8 +218,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let mut blkn = 0;
 
         let is_top = self.worker.data.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.jpeg_shared.screens);
-        let comp_infos = unsafe { &*screen.comp_infos };
+        let s = is_top_index(is_top);
+        let comp_infos = unsafe { &**s.index_into(&self.worker.data.shared.comp_infos) };
 
         for ci in 0..MAX_COMPONENTS {
             let comp = &comp_infos.infos[ci];
@@ -562,15 +563,39 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     pub fn uncompressed_encode(&mut self) {
-        let is_top = self.worker.data.info.is_top;
-        let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
-        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
-        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
-        let input = &self.worker.data.bufs.prep;
+        unsafe {
+            let is_top = self.worker.data.info.is_top;
+            let screen = is_top_index(is_top).index_into(&self.worker.data.shared.screens);
+            let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+            let vss = screen.max_v_samp_factor == SAMP_FACTOR;
+            let input = &self.worker.data.bufs.prep;
+            let need_hss = |ci| {
+                hss && if vss {
+                    need_subsamp_ci::<true, true>(ci)
+                } else {
+                    need_subsamp_ci::<true, false>(ci)
+                }
+            };
+            let ci_0 = CompIndex::init(0);
+            let ci_1 = CompIndex::init(1);
+            let ci_2 = CompIndex::init(2);
+            let ci_0_hss = need_hss(ci_0);
+            let ci_1_hss = need_hss(ci_1);
+            let ci_2_hss = need_hss(ci_2);
+            let width = downsample_screen_width(screen.downsample);
 
-        match screen.downsample {
-            RP_DOWNSAMPLE_NONE => {}
-            _ => {}
+            let width_0 = if ci_0_hss { width / SAMP_FACTOR } else { width };
+            let width_1 = if ci_1_hss { width / SAMP_FACTOR } else { width };
+            let width_2 = if ci_2_hss { width / SAMP_FACTOR } else { width };
+
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let in_0 = input.full.get(ci_0, hss, vss).as_ptr();
+                    let in_1 = input.full.get(ci_1, hss, vss).as_ptr();
+                    let in_2 = input.full.get(ci_2, hss, vss).as_ptr();
+                }
+                _ => {}
+            }
         }
     }
 }

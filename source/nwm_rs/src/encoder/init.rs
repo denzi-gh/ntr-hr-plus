@@ -237,7 +237,7 @@ impl JpegShared {
             } else {
                 &shared.encode_tbls.comp_infos_420
             };
-            jpeg_screen.comp_infos = comp_infos;
+            *s.index_into_mut(&mut shared.comp_infos) = comp_infos;
             jpeg_screen.max_blocks_in_mcu = 0;
             for i in 0..MAX_COMPONENTS {
                 let info = &comp_infos.infos[i];

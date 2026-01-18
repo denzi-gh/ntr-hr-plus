@@ -61,38 +61,22 @@ pub struct CheckerParams {
     pub mcu_row_params: [McuRowParams; jdiv_round_up(downsample_checker_screen_dim(true), DCTSIZE)],
 }
 
-#[cfg(feature = "o3ds")]
 pub struct JpegScreenShared {
-    comp_infos: *const CompInfos,
     pub max_blocks_in_mcu: usize,
     pub mcu_row_size: usize,
     pub mcu_col_size: usize,
     pub mcus_per_row: usize,
     pub mcu_rows: u16,
     pub mcus: u16,
+    #[cfg(not(feature = "o3ds"))]
+    delta_q_params: DeltaQParams,
     #[cfg(not(feature = "mem3"))]
     pub checker: CheckerParams,
 
     quant_tbls: QuantTbls,
     divisors: Divisors,
     div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
-}
-
-#[cfg(not(feature = "o3ds"))]
-pub struct JpegScreenShared {
-    comp_infos: *const CompInfos,
-    pub max_blocks_in_mcu: usize,
-    pub mcu_row_size: usize,
-    pub mcu_col_size: usize,
-    pub mcus_per_row: usize,
-    pub mcu_rows: u16,
-    pub mcus: u16,
-    delta_q_params: DeltaQParams,
-    pub checker: CheckerParams,
-
-    quant_tbls: QuantTbls,
-    divisors: Divisors,
-    div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
+    #[cfg(not(feature = "o3ds"))]
     qos_adj: f32,
 }
 
@@ -149,6 +133,7 @@ pub struct ScreenShared {
 }
 
 pub struct EncoderShared {
+    pub comp_infos: [*const CompInfos; RP_SCREEN_COUNT as usize],
     #[cfg(not(feature = "o3ds"))]
     pub rel_stream: bool,
     #[cfg(not(feature = "o3ds"))]
