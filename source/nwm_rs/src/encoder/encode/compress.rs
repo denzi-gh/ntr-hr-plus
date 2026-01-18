@@ -562,9 +562,9 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
 
             let (bw_x, bh_x) = if HSS {
                 if VSS {
-                    ([2, 1, 1], [2, 1, 1])
+                    ([SAMP_FACTOR, 1, 1], [SAMP_FACTOR, 1, 1])
                 } else {
-                    ([2, 1, 1], [1, 1, 1])
+                    ([SAMP_FACTOR, 1, 1], [1, 1, 1])
                 }
             } else {
                 ([1, 1, 1], [1, 1, 1])
@@ -577,7 +577,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
 
             match bias {
                 RP_COLOR_BIAS_NONE => {
-                    for x in 0..if HSS { width / 2 } else { width } {
+                    for x in 0..if HSS { width / SAMP_FACTOR } else { width } {
                         for c in CompIndex::all() {
                             let width_c = *c.index_into(&width_x);
                             let bw_c = *c.index_into(&bw_x) as usize;
@@ -610,7 +610,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                         true,
                     );
 
-                    for x in 0..if HSS { width / 2 } else { width } {
+                    for x in 0..if HSS { width / SAMP_FACTOR } else { width } {
                         for c in CompIndex::all() {
                             let bb_c = *c.index_into(&bb_x);
                             let width_c = *c.index_into(&width_x);
