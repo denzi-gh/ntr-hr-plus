@@ -91,7 +91,6 @@ pub struct JpegShared {
     pub quality: [u32; RP_SCREEN_COUNT as usize],
     pub div_delta_q_shifts: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
-    pub encode_tbls: EncodeTbls,
     pub delta_q_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub work_sem: RangedArray<Handle, WORK_COUNT>,

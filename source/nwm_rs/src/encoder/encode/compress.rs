@@ -231,7 +231,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let dc_tbl = if self.worker.data.shared.delta_prog {
                     unsafe {
                         self.worker
-                            .jpeg_shared
+                            .data
+                            .shared
                             .encode_tbls
                             .dq_entropy_tbls
                             .dc_derived_tbls
@@ -240,7 +241,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 } else {
                     unsafe {
                         self.worker
-                            .jpeg_shared
+                            .data
+                            .shared
                             .encode_tbls
                             .entropy_tbls
                             .dc_derived_tbls
@@ -250,7 +252,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let ac_tbl = if self.worker.data.shared.delta_prog {
                     unsafe {
                         self.worker
-                            .jpeg_shared
+                            .data
+                            .shared
                             .encode_tbls
                             .dq_entropy_tbls
                             .ac_derived_tbls
@@ -259,7 +262,8 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 } else {
                     unsafe {
                         self.worker
-                            .jpeg_shared
+                            .data
+                            .shared
                             .encode_tbls
                             .entropy_tbls
                             .ac_derived_tbls

@@ -203,9 +203,6 @@ impl JpegShared {
     }
 
     fn once(&mut self) {
-        unsafe {
-            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
-        }
         #[cfg(not(feature = "o3ds"))]
         self.once_delta_q_tbls();
     }
@@ -369,6 +366,9 @@ impl JpegShared {
 
 impl Encoder {
     pub unsafe fn once(&mut self) {
+        unsafe {
+            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
+        }
         self.shared.encode_tbls = EncodeTbls::once();
         self.jpeg_shared.once();
         self.jpeg_shared_mut.once();
