@@ -426,19 +426,18 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 RP_DOWNSAMPLE_NONE => {
                     let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
                     let input = self.worker.data.bufs.data.lossless.ptr;
+                    const P: usize = 4;
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE => {
-                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
-                                self.dst.write_bytes(slice::from_raw_parts(
-                                    (input as *const u32 as *const u8).add(1),
-                                    3,
-                                ));
+                            for i in 0..width {
+                                self.dst
+                                    .write_bytes(slice::from_raw_parts(input.add(i * P + 1), 3));
                             }
                         }
                         RP_COLOR_BIAS_1 => {
-                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
-                                let input = input as *const u32 as *const u8;
+                            for i in 0..width {
+                                let input = input.add(i * P);
                                 let output =
                                     color_bias_1(*input.add(3), *input.add(2), *input.add(1));
                                 self.dst.write_bytes(slice::from_raw_parts(
@@ -455,8 +454,8 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 &mut localbuf,
                                 true,
                             );
-                            for input in slice::from_raw_parts(input as *const u32, width).iter() {
-                                let input = input as *const u32 as *const u8;
+                            for i in 0..width {
+                                let input = input.add(i * P);
                                 let output =
                                     color_bias_2(*input.add(3), *input.add(2), *input.add(1));
                                 buf.put_bits(output as u32, 12);
@@ -481,43 +480,24 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 RP_DOWNSAMPLE_NONE => {
                     let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
                     let input = self.worker.data.bufs.data.lossless.ptr;
-                    const CHUNK: usize = 4;
                     const P: usize = 3;
-                    const CHUNK_P: usize = P * CHUNK;
-                    const CHUNK_U32: usize = CHUNK_P / mem::size_of::<u32>();
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE => {
-                            for input in slice::from_raw_parts(
-                                input as *const [u32; CHUNK_U32],
-                                width / CHUNK,
-                            )
-                            .iter()
-                            {
-                                for c in 0..CHUNK {
-                                    self.dst.write_bytes(slice::from_raw_parts(
-                                        (input.as_ptr() as *const u8).add(c * P),
-                                        P,
-                                    ));
-                                }
+                            for i in 0..width {
+                                self.dst
+                                    .write_bytes(slice::from_raw_parts(input.add(i * P), P));
                             }
                         }
                         RP_COLOR_BIAS_1 => {
-                            for input in slice::from_raw_parts(
-                                input as *const [u32; CHUNK_U32],
-                                width / CHUNK,
-                            )
-                            .iter()
-                            {
-                                for c in 0..CHUNK {
-                                    let input = (input.as_ptr() as *const u8).add(c * P);
-                                    let output =
-                                        color_bias_1(*input.add(2), *input.add(1), *input.add(0));
-                                    self.dst.write_bytes(slice::from_raw_parts(
-                                        &output as *const u16 as *const u8,
-                                        mem::size_of::<u16>(),
-                                    ));
-                                }
+                            for i in 0..width {
+                                let input = input.add(i * P);
+                                let output =
+                                    color_bias_1(*input.add(2), *input.add(1), *input.add(0));
+                                self.dst.write_bytes(slice::from_raw_parts(
+                                    &output as *const u16 as *const u8,
+                                    mem::size_of::<u16>(),
+                                ));
                             }
                         }
                         RP_COLOR_BIAS_2 => {
@@ -528,18 +508,11 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 &mut localbuf,
                                 true,
                             );
-                            for input in slice::from_raw_parts(
-                                input as *const [u32; CHUNK_U32],
-                                width / CHUNK,
-                            )
-                            .iter()
-                            {
-                                for c in 0..CHUNK {
-                                    let input = (input.as_ptr() as *const u8).add(c * P);
-                                    let output =
-                                        color_bias_2(*input.add(2), *input.add(1), *input.add(0));
-                                    buf.put_bits(output as u32, 12);
-                                }
+                            for i in 0..width {
+                                let input = input.add(i * P);
+                                let output =
+                                    color_bias_2(*input.add(2), *input.add(1), *input.add(0));
+                                buf.put_bits(output as u32, 12);
                             }
                             buf.store();
                         }
@@ -674,7 +647,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 self.do_uncompressed_encode::<true, false>();
             }
         } else {
-            self.do_uncompressed_encode::<false, false>();
+            panic!();
         }
     }
 }

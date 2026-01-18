@@ -220,7 +220,7 @@ pub fn cconvert<
                 let output2 = output[2].ptr.add(out_width * i);
 
                 for x in 0..out_width {
-                    let input = input.add((x + start) * P * step);
+                    let input = input.add((x * step + start) * P);
 
                     let r = *input.add(R);
                     let g = *input.add(G);
@@ -258,7 +258,7 @@ pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
                 let output2 = output[2].ptr.add(out_width * i);
 
                 for x in 0..out_width {
-                    let input = input.add((x + start) * P * step);
+                    let input = input.add((x * step + start) * P);
 
                     let output0 = output0.add(x);
                     let output1 = output1.add(x);
