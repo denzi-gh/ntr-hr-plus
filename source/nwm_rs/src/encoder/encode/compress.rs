@@ -597,7 +597,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 }
                 RP_COLOR_BIAS_1 | RP_COLOR_BIAS_2 => {
                     let bb_x = if bias == RP_COLOR_BIAS_1 {
-                        [5, 6, 5]
+                        [6, 5, 5]
                     } else {
                         [4, 4, 4]
                     };
