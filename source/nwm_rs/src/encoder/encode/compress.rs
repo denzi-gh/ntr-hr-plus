@@ -402,6 +402,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
     }
 }
 
+#[inline(always)]
 fn color_bias_1(r: u8, g: u8, b: u8) -> u16 {
     // TODO optional use table
     let r = r >> 3;
@@ -411,6 +412,7 @@ fn color_bias_1(r: u8, g: u8, b: u8) -> u16 {
     ((r as u16) << 11) | ((g as u16) << 5) | b as u16
 }
 
+#[inline(always)]
 fn color_bias_2(r: u8, g: u8, b: u8) -> u16 {
     // TODO optional use table
     let r = r >> 4;
@@ -529,12 +531,99 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
     }
 
+    fn copy_rgb565(&mut self) {
+        let is_top = self.worker.data.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        unsafe {
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                    let input = self.worker.data.bufs.data.lossless.ptr;
+                    const P: usize = mem::size_of::<u16>();
+
+                    match *s.index_into(&self.worker.lossless_shared.color_bias) {
+                        RP_COLOR_BIAS_NONE | RP_COLOR_BIAS_1 => {
+                            for i in 0..width {
+                                let input = input.add(i * P);
+                                self.dst.write_bytes(slice::from_raw_parts(input, P));
+                            }
+                        }
+                        RP_COLOR_BIAS_2 => {
+                            let mut localbuf: [u8; 0] = const_default();
+                            let mut buf = EncodeBuffer::init(
+                                &mut self.worker.data.bit_enc_state,
+                                &mut self.dst,
+                                &mut localbuf,
+                                true,
+                            );
+                            for i in 0..width {
+                                let input = input.add(i * P);
+                                let input = *(input as *const u16);
+                                let r = ((input >> 11) & 0x1f) << 3;
+                                let g = ((input >> 5) & 0x3f) << 2;
+                                let b = (input & 0x1f) << 3;
+                                let output = color_bias_2(r as u8, g as u8, b as u8);
+                                buf.put_bits(output as u32, 12);
+                            }
+                            buf.store();
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
+    fn copy_rgb5(&mut self) {
+        let is_top = self.worker.data.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        unsafe {
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                    let input = self.worker.data.bufs.data.lossless.ptr;
+                    const P: usize = mem::size_of::<u16>();
+
+                    let mut localbuf: [u8; 0] = const_default();
+                    let mut buf = EncodeBuffer::init(
+                        &mut self.worker.data.bit_enc_state,
+                        &mut self.dst,
+                        &mut localbuf,
+                        true,
+                    );
+                    for i in 0..width {
+                        let input = input.add(i * P);
+                        let input = *(input as *const u16);
+                        let r = ((input >> 11) & 0x1f) << 3;
+                        let g = ((input >> 6) & 0x1f) << 3;
+                        let b = ((input >> 1) & 0x1f) << 3;
+                        let output = match *s.index_into(&self.worker.lossless_shared.color_bias) {
+                            RP_COLOR_BIAS_NONE | RP_COLOR_BIAS_1 => {
+                                color_bias_1(r as u8, g as u8, b as u8)
+                            }
+                            RP_COLOR_BIAS_2 => color_bias_2(r as u8, g as u8, b as u8),
+                            _ => panic!(),
+                        };
+                        buf.put_bits(output as u32, 12);
+                    }
+                    buf.store();
+                }
+
+                _ => {}
+            }
+        }
+    }
+
     pub fn copy_encode(&mut self) {
         match self.worker.data.info.color_space {
             ColorSpace::RGBA8 => self.copy_rgba8(),
             ColorSpace::RGB8 => self.copy_rgb8(),
-            ColorSpace::RGB565 => {}
-            ColorSpace::RGB5A1 => {}
+            ColorSpace::RGB565 => self.copy_rgb565(),
+            ColorSpace::RGB5A1 => self.copy_rgb5(),
             ColorSpace::RGB4 => todo!(),
         }
     }
