@@ -274,17 +274,37 @@ pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
 }
 
 #[inline(always)]
-pub fn rgb565_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
-    let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
-    let g = tab.g_6_tab[((input >> 5) & 0x3f) as usize];
-    let b = tab.rb_5_tab[(input & 0x1f) as usize];
-    (r, g, b)
+pub fn rgb565_comps(input: u16, #[allow(unused)] tab: &ColorConvTabs) -> (u8, u8, u8) {
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
+        let g = tab.g_6_tab[((input >> 5) & 0x3f) as usize];
+        let b = tab.rb_5_tab[(input & 0x1f) as usize];
+        (r, g, b)
+    }
+    #[cfg(feature = "o3ds")]
+    {
+        let r = ((input >> 11) & 0x1f) << 3;
+        let g = ((input >> 5) & 0x3f) << 2;
+        let b = (input & 0x1f) << 3;
+        (r as u8, g as u8, b as u8)
+    }
 }
 
 #[inline(always)]
-pub fn rgb5a1_comps(input: u16, tab: &ColorConvTabs) -> (u8, u8, u8) {
-    let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
-    let g = tab.rb_5_tab[((input >> 6) & 0x1f) as usize];
-    let b = tab.rb_5_tab[((input >> 1) & 0x1f) as usize];
-    (r, g, b)
+pub fn rgb5a1_comps(input: u16, #[allow(unused)] tab: &ColorConvTabs) -> (u8, u8, u8) {
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let r = tab.rb_5_tab[((input >> 11) & 0x1f) as usize];
+        let g = tab.rb_5_tab[((input >> 6) & 0x1f) as usize];
+        let b = tab.rb_5_tab[((input >> 1) & 0x1f) as usize];
+        (r, g, b)
+    }
+    #[cfg(feature = "o3ds")]
+    {
+        let r = ((input >> 11) & 0x1f) << 3;
+        let g = ((input >> 6) & 0x1f) << 3;
+        let b = ((input >> 1) & 0x1f) << 3;
+        (r as u8, g as u8, b as u8)
+    }
 }

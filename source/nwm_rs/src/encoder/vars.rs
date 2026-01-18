@@ -203,7 +203,9 @@ pub const TABLE_SIZE: usize = 8 * (MAXJSAMPLE + 1);
 #[derive(ConstDefault)]
 pub struct ColorConvTabs {
     pub rgb_ycc_tab: [i32; TABLE_SIZE],
+    #[cfg(not(feature = "o3ds"))]
     pub rb_5_tab: [u8; 1 << 5],
+    #[cfg(not(feature = "o3ds"))]
     pub g_6_tab: [u8; 1 << 6],
 }
 
@@ -241,27 +243,32 @@ impl ColorConvTabs {
             }
         }
 
-        let mut i = 0;
-        loop {
-            self.rb_5_tab[i] = ((fix((((1 << 8) - 1) as f64) / ((1 << 5) - 1) as f64) * i as isize
-                + ONE_HALF as isize)
-                >> SCALEBITS) as u8;
+        #[cfg(not(feature = "o3ds"))]
+        {
+            let mut i = 0;
+            loop {
+                self.rb_5_tab[i] = ((fix((((1 << 8) - 1) as f64) / ((1 << 5) - 1) as f64)
+                    * i as isize
+                    + ONE_HALF as isize)
+                    >> SCALEBITS) as u8;
 
-            i += 1;
-            if i >= (1 << 5) {
-                break;
+                i += 1;
+                if i >= (1 << 5) {
+                    break;
+                }
             }
-        }
 
-        let mut i = 0;
-        loop {
-            self.g_6_tab[i] = ((fix((((1 << 8) - 1) as f64) / ((1 << 6) - 1) as f64) * i as isize
-                + ONE_HALF as isize)
-                >> SCALEBITS) as u8;
+            let mut i = 0;
+            loop {
+                self.g_6_tab[i] = ((fix((((1 << 8) - 1) as f64) / ((1 << 6) - 1) as f64)
+                    * i as isize
+                    + ONE_HALF as isize)
+                    >> SCALEBITS) as u8;
 
-            i += 1;
-            if i >= (1 << 6) {
-                break;
+                i += 1;
+                if i >= (1 << 6) {
+                    break;
+                }
             }
         }
     }
