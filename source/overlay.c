@@ -188,8 +188,11 @@ static void ovDrawTranspartBlackRect(u32 addr, u32 stride, u32 format, int r, in
 static void ovDrawPixel(u32 addr, u32 stride, u32 format, int posR, int posC, u8 r, u8 g, u8 b)
 {
 	format &= 0x0f;
-	if (format == 3) {
-		u16 pix = ((u16)(r >> 3) << 11) | ((u16)(g >> 3) << 6) | ((u16)(b >> 3) << 1);
+	if (format == 4) {
+		u16 pix = ((u16)(r >> 4) << 12) | ((u16)(g >> 4) << 8) | ((u16)(b >> 4) << 4) | 0xf;
+		*(u16 *)(addr + stride * posC + GSP_SCREEN_WIDTH * 2 - 2 * posR - 2) = pix;
+	} else if (format == 3) {
+		u16 pix = ((u16)(r >> 3) << 11) | ((u16)(g >> 3) << 6) | ((u16)(b >> 3) << 1) | 0x1;
 		*(u16 *)(addr + stride * posC + GSP_SCREEN_WIDTH * 2 - 2 * posR - 2) = pix;
 	} else if (format == 2) {
 		u16 pix = ((u16)(r >> 3) << 11) | ((u16)(g >> 2) << 5) | (u16)(b >> 3);
@@ -201,6 +204,7 @@ static void ovDrawPixel(u32 addr, u32 stride, u32 format, int posR, int posC, u8
 		sp[2] = r;
 	} else if (format == 0) {
 		u8 *sp = (u8 *)(addr + stride * posC + GSP_SCREEN_WIDTH * 4 - 4 * posR - 4);
+		sp[0] = 0xff;
 		sp[1] = b;
 		sp[2] = g;
 		sp[3] = r;
@@ -385,7 +389,7 @@ static int plgDrawOverlayStats(u32 isDisplay1, u32 addr, u32 addrB, u32 stride, 
 	}
 #undef PARTS
 
-	return format < 4;
+	return format <= 4;
 }
 
 int plgOverlayStatus;

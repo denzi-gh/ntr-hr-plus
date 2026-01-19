@@ -207,6 +207,8 @@ pub struct ColorConvTabs {
     pub rb_5_tab: [u8; 1 << 5],
     #[cfg(not(feature = "o3ds"))]
     pub g_6_tab: [u8; 1 << 6],
+    #[cfg(not(feature = "o3ds"))]
+    pub rgb_4_tab: [u8; 1 << 4],
 }
 
 pub const SCALEBITS: usize = 16; /* speediest right-shift on some machines */
@@ -267,6 +269,19 @@ impl ColorConvTabs {
 
                 i += 1;
                 if i >= (1 << 6) {
+                    break;
+                }
+            }
+
+            let mut i = 0;
+            loop {
+                self.rgb_4_tab[i] = ((fix((((1 << 8) - 1) as f64) / ((1 << 4) - 1) as f64)
+                    * i as isize
+                    + ONE_HALF as isize)
+                    >> SCALEBITS) as u8;
+
+                i += 1;
+                if i >= (1 << 4) {
                     break;
                 }
             }

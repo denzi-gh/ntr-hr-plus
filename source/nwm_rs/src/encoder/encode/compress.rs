@@ -543,7 +543,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 let b = (input >> 1) & 0x1f;
                                 let output = input & !0x3f | b;
                                 self.dst.write_bytes(slice::from_raw_parts(
-                                    output as *const u16 as *const u8,
+                                    &output as *const u16 as *const u8,
                                     2,
                                 ));
                             }
@@ -576,13 +576,49 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
     }
 
+    fn copy_rgb4(&mut self) {
+        let is_top = self.worker.data.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        unsafe {
+            match screen.downsample {
+                RP_DOWNSAMPLE_NONE => {
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                    let input = self.worker.data.bufs.data.lossless.ptr;
+                    const P: usize = mem::size_of::<u16>();
+
+                    match *s.index_into(&self.worker.lossless_shared.color_bias) {
+                        RP_COLOR_BIAS_NONE | RP_COLOR_BIAS_1 | RP_COLOR_BIAS_2 => {
+                            let mut localbuf: [u8; 0] = const_default();
+                            let mut buf = EncodeBuffer::init(
+                                &mut self.worker.data.bit_enc_state,
+                                &mut self.dst,
+                                &mut localbuf,
+                                true,
+                            );
+                            for i in 0..width {
+                                let input = input.add(i * P);
+                                let input = *(input as *const u16);
+                                buf.put_bits((input >> 4) as u32, 12);
+                            }
+                            buf.store();
+                        }
+                        _ => {}
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+
     pub fn copy_encode(&mut self) {
         match self.worker.data.info.color_space {
             ColorSpace::RGBA8 => self.copy_rgb8::<3, 2, 1, 4, 1>(),
             ColorSpace::RGB8 => self.copy_rgb8::<2, 1, 0, 3, 0>(),
             ColorSpace::RGB565 => self.copy_rgb565(),
             ColorSpace::RGB5A1 => self.copy_rgb5(),
-            ColorSpace::RGB4 => todo!(),
+            ColorSpace::RGB4 => self.copy_rgb4(),
         }
     }
 
@@ -709,17 +745,18 @@ pub fn get_color_bias_from_format(bias: u8, format: ColorSpace) -> u8 {
         match format {
             ColorSpace::RGBA8 | ColorSpace::RGB8 => RP_COLOR_BIAS_NONE,
             ColorSpace::RGB565 | ColorSpace::RGB5A1 => RP_COLOR_BIAS_1,
-            _ => todo!(),
+            ColorSpace::RGB4 => RP_COLOR_BIAS_2,
         },
     )
 }
 
 pub fn get_color_space_from_format(format: u32) -> ColorSpace {
     match format {
-        0 => encoder::ColorSpace::RGBA8,
-        1 => encoder::ColorSpace::RGB8,
-        2 => encoder::ColorSpace::RGB565,
-        3 => encoder::ColorSpace::RGB5A1,
-        _ => encoder::ColorSpace::RGB4,
+        0 => ColorSpace::RGBA8,
+        1 => ColorSpace::RGB8,
+        2 => ColorSpace::RGB565,
+        3 => ColorSpace::RGB5A1,
+        4 => ColorSpace::RGB4,
+        _ => panic!(),
     }
 }

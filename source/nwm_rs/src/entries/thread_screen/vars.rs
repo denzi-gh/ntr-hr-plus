@@ -655,7 +655,7 @@ fn capture_screen(
         let format = screen_info.format & 0xf;
 
         // Skip if handling of format unimplemented
-        if format > 3 {
+        if format > 4 {
             ns_dbg_print!(failed, c_str!("format"), format as s32);
             sleep_thread(THREAD_WAIT_NS);
             return false;

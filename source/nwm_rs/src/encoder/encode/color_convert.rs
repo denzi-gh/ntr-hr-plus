@@ -158,7 +158,13 @@ impl<'a> WorkerCommon<'a> {
                 width,
                 &self.shared.encode_tbls.color_conv_tbls,
             ),
-            ColorSpace::RGB4 => todo!(),
+            ColorSpace::RGB4 => cconvert2::<S, _, START_STEP>(
+                input,
+                rgba4_comps,
+                &mut self.bufs.color,
+                width,
+                &self.shared.encode_tbls.color_conv_tbls,
+            ),
         }
     }
 }
@@ -305,6 +311,24 @@ pub fn rgb5a1_comps(input: u16, #[allow(unused)] tab: &ColorConvTabs) -> (u8, u8
         let r = ((input >> 11) & 0x1f) << 3;
         let g = ((input >> 6) & 0x1f) << 3;
         let b = ((input >> 1) & 0x1f) << 3;
+        (r as u8, g as u8, b as u8)
+    }
+}
+
+#[inline(always)]
+pub fn rgba4_comps(input: u16, #[allow(unused)] tab: &ColorConvTabs) -> (u8, u8, u8) {
+    #[cfg(not(feature = "o3ds"))]
+    {
+        let r = tab.rgb_4_tab[((input >> 12) & 0xf) as usize];
+        let g = tab.rgb_4_tab[((input >> 8) & 0xf) as usize];
+        let b = tab.rgb_4_tab[((input >> 4) & 0xf) as usize];
+        (r, g, b)
+    }
+    #[cfg(feature = "o3ds")]
+    {
+        let r = ((input >> 12) & 0xf) << 4;
+        let g = ((input >> 8) & 0xf) << 4;
+        let b = ((input >> 4) & 0xf) << 4;
         (r as u8, g as u8, b as u8)
     }
 }
