@@ -159,7 +159,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     // src count 1
-    pub fn pre_process_full_nohsamp_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+    pub fn pre_process_nohsamp_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
         const _H_SAMP: bool = false;
         const _V_SAMP: bool = false;
 
@@ -168,6 +168,134 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         } else {
             ptr::null()
         };
+    }
+
+    // src count SAMP_FACTOR
+    pub fn pre_process_even_odd(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = true;
+        self.worker
+            .data
+            .color_convert_even_odd::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, 0);
+        downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.worker.data.bufs, 0);
+    }
+
+    // src count 1
+    pub fn pre_process_even_odd_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = false;
+        self.worker
+            .data
+            .color_convert_even_odd::<1, H_SAMP, V_SAMP>(src, 0);
+        downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.worker.data.bufs, 0);
+    }
+
+    // chunk count SAMP_FACTOR * DOWNSAMPLE_FACTOR
+    pub fn pre_process_quarter(&mut self, chunk: &mut impl Iterator<Item = *const u8>) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = true;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
+        for prep_base in 0..SAMP_FACTOR {
+            self.worker
+                .data
+                .color_convert_quarter_vsamp::<H_SAMP>(chunk);
+
+            for ci in CompIndex::all() {
+                unsafe {
+                    let input = ci
+                        .index_into(&self.worker.data.bufs.color)
+                        .buf
+                        .full
+                        .as_ptr();
+                    if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
+                        h2v2_downsample::<1>(
+                            width,
+                            input,
+                            ci.index_into_mut(&mut self.worker.data.bufs.prep.quarter.prep)
+                                .as_mut_ptr()
+                                .add(out_width * prep_base),
+                        );
+                    } else {
+                        let output = self
+                            .worker
+                            .data
+                            .bufs
+                            .prep
+                            .quarter
+                            .buf
+                            .get_mut(ci, H_SAMP, V_SAMP)
+                            .as_mut_ptr();
+                        h2v2_downsample::<1>(width, input, output);
+                    }
+                }
+            }
+        }
+        for ci in CompIndex::all() {
+            downsample_quarter::<H_SAMP, V_SAMP>(&mut self.worker.data.bufs, 0, ci);
+        }
+    }
+
+    // src count DOWNSAMPLE_FACTOR
+    pub fn pre_process_quarter_novsamp(&mut self, src: &mut impl Iterator<Item = *const u8>) {
+        const H_SAMP: bool = true;
+        const V_SAMP: bool = false;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        #[allow(unused)]
+        let out_width = width / SAMP_FACTOR;
+
+        self.worker
+            .data
+            .color_convert_quarter_novsamp::<H_SAMP>(src);
+
+        for ci in CompIndex::all() {
+            unsafe {
+                let input = ci
+                    .index_into(&self.worker.data.bufs.color)
+                    .buf
+                    .full
+                    .as_ptr();
+                if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
+                    h2v2_downsample::<1>(
+                        width,
+                        input,
+                        ci.index_into_mut(&mut self.worker.data.bufs.prep.quarter.prep)
+                            .as_mut_ptr(),
+                    );
+                } else {
+                    let output = self
+                        .worker
+                        .data
+                        .bufs
+                        .prep
+                        .quarter
+                        .buf
+                        .get_mut(ci, H_SAMP, V_SAMP)
+                        .as_mut_ptr();
+                    h2v2_downsample::<1>(width, input, output);
+                }
+
+                downsample_quarter::<H_SAMP, V_SAMP>(&mut self.worker.data.bufs, 0, ci);
+            }
+        }
+    }
+
+    // src count DOWNSAMPLE_FACTOR
+    #[allow(unused)]
+    pub fn pre_process_quarter_nohsamp_novsamp(
+        &mut self,
+        src: &mut impl Iterator<Item = *const u8>,
+    ) {
+        const H_SAMP: bool = false;
+        const V_SAMP: bool = false;
+
+        let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+        let out_width = width / SAMP_FACTOR;
+
+        todo!()
     }
 }
 
