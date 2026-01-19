@@ -431,15 +431,27 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
-                RP_DOWNSAMPLE_NONE => {
-                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                RP_DOWNSAMPLE_NONE | RP_DOWNSAMPLE_EVEN_ODD => {
+                    let (start, step) = {
+                        if screen.downsample == RP_DOWNSAMPLE_NONE {
+                            (0, 1)
+                        } else if self.worker.data.info.even_odd == false {
+                            (0, 2)
+                        } else {
+                            (1, 2)
+                        }
+                    };
+
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE) / step;
                     let input = self.worker.data.bufs.data.lossless.ptr;
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE => {
                             for i in 0..width {
-                                self.dst
-                                    .write_bytes(slice::from_raw_parts(input.add(i * P + T), 3));
+                                self.dst.write_bytes(slice::from_raw_parts(
+                                    input.add((i * step + start) * P + T),
+                                    3,
+                                ));
                             }
                         }
                         RP_COLOR_BIAS_1 => {
@@ -462,7 +474,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 true,
                             );
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 let output =
                                     color_bias_2(*input.add(R), *input.add(G), *input.add(B));
                                 buf.put_bits(output as u32, 12);
@@ -484,15 +496,25 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
-                RP_DOWNSAMPLE_NONE => {
-                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                RP_DOWNSAMPLE_NONE | RP_DOWNSAMPLE_EVEN_ODD => {
+                    let (start, step) = {
+                        if screen.downsample == RP_DOWNSAMPLE_NONE {
+                            (0, 1)
+                        } else if self.worker.data.info.even_odd == false {
+                            (0, 2)
+                        } else {
+                            (1, 2)
+                        }
+                    };
+
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE) / step;
                     let input = self.worker.data.bufs.data.lossless.ptr;
                     const P: usize = mem::size_of::<u16>();
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE | RP_COLOR_BIAS_1 => {
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 self.dst.write_bytes(slice::from_raw_parts(input, P));
                             }
                         }
@@ -505,7 +527,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 true,
                             );
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 let input = *(input as *const u16);
                                 let r = ((input >> 11) & 0x1f) << 3;
                                 let g = ((input >> 5) & 0x3f) << 2;
@@ -530,15 +552,25 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
-                RP_DOWNSAMPLE_NONE => {
-                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                RP_DOWNSAMPLE_NONE | RP_DOWNSAMPLE_EVEN_ODD => {
+                    let (start, step) = {
+                        if screen.downsample == RP_DOWNSAMPLE_NONE {
+                            (0, 1)
+                        } else if self.worker.data.info.even_odd == false {
+                            (0, 2)
+                        } else {
+                            (1, 2)
+                        }
+                    };
+
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE) / step;
                     let input = self.worker.data.bufs.data.lossless.ptr;
                     const P: usize = mem::size_of::<u16>();
 
                     match *s.index_into(&self.worker.lossless_shared.color_bias) {
                         RP_COLOR_BIAS_NONE | RP_COLOR_BIAS_1 => {
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 let input = *(input as *const u16);
                                 let b = (input >> 1) & 0x1f;
                                 let output = input & !0x3f | b;
@@ -557,7 +589,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 true,
                             );
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 let input = *(input as *const u16);
                                 let r = (input >> 12) & 0xf;
                                 let g = (input >> 7) & 0xf;
