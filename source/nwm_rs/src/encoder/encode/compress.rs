@@ -768,7 +768,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 self.do_uncompressed_encode::<true, false>();
             }
         } else {
-            panic!();
+            self.do_uncompressed_encode::<false, false>();
         }
     }
 }
