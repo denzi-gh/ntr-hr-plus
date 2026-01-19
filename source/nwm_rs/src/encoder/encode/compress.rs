@@ -655,6 +655,8 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
 
             let in_x = match screen.downsample {
                 RP_DOWNSAMPLE_NONE => ci_x.map(|x| input.full.get(x, HSS, VSS).as_ptr()),
+                RP_DOWNSAMPLE_EVEN_ODD => ci_x.map(|x| input.even_odd.get(x, HSS, VSS).as_ptr()),
+                RP_DOWNSAMPLE_QUARTER => ci_x.map(|x| input.quarter.buf.get(x, HSS, VSS).as_ptr()),
                 _ => todo!(),
             };
 

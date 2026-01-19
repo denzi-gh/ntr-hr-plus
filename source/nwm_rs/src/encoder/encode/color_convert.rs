@@ -25,7 +25,7 @@ impl<'a> WorkerCommon<'a> {
         input: &mut impl Iterator<Item = *const u8>,
     ) {
         const V_SAMP: bool = true;
-        self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP, { StartStep::Normal }>(
+        self.color_convert::<{ DOWNSAMPLE_FACTOR }, H_SAMP, V_SAMP, { StartStep::Normal }, false>(
             input,
             0,
             RP_DOWNSAMPLE_QUARTER,
@@ -38,7 +38,21 @@ impl<'a> WorkerCommon<'a> {
         input: &mut impl Iterator<Item = *const u8>,
     ) {
         const V_SAMP: bool = false;
-        self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP, { StartStep::Normal }>(
+        self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP, { StartStep::Normal }, false>(
+            input,
+            0,
+            RP_DOWNSAMPLE_QUARTER,
+        );
+    }
+
+    // input count DOWNSAMPLE_FACTOR
+    pub fn color_copy_quarter_nohsamp_novsamp(
+        &mut self,
+        input: &mut impl Iterator<Item = *const u8>,
+    ) {
+        const H_SAMP: bool = false;
+        const V_SAMP: bool = false;
+        self.color_convert::<DOWNSAMPLE_FACTOR, H_SAMP, V_SAMP, { StartStep::Normal }, true>(
             input,
             0,
             RP_DOWNSAMPLE_QUARTER,
@@ -51,7 +65,7 @@ impl<'a> WorkerCommon<'a> {
         input: &mut impl Iterator<Item = *const u8>,
         output_base: usize,
     ) {
-        self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Normal }>(
+        self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Normal }, false>(
             input,
             output_base,
             RP_DOWNSAMPLE_NONE,
@@ -65,13 +79,13 @@ impl<'a> WorkerCommon<'a> {
         output_base: usize,
     ) {
         if self.info.even_odd == false {
-            self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Even }>(
+            self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Even }, false>(
                 input,
                 output_base,
                 RP_DOWNSAMPLE_EVEN_ODD,
             );
         } else {
-            self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Odd }>(
+            self.color_convert::<S, H_SAMP, V_SAMP, { StartStep::Odd }, false>(
                 input,
                 output_base,
                 RP_DOWNSAMPLE_EVEN_ODD,
@@ -85,6 +99,7 @@ impl<'a> WorkerCommon<'a> {
         const H_SAMP: bool,
         const V_SAMP: bool,
         const START_STEP: StartStep,
+        const COPY: bool,
     >(
         &mut self,
         input: &mut impl Iterator<Item = *const u8>,
@@ -132,33 +147,33 @@ impl<'a> WorkerCommon<'a> {
             }
         }
         match self.info.color_space {
-            ColorSpace::RGBA8 => cconvert::<3, 2, 1, 4, S, START_STEP>(
+            ColorSpace::RGBA8 => cconvert::<3, 2, 1, 4, S, START_STEP, COPY>(
                 input,
                 &mut self.bufs.color,
                 width,
                 &self.shared.encode_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
-            ColorSpace::RGB8 => cconvert::<2, 1, 0, 3, S, START_STEP>(
+            ColorSpace::RGB8 => cconvert::<2, 1, 0, 3, S, START_STEP, COPY>(
                 input,
                 &mut self.bufs.color,
                 width,
                 &self.shared.encode_tbls.color_conv_tbls.rgb_ycc_tab,
             ),
-            ColorSpace::RGB565 => cconvert2::<S, _, START_STEP>(
+            ColorSpace::RGB565 => cconvert2::<S, _, START_STEP, COPY>(
                 input,
                 rgb565_comps,
                 &mut self.bufs.color,
                 width,
                 &self.shared.encode_tbls.color_conv_tbls,
             ),
-            ColorSpace::RGB5A1 => cconvert2::<S, _, START_STEP>(
+            ColorSpace::RGB5A1 => cconvert2::<S, _, START_STEP, COPY>(
                 input,
                 rgb5a1_comps,
                 &mut self.bufs.color,
                 width,
                 &self.shared.encode_tbls.color_conv_tbls,
             ),
-            ColorSpace::RGB4 => cconvert2::<S, _, START_STEP>(
+            ColorSpace::RGB4 => cconvert2::<S, _, START_STEP, COPY>(
                 input,
                 rgba4_comps,
                 &mut self.bufs.color,
@@ -166,6 +181,15 @@ impl<'a> WorkerCommon<'a> {
                 &self.shared.encode_tbls.color_conv_tbls,
             ),
         }
+    }
+}
+
+#[inline(always)]
+pub fn pccopy(r: u8, g: u8, b: u8, y: *mut u8, cb: *mut u8, cr: *mut u8) {
+    unsafe {
+        *y = g;
+        *cb = r;
+        *cr = b;
     }
 }
 
@@ -210,6 +234,7 @@ pub fn cconvert<
     const P: usize,
     const N: usize,
     const START_STEP: StartStep,
+    const COPY: bool,
 >(
     input: &mut impl Iterator<Item = *const u8>,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
@@ -236,7 +261,11 @@ pub fn cconvert<
                     let output1 = output1.add(x);
                     let output2 = output2.add(x);
 
-                    pconvert(r, g, b, output0, output1, output2, tab);
+                    if COPY {
+                        pccopy(r, g, b, output0, output1, output2);
+                    } else {
+                        pconvert(r, g, b, output0, output1, output2, tab);
+                    }
                 }
             }
         }
@@ -244,7 +273,7 @@ pub fn cconvert<
 }
 
 // input count N
-pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
+pub fn cconvert2<const N: usize, F, const START_STEP: StartStep, const COPY: bool>(
     input: &mut impl Iterator<Item = *const u8>,
     comps: F,
     output: &mut [WorkerColorBuf; MAX_COMPONENTS],
@@ -272,7 +301,11 @@ pub fn cconvert2<const N: usize, F, const START_STEP: StartStep>(
 
                     let (r, g, b) = comps(*(input as *const u16), tab);
 
-                    pconvert(r, g, b, output0, output1, output2, &tab.rgb_ycc_tab);
+                    if COPY {
+                        pccopy(r, g, b, output0, output1, output2);
+                    } else {
+                        pconvert(r, g, b, output0, output1, output2, &tab.rgb_ycc_tab);
+                    }
                 }
             }
         }
