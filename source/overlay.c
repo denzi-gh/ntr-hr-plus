@@ -135,7 +135,20 @@ static void ovDrawTransparentBlackRect(u32 addr, u32 stride, u32 format, int r, 
 	format &= 0x0f;
 	int posC;
 	for (posC = c; posC < c + w; posC++) {
-		if (format == 3) {
+			u16 *sp = (u16 *)(addr + stride * posC + GSP_SCREEN_WIDTH * 2 - 2 * (r + h));
+			u16 *spEnd = sp + h;
+			while (sp < spEnd)
+			{
+				u16 pix = *sp;
+				u16 r = (pix >> 12) & 0xf;
+				u16 g = (pix >> 8) & 0xf;
+				u16 b = (pix >> 4) & 0xf;
+				pix = ((r >> level) << 12) | ((g >> level) << 8) | ((b >> level) << 4) | 0xf;
+				*sp = pix;
+				sp++;
+			}
+		if (format == 4) {
+		} else if (format == 3) {
 			u16 *sp = (u16 *)(addr + stride * posC + GSP_SCREEN_WIDTH * 2 - 2 * (r + h));
 			u16 *spEnd = sp + h;
 			while (sp < spEnd)
@@ -144,7 +157,7 @@ static void ovDrawTransparentBlackRect(u32 addr, u32 stride, u32 format, int r, 
 				u16 r = (pix >> 11) & 0x1f;
 				u16 g = (pix >> 6) & 0x1f;
 				u16 b = (pix >> 1) & 0x1f;
-				pix = ((r >> level) << 11) | ((g >> level) << 6) | ((b >> level) << 1);
+				pix = ((r >> level) << 11) | ((g >> level) << 6) | ((b >> level) << 1) | 0x1;
 				*sp = pix;
 				sp++;
 			}
@@ -176,6 +189,7 @@ static void ovDrawTransparentBlackRect(u32 addr, u32 stride, u32 format, int r, 
 			u8 *spEnd = sp + 4 * h;
 			while (sp < spEnd)
 			{
+				sp[0] = 0xff;
 				sp[1] >>= level;
 				sp[2] >>= level;
 				sp[3] >>= level;
