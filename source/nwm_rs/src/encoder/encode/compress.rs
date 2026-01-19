@@ -614,8 +614,18 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let screen = s.index_into(&self.worker.data.shared.screens);
         unsafe {
             match screen.downsample {
-                RP_DOWNSAMPLE_NONE => {
-                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
+                RP_DOWNSAMPLE_NONE | RP_DOWNSAMPLE_EVEN_ODD => {
+                    let (start, step) = {
+                        if screen.downsample == RP_DOWNSAMPLE_NONE {
+                            (0, 1)
+                        } else if self.worker.data.info.even_odd == false {
+                            (0, 2)
+                        } else {
+                            (1, 2)
+                        }
+                    };
+
+                    let width = downsample_screen_width(RP_DOWNSAMPLE_NONE) / step;
                     let input = self.worker.data.bufs.data.lossless.ptr;
                     const P: usize = mem::size_of::<u16>();
 
@@ -629,7 +639,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 true,
                             );
                             for i in 0..width {
-                                let input = input.add(i * P);
+                                let input = input.add((i * step + start) * P);
                                 let input = *(input as *const u16);
                                 buf.put_bits((input >> 4) as u32, 12);
                             }
@@ -699,13 +709,13 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                             let width_c = *c.index_into(&width_x);
                             let bw_c = *c.index_into(&bw_x) as usize;
                             let bh_c = *c.index_into(&bh_x) as usize;
+                            let in_c = *c.index_into(&in_x);
                             let ix = x * bw_c as usize;
                             let iy = 0 as usize;
                             for by in 0..bh_c {
                                 let iy = iy + by;
                                 for bx in 0..bw_c {
                                     let ix = ix + bx;
-                                    let in_c = *c.index_into(&in_x);
                                     self.dst.write_byte(*in_c.add(iy * width_c + ix));
                                 }
                             }
@@ -733,13 +743,13 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                             let width_c = *c.index_into(&width_x);
                             let bw_c = *c.index_into(&bw_x) as usize;
                             let bh_c = *c.index_into(&bh_x) as usize;
+                            let in_c = *c.index_into(&in_x);
                             let ix = x * bw_c as usize;
                             let iy = 0 as usize;
                             for by in 0..bh_c {
                                 let iy = iy + by;
                                 for bx in 0..bw_c {
                                     let ix = ix + bx;
-                                    let in_c = *c.index_into(&in_x);
                                     let in_c = *in_c.add(iy * width_c + ix);
                                     let in_c = in_c >> (8 - bb_c);
                                     buf.put_bits(in_c as u32, bb_c);

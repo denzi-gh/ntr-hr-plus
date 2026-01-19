@@ -955,19 +955,30 @@ impl WorkAcquire {
         #[cfg(not(feature = "mem3"))]
         let src_len = bctx.src_len() as usize;
         #[cfg(not(feature = "mem3"))]
+        let lossless = entries::thread_nwm::get_lossless_compression();
+        #[cfg(not(feature = "mem3"))]
         let src = if downsample == RP_DOWNSAMPLE_CHECKER {
             unsafe { slice::from_raw_parts(src, src_len) }
         } else {
-            let (i_start, i_count) = match downsample {
-                RP_DOWNSAMPLE_QUARTER => (
-                    *bctx.i_start.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
-                    *bctx.i_count.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
-                ),
-                RP_DOWNSAMPLE_EVEN_ODD | _ => (*bctx.i_start.get(&t), *bctx.i_count.get(&t)),
+            let (i_start, i_count) = {
+                let (s, c) = (*bctx.i_start.get(&t), *bctx.i_count.get(&t));
+                match downsample {
+                    RP_DOWNSAMPLE_QUARTER => {
+                        if lossless {
+                            (s, c)
+                        } else {
+                            (
+                                *bctx.i_start.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
+                                *bctx.i_count.get(&t) * encoder::DOWNSAMPLE_FACTOR as u32,
+                            )
+                        }
+                    }
+                    RP_DOWNSAMPLE_EVEN_ODD | _ => (s, c),
+                }
             };
             let pitch = bctx.pitch();
 
-            let mcu_size = if entries::thread_nwm::get_lossless_compression() {
+            let mcu_size = if lossless {
                 encoder::LOSSLESS_BLOCK_SIZE
             } else {
                 let jpeg_shared = unsafe { &(*encoder::ENCODER).jpeg_shared };
