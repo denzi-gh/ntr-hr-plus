@@ -130,7 +130,7 @@ static unsigned char font[] = {
 	0x76, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Char 126 (~)
 };
 
-static void ovDrawTranspartBlackRect(u32 addr, u32 stride, u32 format, int r, int c, int h, int w, u8 level)
+static void ovDrawTransparentBlackRect(u32 addr, u32 stride, u32 format, int r, int c, int h, int w, u8 level)
 {
 	format &= 0x0f;
 	int posC;
@@ -274,7 +274,7 @@ static struct ov_color_t {
 };
 
 static void drawOverlayOnScreenMode0(u32 addr, u32 stride, u32 format, u32 scrnWidth, const char *buf) {
-	ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT + ROW_MARGIN * 2, strlen(buf) * CHAR_WIDTH + COL_MARGIN * 2, 1);
+	ovDrawTransparentBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT + ROW_MARGIN * 2, strlen(buf) * CHAR_WIDTH + COL_MARGIN * 2, 1);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf);
 }
 
@@ -285,8 +285,8 @@ static void drawOverlayOnScreenMode2(u32 addr, u32 stride, u32 format, u32 scrnW
 	// int len4 = strlen(buf4);
 	// int len5 = strlen(buf5);
 	// int len6 = strlen(buf6);
-	ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 3 + ROW_MARGIN * 4, MAX(MAX(len, len2), len3) * CHAR_WIDTH + COL_MARGIN * 2, 1);
-	// ovDrawTranspartBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 6 + ROW_MARGIN * 7, MAX(MAX(MAX(MAX(MAX(len, len2), len3), len4), len5), len6) * CHAR_WIDTH + COL_MARGIN * 2, 1);
+	ovDrawTransparentBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 3 + ROW_MARGIN * 4, MAX(MAX(len, len2), len3) * CHAR_WIDTH + COL_MARGIN * 2, 1);
+	// ovDrawTransparentBlackRect(addr, stride, format, ROW_START, COL_START, CHAR_HEIGHT * 6 + ROW_MARGIN * 7, MAX(MAX(MAX(MAX(MAX(len, len2), len3), len4), len5), len6) * CHAR_WIDTH + COL_MARGIN * 2, 1);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 2 + CHAR_HEIGHT, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf2);
 	ovDrawString(addr, stride, format, scrnWidth, ROW_START + ROW_MARGIN * 3 + CHAR_HEIGHT * 2, COL_START + COL_MARGIN, text_color_info.r, text_color_info.g, text_color_info.b, buf3);
