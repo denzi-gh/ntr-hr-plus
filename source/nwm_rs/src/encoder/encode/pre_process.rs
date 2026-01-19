@@ -3,47 +3,30 @@
 
 use super::*;
 
-pub fn h2v1_downsample<const STEP: usize>(width: usize, input: *const u8, output: *mut u8) {
+pub fn h2v1_downsample(width: usize, input: *const u8, output: *mut u8) {
     let mut bias = 0;
-    let input = unsafe { slice::from_raw_parts(input, width * STEP) };
+    let input = unsafe { slice::from_raw_parts(input, width) };
     let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
-    for (input, output) in input
-        .as_chunks::<{ STEP }>()
-        .0
-        .as_chunks::<{ SAMP_FACTOR }>()
-        .0
-        .iter()
-        .zip(output)
-    {
-        *output = ((input[0][0] as u16 + input[1][0] as u16 + bias as u16) >> 1) as u8;
+    for (input, output) in input.as_chunks::<{ SAMP_FACTOR }>().0.iter().zip(output) {
+        *output = ((input[0] as u16 + input[1] as u16 + bias as u16) >> 1) as u8;
         bias ^= 1; /* 1=>2, 2=>1 */
     }
 }
 
-pub fn h2v2_downsample<const STEP: usize>(width: usize, input: *const u8, output: *mut u8) {
-    let in_width = width * STEP;
+pub fn h2v2_downsample(width: usize, input: *const u8, output: *mut u8) {
+    let in_width = width;
     let input0 = unsafe { slice::from_raw_parts(input, in_width) };
     let input1 = unsafe { slice::from_raw_parts(input.add(in_width), in_width) };
-    let input0 = input0
-        .as_chunks::<{ STEP }>()
-        .0
-        .as_chunks::<{ SAMP_FACTOR }>()
-        .0
-        .iter();
-    let input1 = input1
-        .as_chunks::<{ STEP }>()
-        .0
-        .as_chunks::<{ SAMP_FACTOR }>()
-        .0
-        .iter();
+    let input0 = input0.as_chunks::<{ SAMP_FACTOR }>().0.iter();
+    let input1 = input1.as_chunks::<{ SAMP_FACTOR }>().0.iter();
     let mut bias = 1;
     let output = unsafe { slice::from_raw_parts_mut(output, width / SAMP_FACTOR) };
 
     for ((input0, input1), output) in input0.zip(input1).zip(output) {
-        *output = ((input0[0][0] as u16
-            + input0[1][0] as u16
-            + input1[0][0] as u16
-            + input1[1][0] as u16
+        *output = ((input0[0] as u16
+            + input0[1] as u16
+            + input1[0] as u16
+            + input1[1] as u16
             + bias as u16)
             >> 2) as u8;
         bias ^= 3; /* 1=>2, 2=>1 */
@@ -70,9 +53,9 @@ pub fn downsample_full<const H_SAMP: bool, const V_SAMP: bool>(
                     .as_mut_ptr()
                     .add(output_base * out_width);
                 if V_SAMP {
-                    h2v2_downsample::<1>(width, input, output);
+                    h2v2_downsample(width, input, output);
                 } else {
-                    h2v1_downsample::<1>(width, input, output);
+                    h2v1_downsample(width, input, output);
                 }
             }
         }
@@ -100,9 +83,9 @@ pub fn downsample_quarter<const H_SAMP: bool, const V_SAMP: bool>(
                 .as_mut_ptr()
                 .add(output_base * out_width);
             if V_SAMP {
-                h2v2_downsample::<1>(width, prep, output);
+                h2v2_downsample(width, prep, output);
             } else {
-                h2v1_downsample::<1>(width, prep, output);
+                h2v1_downsample(width, prep, output);
             }
         }
     }
@@ -128,9 +111,9 @@ pub fn downsample_even_odd<const H_SAMP: bool, const V_SAMP: bool>(
                     .as_mut_ptr()
                     .add(output_base * out_width);
                 if V_SAMP {
-                    h2v2_downsample::<1>(width, input, output);
+                    h2v2_downsample(width, input, output);
                 } else {
-                    h2v1_downsample::<1>(width, input, output);
+                    h2v1_downsample(width, input, output);
                 }
             }
         }
@@ -175,7 +158,7 @@ impl<'a> WorkerCommon<'a> {
                     .buf
                     .get_mut(ci, H_SAMP, V_SAMP)
                     .as_mut_ptr();
-                h2v2_downsample::<1>(width, input, output);
+                h2v2_downsample(width, input, output);
             }
         }
     }
@@ -247,7 +230,7 @@ impl<'a> WorkerCommon<'a> {
                 unsafe {
                     let input = ci.index_into(&self.bufs.color).buf.full.as_ptr();
                     if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                        h2v2_downsample::<1>(
+                        h2v2_downsample(
                             width,
                             input,
                             ci.index_into_mut(&mut self.bufs.prep.quarter.prep)
@@ -263,7 +246,7 @@ impl<'a> WorkerCommon<'a> {
                             .get_mut(ci, H_SAMP, V_SAMP)
                             .as_mut_ptr()
                             .add(out_width * (output_base * SAMP_FACTOR + prep_base));
-                        h2v2_downsample::<1>(width, input, output);
+                        h2v2_downsample(width, input, output);
                     }
                 }
             }
@@ -334,7 +317,7 @@ impl<'a> WorkerCommon<'a> {
                         .get_mut(ci, H_SAMP, V_SAMP)
                         .as_mut_ptr()
                         .add(out_width * output_base);
-                    h2v2_downsample::<1>(width, input, output);
+                    h2v2_downsample(width, input, output);
                 }
             }
         }
@@ -358,7 +341,7 @@ impl<'a> WorkerCommon<'a> {
                 unsafe {
                     let input = ci.index_into(&self.bufs.color).buf.full.as_ptr();
                     if need_subsamp_ci::<H_SAMP, V_SAMP>(ci) {
-                        h2v2_downsample::<1>(
+                        h2v2_downsample(
                             width,
                             input,
                             ci.index_into_mut(&mut self.bufs.prep.quarter.prep)
@@ -373,7 +356,7 @@ impl<'a> WorkerCommon<'a> {
                             .get_mut(ci, H_SAMP, V_SAMP)
                             .as_mut_ptr()
                             .add(out_width * output_base);
-                        h2v2_downsample::<1>(width, input, output);
+                        h2v2_downsample(width, input, output);
                     }
 
                     downsample_quarter::<H_SAMP, V_SAMP>(&mut self.bufs, output_base, ci);
