@@ -712,11 +712,17 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
 
     let info = unsafe { TERM_INFOS.get(&w) };
     let downsample = unsafe { *is_top_index(info.is_top).index_into(&ENCODE_DOWNSAMPLE) } as u8;
-    let (delta_prog, delta_q) =
-        if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
-            (true, dq_ret.delta_q as u16)
+    let (lossless, delta_prog, quality) =
+        if let EncodeRet::LosslessRet(encoder::LosslessEncodeRet::LosslessRet(ret)) = ret {
+            (
+                true,
+                entries::thread_nwm::get_reliable_stream_delta_prog(),
+                ret.color_bias as u16,
+            )
+        } else if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
+            (false, true, dq_ret.delta_q as u16)
         } else {
-            (false, 0)
+            (false, false, 0)
         };
     let hdr = (downsample as u16)
         << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS + 1 + RP_KCP_HDR_CHROMASS_NBITS + 1)
@@ -727,8 +733,8 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
         | (is_top_index(info.is_top).get() as u16)
             << (RP_KCP_HDR_QUALITY_NBITS + RP_KCP_HDR_T_NBITS)
         | (info.core_count.get() as u16) << RP_KCP_HDR_QUALITY_NBITS
-        | (if delta_prog {
-            delta_q
+        | (if lossless || delta_prog {
+            quality
         } else {
             unsafe { *is_top_index(info.is_top).index_into(&ENCODE_JPEG_QUALITY) as u16 }
         });

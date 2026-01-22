@@ -54,7 +54,7 @@ where
     }
 
     pub fn store(self) {
-        if !self.buf.is_null() {
+        if N != 0 {
             match self.base {
                 EncodeBufferBase::Local(buf) => {
                     let len = unsafe { self.buf.offset_from_unsigned(buf.as_ptr()) };
@@ -68,7 +68,7 @@ where
 
     pub unsafe fn emit_byte(&mut self, b: u8) {
         unsafe {
-            if self.buf.is_null() {
+            if N == 0 {
                 self.dst.write_byte(b);
                 if !self.no_escape && b == 0xFF {
                     self.dst.write_byte(0);
@@ -91,7 +91,7 @@ where
                 self.emit_byte((self.state.c >> 16) as u8);
                 self.emit_byte((self.state.c >> 8) as u8);
                 self.emit_byte(self.state.c as u8);
-            } else if self.buf.is_null() {
+            } else if N == 0 {
                 self.dst.write_byte((self.state.c >> 24) as u8);
                 self.dst.write_byte((self.state.c >> 16) as u8);
                 self.dst.write_byte((self.state.c >> 8) as u8);

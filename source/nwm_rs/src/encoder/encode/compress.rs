@@ -781,6 +781,9 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             self.do_uncompressed_encode::<false, false>();
         }
     }
+
+    #[cfg(not(feature = "o3ds"))]
+    pub fn compressed_encode(&mut self, _i: usize) {}
 }
 
 pub fn get_color_bias_from_format(bias: u8, format: ColorSpace) -> u8 {

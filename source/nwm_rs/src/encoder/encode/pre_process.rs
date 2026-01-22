@@ -260,8 +260,9 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_quarter<const COUNT: usize>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
-        for output_base in 0..COUNT {
+        for output_base in start..start + COUNT {
             self.do_pre_process_quarter(output_base, src);
         }
     }
@@ -270,10 +271,11 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_even_odd<const COUNT: usize>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
-        for output_base in 0..COUNT {
+        for output_base in start..start + COUNT {
             self.color_convert_even_odd::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, output_base);
             downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.bufs, output_base);
         }
@@ -283,10 +285,11 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_full<const COUNT: usize>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = true;
-        for output_base in 0..COUNT {
+        for output_base in start..start + COUNT {
             self.color_convert_full::<SAMP_FACTOR, H_SAMP, V_SAMP>(src, output_base);
             downsample_full::<H_SAMP, V_SAMP>(&mut self.bufs, output_base);
         }
@@ -296,6 +299,7 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_quarter_nohsamp_novsamp<const COUNT: usize>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const H_SAMP: bool = false;
         const V_SAMP: bool = false;
@@ -303,7 +307,7 @@ impl<'a> WorkerCommon<'a> {
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
         let out_width = width / SAMP_FACTOR;
 
-        for output_base in 0..COUNT {
+        for output_base in start..start + COUNT {
             self.color_convert_quarter_novsamp::<H_SAMP>(src);
 
             for ci in CompIndex::all() {
@@ -327,6 +331,7 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_quarter_novsamp<const COUNT: usize>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const H_SAMP: bool = true;
         const V_SAMP: bool = false;
@@ -334,7 +339,7 @@ impl<'a> WorkerCommon<'a> {
         let width = downsample_screen_width(RP_DOWNSAMPLE_NONE);
         let out_width = width / SAMP_FACTOR;
 
-        for output_base in 0..COUNT {
+        for output_base in start..start + COUNT {
             self.color_convert_quarter_novsamp::<H_SAMP>(src);
 
             for ci in CompIndex::all() {
@@ -369,9 +374,10 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_full_novsamp<const COUNT: usize, const H_SAMP: bool>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const V_SAMP: bool = false;
-        for base in 0..COUNT {
+        for base in start..start + COUNT {
             self.color_convert_full::<1, H_SAMP, V_SAMP>(src, base);
             downsample_full::<H_SAMP, V_SAMP>(&mut self.bufs, base);
         }
@@ -381,9 +387,10 @@ impl<'a> WorkerCommon<'a> {
     pub fn pre_process_even_odd_novsamp<const COUNT: usize, const H_SAMP: bool>(
         &mut self,
         src: &mut impl Iterator<Item = *const u8>,
+        start: usize,
     ) {
         const V_SAMP: bool = false;
-        for base in 0..COUNT {
+        for base in start..start + COUNT {
             self.color_convert_even_odd::<1, H_SAMP, V_SAMP>(src, base);
             downsample_even_odd::<H_SAMP, V_SAMP>(&mut self.bufs, base);
         }

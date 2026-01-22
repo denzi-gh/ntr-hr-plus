@@ -5,9 +5,6 @@ use super::*;
 
 impl JpegSharedMut {
     fn once(&mut self) {
-        unsafe {
-            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
-        }
         #[cfg(not(feature = "o3ds"))]
         {
             self.rand32 = Rand32::new(get_system_tick().get() as u64);

@@ -39,7 +39,10 @@ pub enum JpegEncodeRet {
     JpegDqRet(JpegDqRet),
 }
 
-pub struct LosslessRet {}
+pub struct LosslessRet {
+    #[cfg(not(feature = "o3ds"))]
+    pub color_bias: u8,
+}
 
 pub enum LosslessEncodeRet {
     LosslessRet(LosslessRet),
