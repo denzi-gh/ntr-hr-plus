@@ -122,7 +122,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let hss = screen.max_h_samp_factor == SAMP_FACTOR;
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
-        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
+        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut };
 
         let delta_q = unsafe {
             shared_mut
@@ -130,7 +130,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 .get_mut(&s)
                 .get_unchecked_mut(self.worker.data.info.even_odd as usize)
         };
-        let rand32 = &mut shared_mut.rand32;
+        let rand32 = unsafe { &mut (*self.worker.shared_mut).rand32 };
         let cache = shared_mut.delta_q_cache.get_mut(&w);
         let cache_next_i = shared_mut.delta_q_cache_next.get_mut(&w);
 
@@ -305,7 +305,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let qos_b = current_qos * frame_rate_f * qos_adj;
 
         let comp_size = unsafe {
-            shared_mut
+            (*self.worker.shared_mut)
                 .compressed_size
                 .get(&s)
                 .get_unchecked(self.worker.data.info.even_odd as usize)

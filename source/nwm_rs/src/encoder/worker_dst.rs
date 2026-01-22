@@ -114,7 +114,7 @@ impl WorkerDst {
         if self.delta_prog {
             let comp_size = unsafe {
                 (*ENCODER)
-                    .jpeg_shared_mut
+                    .common_shared_mut
                     .compressed_size
                     .get_mut(&self.s)
                     .get_unchecked_mut(self.even_odd as usize)

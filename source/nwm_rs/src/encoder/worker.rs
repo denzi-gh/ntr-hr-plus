@@ -46,16 +46,13 @@ pub struct JpegWorker<'a> {
     pub data: WorkerCommon<'a>,
     pub jpeg_shared: &'a JpegShared,
     #[cfg(not(feature = "o3ds"))]
-    pub jpeg_shared_mut: JpegSharedMutCell,
+    pub jpeg_shared_mut: *mut JpegSharedMut,
+    #[cfg(not(feature = "o3ds"))]
+    pub shared_mut: *mut CommonSharedMut,
     pub last_dc_vals: LastDcVals,
 }
 
 pub type LastDcVals = [s16; MAX_COMPONENTS];
-
-#[cfg(not(feature = "o3ds"))]
-pub struct JpegSharedMutCell {
-    pub cell: *mut JpegSharedMut,
-}
 
 #[cfg(not(feature = "o3ds"))]
 impl<'a> JpegWorker<'a> {
@@ -128,9 +125,9 @@ impl Encoder {
             },
             jpeg_shared: &self.jpeg_shared,
             #[cfg(not(feature = "o3ds"))]
-            jpeg_shared_mut: JpegSharedMutCell {
-                cell: &mut self.jpeg_shared_mut,
-            },
+            jpeg_shared_mut: unsafe { &mut self.encoder_shared_mut.jpeg as *mut _ } as *mut _,
+            #[cfg(not(feature = "o3ds"))]
+            shared_mut: &mut self.common_shared_mut,
             last_dc_vals: const_default(),
         }
     }

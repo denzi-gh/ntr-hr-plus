@@ -104,7 +104,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     )?;
                 }
 
-                let shared_mut = &mut *self.worker.jpeg_shared_mut.cell;
+                let shared_mut = &mut *self.worker.jpeg_shared_mut;
 
                 let prev = if is_top {
                     shared_mut.dq_prev_coeffs_top.as_mut_ptr()
@@ -331,7 +331,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let ret = Some(if self.worker.data.shared.delta_prog {
             JpegEncodeRet::JpegDqRet(JpegDqRet {
                 delta_q: unsafe {
-                    let shared_mut = &mut *self.worker.jpeg_shared_mut.cell;
+                    let shared_mut = &mut *self.worker.jpeg_shared_mut;
                     let delta_q = *shared_mut.work_delta_q.get(&w);
 
                     let c = shared_mut.work_sem_count.get_mut(&w);
@@ -424,7 +424,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             if self.worker.data.shared.delta_prog {
                 let s = is_top_index(self.worker.data.info.is_top);
                 let w = self.worker.data.info.work_index;
-                let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
+                let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut };
 
                 if row_i == 0 && mcu_col_num == 0 {
                     if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
@@ -459,7 +459,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
                         self.compute_dq(prev);
                         unsafe {
-                            shared_mut
+                            (*self.worker.shared_mut)
                                 .compressed_size
                                 .get(&s)
                                 .get_unchecked(self.worker.data.info.even_odd as usize)

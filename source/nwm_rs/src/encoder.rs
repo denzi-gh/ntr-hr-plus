@@ -100,12 +100,8 @@ pub struct JpegShared {
     pub screen_sem: RangedArray<Handle, SCREEN_COUNT>,
 }
 
-#[cfg(feature = "o3ds")]
-pub struct JpegSharedMut();
-
 #[cfg(not(feature = "o3ds"))]
 pub struct JpegSharedMut {
-    pub compressed_size: RangedArray<[AtomicU32; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
     pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
     pub work_sem_count: RangedArray<AtomicU8, WORK_COUNT>,
     pub screen_bool: RangedArray<AtomicBool, SCREEN_COUNT>,
@@ -119,7 +115,6 @@ pub struct JpegSharedMut {
     pub delta_q_calc: [[DeltaQManager; DOWNSAMPLE_FACTOR]; SCREEN_COUNT as usize],
     pub dq_prev_coeffs_top: [JCoef; DELTA_Q_PREV_COEFFS_TOP_N],
     pub dq_prev_coeffs_bot: [JCoef; DELTA_Q_PREV_COEFFS_BOT_N],
-    pub rand32: Rand32,
 }
 
 pub struct LosslessShared {
@@ -147,9 +142,23 @@ pub struct EncoderShared {
     pub encode_tbls: EncodeTbls,
 }
 
+#[cfg(not(feature = "o3ds"))]
+pub union EncoderSharedMut {
+    pub jpeg: mem::ManuallyDrop<JpegSharedMut>,
+}
+
+#[cfg(not(feature = "o3ds"))]
+pub struct CommonSharedMut {
+    pub rand32: Rand32,
+    pub compressed_size: RangedArray<[AtomicU32; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
+}
+
 pub struct Encoder {
     pub jpeg_shared: JpegShared,
-    pub jpeg_shared_mut: JpegSharedMut,
+    #[cfg(not(feature = "o3ds"))]
+    pub encoder_shared_mut: EncoderSharedMut,
+    #[cfg(not(feature = "o3ds"))]
+    pub common_shared_mut: CommonSharedMut,
     pub lossless_shared: LosslessShared,
     pub shared: EncoderShared,
     pub bufs: [WorkerBufs; RP_CORE_COUNT_MAX as usize],

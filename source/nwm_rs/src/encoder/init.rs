@@ -3,18 +3,14 @@
 
 use super::*;
 
+#[cfg(not(feature = "o3ds"))]
 impl JpegSharedMut {
-    fn once(&mut self) {
-        #[cfg(not(feature = "o3ds"))]
-        {
-            self.rand32 = Rand32::new(get_system_tick().get() as u64);
-        }
-    }
-
-    #[cfg(not(feature = "o3ds"))]
     fn init(&mut self, delta_prog: bool, params: [(usize, f32); RP_SCREEN_COUNT as usize]) {
+        unsafe {
+            ptr::write_bytes(self as *mut _ as *mut u8, 0, mem::size_of_val(self));
+        }
+
         if delta_prog {
-            self.compressed_size = const_default();
             for s in ScreenIndex::all() {
                 for i in 0..DOWNSAMPLE_FACTOR {
                     (*self.delta_q.get_mut(&s))[i] = DELTA_Q_COUNT - 1;
@@ -361,6 +357,19 @@ impl JpegShared {
     }
 }
 
+#[cfg(not(feature = "o3ds"))]
+impl CommonSharedMut {
+    pub fn once(&mut self) {
+        self.rand32 = Rand32::new(get_system_tick().get() as u64);
+    }
+
+    pub fn init(&mut self, delta_prog: bool) {
+        if delta_prog {
+            self.compressed_size = const_default();
+        }
+    }
+}
+
 impl Encoder {
     pub unsafe fn once(&mut self) {
         unsafe {
@@ -368,7 +377,8 @@ impl Encoder {
         }
         self.shared.encode_tbls = EncodeTbls::once();
         self.jpeg_shared.once();
-        self.jpeg_shared_mut.once();
+        #[cfg(not(feature = "o3ds"))]
+        self.common_shared_mut.once();
     }
 
     #[named]
@@ -394,14 +404,19 @@ impl Encoder {
             core_count,
         );
 
+        #[cfg(not(feature = "o3ds"))]
+        self.common_shared_mut.init(delta_prog);
+
         let shared_mut_params = self.jpeg_shared.init(quality, hq, &mut self.shared);
         #[cfg(feature = "o3ds")]
         {
             let _ = shared_mut_params;
         };
         #[cfg(not(feature = "o3ds"))]
-        {
-            self.jpeg_shared_mut.init(delta_prog, shared_mut_params);
+        if entries::thread_nwm::get_lossless_compression() {
+        } else {
+            let shared_mut = unsafe { &mut self.encoder_shared_mut.jpeg };
+            shared_mut.init(delta_prog, shared_mut_params);
 
             for w in WorkIndex::all() {
                 let sem = self.jpeg_shared.work_sem.get_mut(&w);
@@ -417,11 +432,11 @@ impl Encoder {
                     ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
                     return None;
                 }
-                self.jpeg_shared_mut
+                shared_mut
                     .work_inited
                     .get_mut(&w)
                     .store(false, Ordering::Release);
-                self.jpeg_shared_mut
+                shared_mut
                     .work_sem_count
                     .get_mut(&w)
                     .store(core_count.get() as u8, Ordering::Release);
@@ -441,24 +456,24 @@ impl Encoder {
                     return None;
                 }
 
-                self.jpeg_shared_mut
+                shared_mut
                     .screen_bool
                     .get_mut(&s)
                     .store(false, Ordering::Release);
-                *self.jpeg_shared_mut.last_restart_interval.get_mut(&s) = 0;
+                *shared_mut.last_restart_interval.get_mut(&s) = 0;
             }
 
             unsafe {
                 ptr::write_bytes(
-                    self.jpeg_shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
+                    shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
                     0,
-                    self.jpeg_shared_mut.dq_prev_coeffs_top.len(),
+                    shared_mut.dq_prev_coeffs_top.len(),
                 );
 
                 ptr::write_bytes(
-                    self.jpeg_shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
+                    shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
                     0,
-                    self.jpeg_shared_mut.dq_prev_coeffs_bot.len(),
+                    shared_mut.dq_prev_coeffs_bot.len(),
                 );
             }
         }

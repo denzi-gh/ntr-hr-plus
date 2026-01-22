@@ -24,7 +24,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
 
         #[cfg(not(feature = "o3ds"))]
-        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut.cell };
+        let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut };
 
         #[cfg(not(feature = "o3ds"))]
         let cache = shared_mut.delta_q_cache.get_mut(&w);
