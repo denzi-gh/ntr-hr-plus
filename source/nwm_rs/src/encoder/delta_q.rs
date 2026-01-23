@@ -301,7 +301,19 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         let mcusi = 1f32 / mcus;
         // let mcusi_1 = 1f32 / mcus_1;
-        let qos_adj = jpeg_screen.qos_adj;
+        let qos_adj = {
+            const QOS_ADJ_B: f32 = u8::BITS as f32;
+            const QOS_MIN_F: f32 = 1f32;
+            const QOS_MAX_L_F: f32 = 0.8f32;
+            const QOS_MAX_H_F: f32 = 0.64f32;
+            QOS_ADJ_B * QOS_MIN_F
+                + ((QOS_MAX_L_F
+                    + (QOS_MAX_H_F - QOS_MAX_L_F) * current_qos * (1f32 / RP_QOS_MAX as f32)
+                    - QOS_MIN_F)
+                    * QOS_ADJ_B
+                    * prev_delta_q as f32
+                    * (1f32 / (DELTA_Q_COUNT - 1) as f32))
+        };
         let qos_b = current_qos * frame_rate_f * qos_adj;
 
         let comp_size = unsafe {

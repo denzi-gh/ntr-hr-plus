@@ -119,23 +119,6 @@ impl JpegShared {
                     .divisors
                     .set_divisors(&screen.quant_tbls, &mut screen.div_shifts);
             }
-
-            #[cfg(not(feature = "o3ds"))]
-            if delta_prog {
-                const QOS_ADJ_B: f32 = u8::BITS as f32;
-                const QOS_MIN_F: f32 = 1f32;
-                const QOS_MAX_L_F: f32 = 0.8f32;
-                const QOS_MAX_H_F: f32 = 0.64f32;
-                screen.qos_adj = QOS_ADJ_B * QOS_MIN_F
-                    + ((QOS_MAX_L_F
-                        + (QOS_MAX_H_F - QOS_MAX_L_F)
-                            * entries::thread_nwm::rp_delta_q_qos() as f32
-                            * (1f32 / RP_QOS_MAX as f32)
-                        - QOS_MIN_F)
-                        * QOS_ADJ_B
-                        * quality as f32
-                        * (1f32 / RP_QUALITY_MAX as f32));
-            }
         }
 
         #[cfg(not(feature = "o3ds"))]

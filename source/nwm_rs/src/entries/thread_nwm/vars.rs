@@ -181,6 +181,12 @@ static mut MAX_QOS: u32 = const_default();
 static mut CURRENT_QOS: AtomicU32 = const_default();
 
 #[cfg(not(feature = "o3ds"))]
+#[allow(unused)]
+pub fn rp_rel_stream_max_qos() -> u32 {
+    unsafe { MAX_QOS }
+}
+
+#[cfg(not(feature = "o3ds"))]
 pub fn rp_delta_q_qos() -> u32 {
     unsafe { CURRENT_QOS.load(Ordering::Acquire) }
 }

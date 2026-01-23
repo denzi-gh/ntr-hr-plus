@@ -79,8 +79,6 @@ pub struct JpegScreenShared {
     quant_tbls: QuantTbls,
     divisors: Divisors,
     div_shifts: [[u8; DCTSIZE2]; NUM_QUANT_TBLS],
-    #[cfg(not(feature = "o3ds"))]
-    qos_adj: f32,
 }
 
 #[cfg(feature = "o3ds")]
