@@ -363,7 +363,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 }
             };
 
-            let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [4f32];
+            let rr: [f32; RP_DELTA_Q_COEFS_COUNT as usize] = [2f32];
             for i in 0..(if need_ov_stats {
                 RP_DELTA_Q_COEFS_COUNT as usize
             } else {
@@ -405,7 +405,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let qd_2 = nd * q_steps_i;
 
             // clamp small values, but not too small for the powf in next step
-            const QD2_THRES: f32 = 4f32;
+            const QD2_THRES: f32 = 6.4f32;
             const QD2_MUL: f32 = 1.25f32;
             let qd_2 = (if qd_2 < 0f32 {
                 (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
@@ -423,15 +423,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             // scaled so smaller values are even less significant,
             // then give extra boost to the predicted value (likely wrong, TODO maybe)
-            let qd1 = scale_qd(qd_1, 1.25f32, 1.25f32, 1f32, 1f32);
-            let qd2 = scale_qd(qd_2, 1.25f32, 1.25f32, 2f32, 2f32);
+            const P: f32 = core::f32::consts::SQRT_2;
+            let qd1 = scale_qd(qd_1, P, P, 1f32, 1f32);
+            let qd2 = scale_qd(qd_2, P, P, 2f32, 2f32);
 
             let qd = qd1 + qd2;
-            qc.q = qc.q * 0.75f32 + qd * 0.5f32;
+            qc.q = qc.q * 0.5f32 + qd * 0.5f32;
             if qc.q > 0f32 && qd < 0f32 || qc.q < 0f32 && qd > 0f32 {
                 qc.q = 0f32;
             } else {
-                let q_thres = current_qos * (1.5f32 / RP_QOS_MAX as f32);
+                let q_thres = current_qos * (1f32 / RP_QOS_MAX as f32);
                 if qc.q.abs() >= q_thres {
                     let q = (prev_delta_q as i32 + unsafe { roundf(qd) } as i32).clamp(0, qr as i32)
                         as u8;

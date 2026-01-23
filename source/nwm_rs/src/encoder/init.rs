@@ -123,9 +123,9 @@ impl JpegShared {
             #[cfg(not(feature = "o3ds"))]
             if delta_prog {
                 const QOS_ADJ_B: f32 = u8::BITS as f32;
-                const QOS_MIN_F: f32 = 0.625f32;
-                const QOS_MAX_L_F: f32 = 0.875f32;
-                const QOS_MAX_H_F: f32 = 0.75f32;
+                const QOS_MIN_F: f32 = 1f32;
+                const QOS_MAX_L_F: f32 = 0.8f32;
+                const QOS_MAX_H_F: f32 = 0.64f32;
                 screen.qos_adj = QOS_ADJ_B * QOS_MIN_F
                     + ((QOS_MAX_L_F
                         + (QOS_MAX_H_F - QOS_MAX_L_F)
