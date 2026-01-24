@@ -12,8 +12,5 @@
         "-Wno-reserved-user-defined-literal",
         "-Wno-c2x-extensions",
     ],
-    "rust-analyzer.cargo.features": [
-        "o3ds",
-        "mem3",
-    ],
+    "rust-analyzer.cargo.features": [],
 }

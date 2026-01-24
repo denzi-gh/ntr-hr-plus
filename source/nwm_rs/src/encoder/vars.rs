@@ -588,24 +588,7 @@ pub struct EntropyTbls {
     pub ac_derived_tbls: [DerivedTbl; NUM_HUFF_TBLS],
 }
 
-const fn set_derived_tbl(
-    tbl: &mut DerivedTbl,
-    is_dc: bool,
-    tblno: usize,
-    huff_tbls: &HuffTbls,
-    is_dq: bool,
-) {
-    /* Note that huffsize[] and huffcode[] are filled in code-length order,
-     * paralleling the order of the symbols themselves in htbl->huffval[].
-     */
-
-    /* Find the input Huffman table */
-    let htbl = if is_dc {
-        &huff_tbls.dc_huff_tbls[tblno]
-    } else {
-        &huff_tbls.ac_huff_tbls[tblno]
-    };
-
+const fn do_set_derived_tbl(tbl: &mut DerivedTbl, htbl: &HuffTbl, maxsymbol: u8) {
     /* Figure C.1: make table of Huffman code length for each symbol */
 
     let mut p: usize = 0;
@@ -670,11 +653,6 @@ const fn set_derived_tbl(
      * lossy mode and 0..16 for DC in lossless mode.  (We could constrain them
      * further based on data depth and mode, but this seems enough.)
      */
-    let maxsymbol = if is_dc {
-        if is_dq { 16 } else { 15 }
-    } else {
-        255
-    };
 
     let mut p = 0;
     loop {
@@ -689,6 +667,35 @@ const fn set_derived_tbl(
             break;
         }
     }
+}
+
+const fn set_derived_tbl(
+    tbl: &mut DerivedTbl,
+    is_dc: bool,
+    tblno: usize,
+    huff_tbls: &HuffTbls,
+    is_dq: bool,
+) {
+    /* Note that huffsize[] and huffcode[] are filled in code-length order,
+     * paralleling the order of the symbols themselves in htbl->huffval[].
+     */
+
+    /* Find the input Huffman table */
+    let htbl = if is_dc {
+        &huff_tbls.dc_huff_tbls[tblno]
+    } else {
+        &huff_tbls.ac_huff_tbls[tblno]
+    };
+
+    do_set_derived_tbl(
+        tbl,
+        htbl,
+        if is_dc {
+            if is_dq { 16 } else { 15 }
+        } else {
+            255
+        },
+    );
 }
 
 impl EntropyTbls {
@@ -934,6 +941,10 @@ pub struct EncodeTbls {
     pub dq_huff_tbls: HuffTbls,
     #[cfg(not(feature = "o3ds"))]
     pub dq_entropy_tbls: EntropyTbls,
+    #[cfg(not(feature = "o3ds"))]
+    pub lossless_huff_tbl: HuffTbl,
+    #[cfg(not(feature = "o3ds"))]
+    pub lossless_entropy_tbl: DerivedTbl,
     pub color_conv_tbls: ColorConvTabs,
     pub comp_infos_420: CompInfos,
     pub comp_infos_422: CompInfos,
@@ -950,6 +961,19 @@ impl EncodeTbls {
         #[cfg(not(feature = "o3ds"))]
         tbls.dq_entropy_tbls
             .set_entropy_tbls(&tbls.dq_huff_tbls, true);
+        #[cfg(not(feature = "o3ds"))]
+        {
+            let mut freq: [u16; 257] = const_default();
+            freq.fill(0);
+            for i in 0..=128 {
+                let i_pos = (128 + i) as u8;
+                let i_neg = (128 + i) as u8;
+                freq[i_pos as usize] = (128 + 1 - i) as u16;
+                freq[i_neg as usize] = (128 + 1 - i) as u16;
+            }
+            gen_optimal_table(&mut tbls.lossless_huff_tbl, &mut freq);
+            do_set_derived_tbl(&mut tbls.lossless_entropy_tbl, &tbls.lossless_huff_tbl, 255);
+        }
         tbls.color_conv_tbls.once();
         tbls.comp_infos_420.set_color_space_ycb_cr_420();
         tbls.comp_infos_422.set_color_space_ycb_cr_422();

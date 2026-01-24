@@ -714,10 +714,16 @@ unsafe fn send_term_dsts(w: WorkIndex, ret: &EncodeRet) -> bool {
     let downsample = unsafe { *is_top_index(info.is_top).index_into(&ENCODE_DOWNSAMPLE) } as u8;
     let (lossless, delta_prog, quality) =
         if let EncodeRet::LosslessRet(encoder::LosslessEncodeRet::LosslessRet(ret)) = ret {
+            let delta_prog = entries::thread_nwm::get_reliable_stream_delta_prog();
             (
                 true,
-                entries::thread_nwm::get_reliable_stream_delta_prog(),
-                ret.color_bias as u16,
+                delta_prog,
+                ret.color_bias as u16
+                    | if delta_prog {
+                        1 << (RP_KCP_HDR_QUALITY_NBITS - 1)
+                    } else {
+                        0
+                    },
             )
         } else if let EncodeRet::JpegRet(encoder::JpegEncodeRet::JpegDqRet(dq_ret)) = ret {
             (false, true, dq_ret.delta_q as u16)
