@@ -783,7 +783,11 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     #[cfg(not(feature = "o3ds"))]
-    fn do_compressed_encode<const HSS: bool, const VSS: bool>(&mut self, i: usize) {
+    fn do_compressed_encode<const HSS: bool, const VSS: bool>(
+        &mut self,
+        buf: *mut EncodeBuffer<0>,
+        i: usize,
+    ) {
         unsafe {
             let is_top = self.worker.data.info.is_top;
             let s = is_top_index(is_top);
@@ -828,14 +832,6 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 _ => panic!(),
             };
 
-            let mut localbuf: [u8; 0] = const_default();
-            let mut buf = EncodeBuffer::init(
-                &mut self.worker.data.bit_enc_state,
-                &mut self.dst,
-                &mut localbuf,
-                true,
-            );
-
             let etbl = &self.worker.data.shared.encode_tbls.lossless_entropy_tbl;
 
             for c in CompIndex::all() {
@@ -878,13 +874,12 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                                 (ptr::null(), ptr::null())
                             };
                             let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, 8 - bb_c);
-                            buf.put_bits(etbl.ehufco[in_c as usize], etbl.ehufsi[in_c as usize]);
+                            (*(buf as *mut EncodeBuffer<0>))
+                                .put_bits(etbl.ehufco[in_c as usize], etbl.ehufsi[in_c as usize]);
                         }
                     }
                 }
             }
-
-            buf.store();
         }
     }
 
@@ -913,7 +908,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     #[cfg(not(feature = "o3ds"))]
-    pub fn compressed_encode(&mut self, i: usize) {
+    pub fn compressed_encode(&mut self, buf: *mut EncodeBuffer<0>, i: usize) {
         let is_top = self.worker.data.info.is_top;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.data.shared.screens);
@@ -921,12 +916,12 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         let vss = screen.max_v_samp_factor == SAMP_FACTOR;
         if hss {
             if vss {
-                self.do_compressed_encode::<true, true>(i);
+                self.do_compressed_encode::<true, true>(buf, i);
             } else {
-                self.do_compressed_encode::<true, false>(i);
+                self.do_compressed_encode::<true, false>(buf, i);
             }
         } else {
-            self.do_compressed_encode::<false, false>(i);
+            self.do_compressed_encode::<false, false>(buf, i);
         }
     }
 }

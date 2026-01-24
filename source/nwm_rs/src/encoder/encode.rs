@@ -575,32 +575,45 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
 
         self.worker.data.bit_enc_state.reset();
 
-        let mut process = |f: usize, proc: fn(*mut WorkerCommon<'a>, _, _) -> ()| {
-            let n = height / f;
-            #[allow(unused)]
-            for i in 0..n {
-                self.process(
-                    i,
-                    |this| {
-                        /* Pre-process */
-                        proc(
-                            &mut this.worker.data,
-                            ptr::from_mut(&mut src_iter),
-                            if rel_stream { i % 2 } else { 0 },
-                        );
-                        #[cfg(not(feature = "o3ds"))]
-                        if i == j_max_half_factor(n) {
-                            pre_progress();
-                        }
-                        true
-                    },
-                    || {},
-                );
-            }
+        let mut localbuf: [u8; 0] = const_default();
+        let mut buf = unsafe {
+            EncodeBuffer::init(
+                &mut *(&mut self.worker.data.bit_enc_state as *mut _),
+                &mut *(&mut self.dst as *mut _),
+                &mut localbuf,
+                true,
+            )
         };
+        let b = &mut buf as *mut _;
 
-        let mut novsamp_nosamp = || {
-            process(1, |f, i, #[allow(unused)] n| unsafe {
+        let mut process =
+            |buf: *mut EncodeBuffer<0>, f: usize, proc: fn(*mut WorkerCommon<'a>, _, _) -> ()| {
+                let n = height / f;
+                #[allow(unused)]
+                for i in 0..n {
+                    self.process(
+                        buf,
+                        i,
+                        |this| {
+                            /* Pre-process */
+                            proc(
+                                &mut this.worker.data,
+                                ptr::from_mut(&mut src_iter),
+                                if rel_stream { i % 2 } else { 0 },
+                            );
+                            #[cfg(not(feature = "o3ds"))]
+                            if i == j_max_half_factor(n) {
+                                pre_progress();
+                            }
+                            true
+                        },
+                        || {},
+                    );
+                }
+            };
+
+        let mut novsamp_nosamp = |b: *mut EncodeBuffer<0>| {
+            process(b, 1, |f, i, #[allow(unused)] n| unsafe {
                 (&mut *f).lossless_pre_process_nohsamp_novsamp(&mut *i)
             });
         };
@@ -609,22 +622,22 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             RP_DOWNSAMPLE_QUARTER => {
                 if vss {
                     // vss == true
-                    process(SAMP_FACTOR * DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
+                    process(b, SAMP_FACTOR * DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
                         (&mut *f).pre_process_quarter::<1>(&mut *i, n)
                     });
                 } else {
                     // vss == false
                     if hss {
-                        process(DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
+                        process(b, DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
                             (&mut *f).pre_process_quarter_novsamp::<1>(&mut *i, n)
                         });
                     } else {
                         if rel_stream {
-                            process(DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
+                            process(b, DOWNSAMPLE_FACTOR, |f, i, n| unsafe {
                                 (&mut *f).pre_process_quarter_nohsamp_novsamp::<1>(&mut *i, n)
                             });
                         } else {
-                            process(DOWNSAMPLE_FACTOR, |f, i, #[allow(unused)] n| unsafe {
+                            process(b, DOWNSAMPLE_FACTOR, |f, i, #[allow(unused)] n| unsafe {
                                 (&mut *f).lossless_pre_process_quarter_nohsamp_novsamp::<1>(&mut *i)
                             });
                         }
@@ -634,23 +647,23 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             RP_DOWNSAMPLE_EVEN_ODD => {
                 if vss {
                     // vss == true
-                    process(SAMP_FACTOR, |f, i, n| unsafe {
+                    process(b, SAMP_FACTOR, |f, i, n| unsafe {
                         (&mut *f).pre_process_even_odd::<1>(&mut *i, n)
                     });
                 } else {
                     // vss == false
                     if hss {
-                        process(1, |f, i, n| unsafe {
+                        process(b, 1, |f, i, n| unsafe {
                             (&mut *f).pre_process_even_odd_novsamp::<1, true>(&mut *i, n)
                         });
                     } else {
                         // hss == false
                         if rel_stream {
-                            process(1, |f, i, n| unsafe {
+                            process(b, 1, |f, i, n| unsafe {
                                 (&mut *f).pre_process_even_odd_novsamp::<1, false>(&mut *i, n)
                             });
                         } else {
-                            novsamp_nosamp();
+                            novsamp_nosamp(b);
                         }
                     }
                 }
@@ -658,28 +671,30 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             _ => {
                 if vss {
                     // vss == true
-                    process(SAMP_FACTOR, |f, i, n| unsafe {
+                    process(b, SAMP_FACTOR, |f, i, n| unsafe {
                         (&mut *f).pre_process_full::<1>(&mut *i, n)
                     });
                 } else {
                     // vss == false
                     if hss {
-                        process(1, |f, i, n| unsafe {
+                        process(b, 1, |f, i, n| unsafe {
                             (&mut *f).pre_process_full_novsamp::<1, true>(&mut *i, n)
                         });
                     } else {
                         // hss == false
                         if rel_stream {
-                            process(1, |f, i, n| unsafe {
+                            process(b, 1, |f, i, n| unsafe {
                                 (&mut *f).pre_process_full_novsamp::<1, false>(&mut *i, n)
                             });
                         } else {
-                            novsamp_nosamp();
+                            novsamp_nosamp(b);
                         }
                     }
                 }
             }
         }
+
+        buf.store();
 
         self.worker.data.bit_enc_state.flush(&mut self.dst, true);
 
@@ -696,8 +711,13 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }))
     }
 
-    fn process<F, G>(&mut self, i: usize, do_pre_process: F, do_progress: G)
-    where
+    fn process<F, G>(
+        &mut self,
+        buf: *mut EncodeBuffer<0>,
+        i: usize,
+        do_pre_process: F,
+        do_progress: G,
+    ) where
         F: FnOnce(&mut Self) -> bool,
         G: FnOnce(),
     {
@@ -706,14 +726,18 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
 
         /* Compress and encode */
-        self.do_process(i);
+        self.do_process(buf, i);
 
         do_progress();
     }
 
     #[named]
     #[allow(unused_macros)]
-    fn do_process(&mut self, #[allow(unused)] i: usize) {
+    fn do_process(
+        &mut self,
+        #[allow(unused)] buf: *mut EncodeBuffer<0>,
+        #[allow(unused)] i: usize,
+    ) {
         unsafe {
             #[cfg(not(feature = "o3ds"))]
             if self.worker.data.shared.rel_stream {
@@ -721,7 +745,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                     return;
                 }
 
-                self.compressed_encode(i);
+                self.compressed_encode(buf, i);
                 return;
             }
 
