@@ -57,20 +57,17 @@ type EncodeRet = ();
 impl<'a, 'b> JpegEncode<'a, 'b> {
     #[named]
     #[allow(unused_macros)]
-    #[inline(never)]
     pub fn encode<F, G>(
         &mut self,
         #[cfg(not(feature = "mem3"))] src: &[u8],
         #[cfg(feature = "mem3")] src: *const u8,
         #[cfg(feature = "mem3")] pitch: u32,
         #[cfg(not(feature = "o3ds"))] mut pre_progress: F,
-        #[cfg(feature = "mem3")]
-        #[allow(unused)]
         mut progress: G,
     ) -> Option<EncodeRet>
     where
         F: FnMut(),
-        G: FnMut(),
+        G: FnMut(usize),
     {
         #[cfg(not(feature = "mem3"))]
         let bpp = get_bpp_for_format(self.worker.data.info.color_space);
@@ -195,8 +192,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
         if !checker {
             let mut process_rem = |f: usize, proc: fn(*mut WorkerCommon<'a>, _) -> ()| {
-                let n = height / (DCTSIZE * f);
-                let rem = height % (DCTSIZE * f);
+                let f = DCTSIZE * f;
+                let n = height / f;
+                let rem = height % f;
                 #[allow(unused)]
                 for i in 0..n {
                     self.process(
@@ -215,6 +213,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                         },
                         || {},
                     );
+                    progress(f);
                 }
                 (rem, n)
             };
@@ -255,6 +254,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                                 },
                                 || {},
                             );
+                            progress(rem);
                         }
                     } else {
                         // vss == false
@@ -523,20 +523,17 @@ pub struct LosslessEncode<'a, 'b> {
 impl<'a, 'b> LosslessEncode<'a, 'b> {
     #[named]
     #[allow(unused_macros)]
-    #[inline(never)]
     pub fn lossless_encode<F, G>(
         &mut self,
         #[cfg(not(feature = "mem3"))] src: &[u8],
         #[cfg(feature = "mem3")] src: *const u8,
         #[cfg(feature = "mem3")] pitch: u32,
         #[cfg(not(feature = "o3ds"))] mut pre_progress: F,
-        #[cfg(feature = "mem3")]
-        #[allow(unused)]
         mut progress: G,
     ) -> Option<LosslessEncodeRet>
     where
         F: FnMut(),
-        G: FnMut(),
+        G: FnMut(usize),
     {
         #[cfg(not(feature = "mem3"))]
         let bpp = get_bpp_for_format(self.worker.data.info.color_space);
@@ -609,6 +606,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                         },
                         || {},
                     );
+                    progress(f);
                 }
             };
 

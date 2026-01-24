@@ -49,6 +49,14 @@ pub unsafe fn init(
 ) {
     unsafe {
         LAST_ROW_LAST_N.store(0, Ordering::Release);
+        LAST_ROW_LAST_W.store(
+            {
+                let mut w = WorkIndex::init(0);
+                w.prev_wrapped();
+                w.get()
+            },
+            Ordering::Relaxed,
+        );
         LAST_ENCODED_SCREEN = ScreenIndex::init(0);
         LAST_SCREEN_LAST_ROW = 0;
 
@@ -85,6 +93,7 @@ static mut FRAME_TIMES: RangedArray<AtomicU32, SCREEN_COUNT> = const_default();
 static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
 static mut LAST_SCREEN_LAST_ROW: u32 = const_default();
 static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
+static mut LAST_ROW_LAST_W: AtomicU32 = const_default();
 
 #[cfg(not(feature = "o3ds"))]
 pub fn get_frame_time(s: ScreenIndex) -> &'static mut AtomicU32 {
@@ -392,6 +401,9 @@ impl WorkFrame {
         let bctx = self.0.0.bctx_mut();
 
         let w = self.0.0.w;
+        let mut w_prev = w;
+        w_prev.prev_wrapped();
+        let w_prev = w_prev;
         let last_s = unsafe { &mut LAST_ENCODED_SCREEN };
         let is_top = bctx.is_top;
         let curr_s = is_top_index(is_top);
@@ -436,18 +448,16 @@ impl WorkFrame {
         let mut curr = l.load(Ordering::Acquire);
         let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count_all > 1 {
             let next = loop {
-                let next = if self.0.0.t == thread_index_last {
-                    if curr < last_row_last_n_range {
-                        curr + 1
+                let next = if self.0.0.t == thread_index_last
+                    || unsafe { LAST_ROW_LAST_W.load(Ordering::Relaxed) == w_prev.get() }
+                {
+                    if curr < last_row_last_n_range - core_count_other {
+                        curr + core_count_other
                     } else {
-                        curr
+                        last_row_last_n_range
                     }
                 } else {
-                    if curr > core_count_other {
-                        curr - core_count_other
-                    } else {
-                        curr
-                    }
+                    if curr > 0 { curr - 1 } else { 0 }
                 };
                 match l.compare_exchange_weak(curr, next, Ordering::AcqRel, Ordering::Acquire) {
                     Ok(_) => break next,
@@ -475,12 +485,8 @@ impl WorkFrame {
             } else {
                 *last_rows_last
             };
-            let rows = unsafe {
-                core::intrinsics::unchecked_div(
-                    mcu_rows - rows_last + core_count_other - 1,
-                    core_count_other,
-                )
-            };
+            let rows =
+                unsafe { core::intrinsics::unchecked_div(mcu_rows - rows_last, core_count_other) };
 
             if update_rows_last {
                 let rows_last = mcu_rows - rows * core_count_other;
@@ -1012,8 +1018,7 @@ impl WorkAcquire {
             capture_screen(&mut bctx.should_capture);
         };
 
-        #[cfg(feature = "mem3")]
-        let progress = || {};
+        let progress = |_| {};
 
         #[cfg(not(feature = "o3ds"))]
         let s = is_top_index(bctx.is_top);
@@ -1061,7 +1066,6 @@ impl WorkAcquire {
                 bctx.pitch,
                 #[cfg(not(feature = "o3ds"))]
                 pre_progress,
-                #[cfg(feature = "mem3")]
                 progress,
             )?;
             EncodeRet::LosslessRet(lossless_ret)
@@ -1074,7 +1078,6 @@ impl WorkAcquire {
                 bctx.pitch,
                 #[cfg(not(feature = "o3ds"))]
                 pre_progress,
-                #[cfg(feature = "mem3")]
                 progress,
             )?;
             #[cfg(feature = "o3ds")]
@@ -1089,6 +1092,13 @@ impl WorkAcquire {
                 EncodeRet::JpegRet
             }
         };
+
+        let t_last = thread_index_last(core_count_in_use());
+        if t == t_last {
+            unsafe {
+                LAST_ROW_LAST_W.store(w.get(), Ordering::Relaxed);
+            }
+        }
 
         if reset_threads() {
             return None;

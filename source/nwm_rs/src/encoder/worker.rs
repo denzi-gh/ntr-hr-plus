@@ -56,23 +56,28 @@ pub type LastDcVals = [s16; MAX_COMPONENTS];
 
 #[cfg(not(feature = "o3ds"))]
 impl<'a> JpegWorker<'a> {
-    pub fn encode<F>(
+    pub fn encode<F, G>(
         &'a mut self,
         dst: WorkerDst,
         src: &[u8],
         pre_progress: F,
+        progress: G,
     ) -> Option<JpegEncodeRet>
     where
         F: FnMut(),
+        G: FnMut(usize),
     {
-        JpegEncode { worker: self, dst }.encode::<_, F>(src, pre_progress)
+        JpegEncode { worker: self, dst }.encode(src, pre_progress, progress)
     }
 }
 
 #[cfg(all(feature = "o3ds", not(feature = "mem3")))]
 impl<'a> JpegWorker<'a> {
-    pub fn encode(&'a mut self, dst: WorkerDst, src: &[u8]) -> Option<()> {
-        JpegEncode { worker: self, dst }.encode::<fn() -> (), fn() -> ()>(src)
+    pub fn encode<G>(&'a mut self, dst: WorkerDst, src: &[u8], progress: G) -> Option<()>
+    where
+        G: FnMut(usize),
+    {
+        JpegEncode { worker: self, dst }.encode::<fn() -> (), _>(src, progress)
     }
 }
 
@@ -86,9 +91,9 @@ impl<'a> JpegWorker<'a> {
         progress: G,
     ) -> Option<()>
     where
-        G: FnMut(),
+        G: FnMut(usize),
     {
-        JpegEncode { worker: self, dst }.encode::<G, _>(src, pitch, progress)
+        JpegEncode { worker: self, dst }.encode::<fn() -> (), _>(src, pitch, progress)
     }
 }
 
@@ -197,21 +202,31 @@ pub struct LosslessWorker<'a> {
 
 impl<'a> LosslessWorker<'a> {
     #[cfg(not(feature = "o3ds"))]
-    pub fn encode_lossless<F>(
+    pub fn encode_lossless<F, G>(
         &'a mut self,
         dst: WorkerDst,
         src: &[u8],
         pre_progress: F,
+        progress: G,
     ) -> Option<LosslessEncodeRet>
     where
         F: FnMut(),
+        G: FnMut(usize),
     {
-        LosslessEncode { worker: self, dst }.lossless_encode::<_, F>(src, pre_progress)
+        LosslessEncode { worker: self, dst }.lossless_encode(src, pre_progress, progress)
     }
 
     #[cfg(all(feature = "o3ds", not(feature = "mem3")))]
-    pub fn encode_lossless(&'a mut self, dst: WorkerDst, src: &[u8]) -> Option<LosslessEncodeRet> {
-        LosslessEncode { worker: self, dst }.lossless_encode::<fn() -> (), fn() -> ()>(src)
+    pub fn encode_lossless<G>(
+        &'a mut self,
+        dst: WorkerDst,
+        src: &[u8],
+        progress: G,
+    ) -> Option<LosslessEncodeRet>
+    where
+        G: FnMut(usize),
+    {
+        LosslessEncode { worker: self, dst }.lossless_encode::<fn() -> (), _>(src, progress)
     }
 
     #[cfg(all(feature = "o3ds", feature = "mem3"))]
@@ -223,8 +238,8 @@ impl<'a> LosslessWorker<'a> {
         progress: G,
     ) -> Option<LosslessEncodeRet>
     where
-        G: FnMut(),
+        G: FnMut(usize),
     {
-        LosslessEncode { worker: self, dst }.lossless_encode::<G, _>(src, pitch, progress)
+        LosslessEncode { worker: self, dst }.lossless_encode::<fn() -> (), _>(src, pitch, progress)
     }
 }
