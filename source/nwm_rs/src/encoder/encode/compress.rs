@@ -850,13 +850,13 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                             let ix = ix + bx;
 
                             let in_c_c = in_c.add(iy * width_c + ix);
-                            let in_t_c = if iy > 0 {
-                                in_c.sub(width_c)
+                            let in_t_c = if by > 0 {
+                                in_c_c.sub(width_c)
                             } else if i > 0 {
                                 if i % 2 == 0 {
-                                    in_c.add(width_c * bh_c)
+                                    in_c_c.add(width_c * (bh_c * 2 - 1))
                                 } else {
-                                    in_c.sub(width_c * bh_c)
+                                    in_c_c.sub(width_c)
                                 }
                             } else {
                                 ptr::null()
