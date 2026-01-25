@@ -57,8 +57,6 @@ pub unsafe fn init(
             },
             Ordering::Relaxed,
         );
-        LAST_ENCODED_SCREEN = ScreenIndex::init(0);
-        LAST_SCREEN_LAST_ROW = 0;
 
         for i in ScreenIndex::all() {
             *CURRENT_FRAME_IDS.get_mut(&i) = 0;
@@ -90,8 +88,6 @@ static mut CURRENT_FRAME_IDS: RangedArray<u8, SCREEN_COUNT> = const_default();
 static mut LAST_FRAME_TIMINGS: RangedArray<u32, SCREEN_COUNT> = const_default();
 #[cfg(not(feature = "o3ds"))]
 static mut FRAME_TIMES: RangedArray<AtomicU32, SCREEN_COUNT> = const_default();
-static mut LAST_ENCODED_SCREEN: ScreenIndex = const_default();
-static mut LAST_SCREEN_LAST_ROW: u32 = const_default();
 static mut LAST_ROW_LAST_N: AtomicU32 = const_default();
 static mut LAST_ROW_LAST_W: AtomicU32 = const_default();
 
@@ -404,7 +400,6 @@ impl WorkFrame {
         let mut w_prev = w;
         w_prev.prev_wrapped();
         let w_prev = w_prev;
-        let last_s = unsafe { &mut LAST_ENCODED_SCREEN };
         let is_top = bctx.is_top;
         let curr_s = is_top_index(is_top);
 
@@ -443,59 +438,37 @@ impl WorkFrame {
         let n_last = mcu_rows - mcu_rows_per_thread * core_count_other;
 
         let last_row_last_n_range = unsafe { (*encoder::ENCODER).shared.last_restart_range };
-        const LAST_ROW_LAST_N_F: u32 = 4;
 
         let mut curr = l.load(Ordering::Acquire);
         let (v_adjusted, v_last_adjusted) = if curr > 0 && core_count_all > 1 {
+            let t_last = unsafe { LAST_ROW_LAST_W.load(Ordering::Acquire) == w_prev.get() };
             let next = loop {
-                let next = if self.0.0.t == thread_index_last
-                    || unsafe { LAST_ROW_LAST_W.load(Ordering::Relaxed) == w_prev.get() }
-                {
+                let next = if t_last {
                     if curr < last_row_last_n_range - core_count_other {
                         curr + core_count_other
                     } else {
                         last_row_last_n_range
                     }
                 } else {
-                    if curr > 0 { curr - 1 } else { 0 }
+                    if curr > 1 { curr - 1 } else { 1 }
                 };
                 match l.compare_exchange_weak(curr, next, Ordering::AcqRel, Ordering::Acquire) {
                     Ok(_) => break next,
                     Err(temp) => curr = temp,
                 }
             };
-            let last_rows_last = unsafe { &mut LAST_SCREEN_LAST_ROW };
-            let update_rows_last = *last_rows_last == 0
-                || (next as i32 - *last_rows_last as i32).abs() as u32
-                    >= unsafe {
-                        core::intrinsics::unchecked_div(last_row_last_n_range, LAST_ROW_LAST_N_F)
-                    }
-                || *last_s != curr_s;
 
-            let rows_last = if update_rows_last {
-                cmp::max(
-                    unsafe {
-                        core::intrinsics::unchecked_div(
-                            n_last * next + last_row_last_n_range / 2,
-                            last_row_last_n_range,
-                        )
-                    },
-                    1,
+            let rows_last = unsafe {
+                core::intrinsics::unchecked_div(
+                    n_last * next + last_row_last_n_range - 1,
+                    last_row_last_n_range,
                 )
-            } else {
-                *last_rows_last
             };
             let rows =
                 unsafe { core::intrinsics::unchecked_div(mcu_rows - rows_last, core_count_other) };
 
-            if update_rows_last {
-                let rows_last = mcu_rows - rows * core_count_other;
-                *last_rows_last = rows_last;
-                *last_s = curr_s;
-                (rows, rows_last)
-            } else {
-                (rows, rows_last)
-            }
+            let rows_last = mcu_rows - rows * core_count_other;
+            (rows, rows_last)
         } else {
             l.store(last_row_last_n_range, Ordering::Release);
             (n, n_last)
@@ -1096,7 +1069,7 @@ impl WorkAcquire {
         let t_last = thread_index_last(core_count_in_use());
         if t == t_last {
             unsafe {
-                LAST_ROW_LAST_W.store(w.get(), Ordering::Relaxed);
+                LAST_ROW_LAST_W.store(w.get(), Ordering::Release);
             }
         }
 
