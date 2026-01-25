@@ -967,9 +967,10 @@ impl EncodeTbls {
             freq.fill(0);
             for i in 0..=128 {
                 let i_pos = (128 + i) as u8;
-                let i_neg = (128 + i) as u8;
-                freq[i_pos as usize] = (128 + 1 - i) as u16;
-                freq[i_neg as usize] = (128 + 1 - i) as u16;
+                let i_neg = (128 - i) as u8;
+                let count = (128 + 1 - i) as u16;
+                freq[i_pos as usize] = count;
+                freq[i_neg as usize] = count;
             }
             gen_optimal_table(&mut tbls.lossless_huff_tbl, &mut freq);
             do_set_derived_tbl(&mut tbls.lossless_entropy_tbl, &tbls.lossless_huff_tbl, 255);
