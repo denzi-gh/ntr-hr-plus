@@ -140,13 +140,13 @@ impl HuffTbls {
 
     #[cfg(not(feature = "o3ds"))]
     pub fn once_dq(&mut self) {
-        let mut freq: [u16; 257] = const_default();
+        let mut freq: [usize; 257] = const_default();
 
         {
             freq.fill(0);
             let dc_lum_freq = &mut freq;
             for i in 0..=12 {
-                dc_lum_freq[i] = (12 + 1 - i) as u16;
+                dc_lum_freq[i] = 12 + 1 - i;
             }
             gen_optimal_table(&mut self.dc_huff_tbls[0], dc_lum_freq);
         }
@@ -154,19 +154,19 @@ impl HuffTbls {
             freq.fill(0);
             let dc_chrom_freq = &mut freq;
             for i in 0..=12 {
-                dc_chrom_freq[i] = (12 + 1 - i) as u16;
+                dc_chrom_freq[i] = 12 + 1 - i;
             }
             gen_optimal_table(&mut self.dc_huff_tbls[1], dc_chrom_freq);
         }
-        let fill_ac_freq = |freq: &mut [u16; 257], base: &[u8]| {
+        let fill_ac_freq = |freq: &mut [usize; 257], base: &[u8]| {
             let dq_freq = (0x0b..(0xfb + 1)).step_by(0x10);
             let count = base.len() + dq_freq.len();
             for (i, v) in base.iter().enumerate() {
-                freq[*v as usize] = (count - i) as u16;
+                freq[*v as usize] = count - i;
             }
             let count = count - base.len();
             for (i, v) in dq_freq.enumerate() {
-                freq[v as usize] = (count - i) as u16;
+                freq[v as usize] = count - i;
             }
         };
         {
@@ -963,12 +963,16 @@ impl EncodeTbls {
             .set_entropy_tbls(&tbls.dq_huff_tbls, true);
         #[cfg(not(feature = "o3ds"))]
         {
-            let mut freq: [u16; 257] = const_default();
+            let mut freq: [usize; 257] = const_default();
             freq.fill(0);
             for i in 0..=128 {
                 let i_pos = (128 + i) as u8;
                 let i_neg = (128 - i) as u8;
-                let count = (128 + 1 - i) as u16;
+                let count = if i < 24 {
+                    unsafe { (powf(1.5f32, (24 - i) as f32) * 2f32) as usize }
+                } else {
+                    2
+                };
                 freq[i_pos as usize] = count;
                 freq[i_neg as usize] = count;
             }
@@ -990,7 +994,7 @@ pub const JPEG_NATURAL_ORDER: [u8; DCTSIZE2] = [
 ];
 
 #[cfg(not(feature = "o3ds"))]
-pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
+pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [usize; 257]) {
     #![allow(unused_assignments)]
 
     const MAX_C_LEN: usize = 32; /* assumed maximum initial code length */
@@ -1003,7 +1007,7 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
     let (mut c1, mut c2): (isize, isize) = const_default();
     let (mut p, mut i, mut j): (isize, isize, isize) = const_default();
     let mut num_nz_symbols: isize = const_default();
-    let (mut v, mut v2): (isize, isize) = const_default();
+    let (mut v, mut v2): (usize, usize) = const_default();
 
     /* This algorithm is explained in section K.2 of the JPEG standard */
 
@@ -1039,17 +1043,17 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
          */
         c1 = -1;
         c2 = -1;
-        v = 30000isize;
-        v2 = 30000isize;
+        v = 1000000000;
+        v2 = 1000000000;
         for i in 0..num_nz_symbols {
-            if freq[i as usize] <= v2 as u16 {
-                if freq[i as usize] <= v as u16 {
+            if freq[i as usize] <= v2 {
+                if freq[i as usize] <= v {
                     c2 = c1;
                     v2 = v;
-                    v = freq[i as usize] as isize;
+                    v = freq[i as usize];
                     c1 = i;
                 } else {
-                    v2 = freq[i as usize] as isize;
+                    v2 = freq[i as usize];
                     c2 = i;
                 }
             }
@@ -1065,7 +1069,7 @@ pub fn gen_optimal_table(tbl: &mut HuffTbl, freq: &mut [u16; 257]) {
         /* Set the frequency to a very high value instead of zero, so we don't have
          * to check for zero values.
          */
-        freq[c2 as usize] = 30001u16;
+        freq[c2 as usize] = 1000000001;
 
         /* Increment the codesize of everything in c1's tree branch */
         codesize[c1 as usize] += 1;
