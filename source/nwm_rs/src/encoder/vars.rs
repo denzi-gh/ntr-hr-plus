@@ -986,6 +986,7 @@ impl EncodeTbls {
             .set_entropy_tbls(&tbls.dq_huff_tbls, true);
         #[cfg(not(feature = "o3ds"))]
         {
+            const P: f32 = core::f32::consts::SQRT_2;
             let mut freq: [usize; 257] = const_default();
             let mut set_tbl = |bits| {
                 freq.fill(0);
@@ -994,11 +995,11 @@ impl EncodeTbls {
                     let i_pos = 128 + i;
                     let i_neg = 128 - i;
                     let count = (if i < 24 {
-                        unsafe { powf(1.5f32, (24 - i) as f32) * 2f32 }
+                        unsafe { powf(P, (24 - i) as f32) * 2f32 }
                     } else {
                         2f32
                     } * if i == 0 {
-                        unsafe { powf(1.5f32, (8 - bits + 1) as f32) }
+                        unsafe { powf(P, (8 - bits + 1) as f32) }
                     } else {
                         1f32
                     }) as usize;
