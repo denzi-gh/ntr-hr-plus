@@ -933,6 +933,29 @@ pub const M_RST0: u8 = 0xd0;
  * fake entries.
  */
 
+#[cfg(not(feature = "o3ds"))]
+pub enum LosslessTblName {
+    Tbl8,
+    Tbl6,
+    Tbl5,
+    Tbl4,
+    TblCount,
+}
+
+#[cfg(not(feature = "o3ds"))]
+pub const LOSSLESS_TBL_COUNT: usize = LosslessTblName::TblCount as usize;
+
+#[cfg(not(feature = "o3ds"))]
+pub const fn lossless_tbl_name_from_bits(bits: u8) -> LosslessTblName {
+    match bits {
+        8 => LosslessTblName::Tbl8,
+        6 => LosslessTblName::Tbl6,
+        5 => LosslessTblName::Tbl5,
+        4 => LosslessTblName::Tbl4,
+        _ => panic!(),
+    }
+}
+
 #[derive(ConstDefault)]
 pub struct EncodeTbls {
     pub huff_tbls: HuffTbls,
@@ -942,9 +965,9 @@ pub struct EncodeTbls {
     #[cfg(not(feature = "o3ds"))]
     pub dq_entropy_tbls: EntropyTbls,
     #[cfg(not(feature = "o3ds"))]
-    pub lossless_huff_tbl: HuffTbl,
+    pub lossless_huff_tbl: [HuffTbl; LOSSLESS_TBL_COUNT],
     #[cfg(not(feature = "o3ds"))]
-    pub lossless_entropy_tbl: DerivedTbl,
+    pub lossless_entropy_tbl: [DerivedTbl; LOSSLESS_TBL_COUNT],
     pub color_conv_tbls: ColorConvTabs,
     pub comp_infos_420: CompInfos,
     pub comp_infos_422: CompInfos,
@@ -964,20 +987,40 @@ impl EncodeTbls {
         #[cfg(not(feature = "o3ds"))]
         {
             let mut freq: [usize; 257] = const_default();
-            freq.fill(0);
-            for i in 0..=128 {
-                let i_pos = (128 + i) as u8;
-                let i_neg = (128 - i) as u8;
-                let count = if i < 24 {
-                    unsafe { (powf(1.5f32, (24 - i) as f32) * 2f32) as usize }
-                } else {
-                    2
-                };
-                freq[i_pos as usize] = count;
-                freq[i_neg as usize] = count;
+            let mut set_tbl = |bits| {
+                freq.fill(0);
+                let end = 1 << (bits as usize - 1);
+                for i in 0..=end {
+                    let i_pos = 128 + i;
+                    let i_neg = 128 - i;
+                    let count = (if i < 24 {
+                        unsafe { powf(1.5f32, (24 - i) as f32) * 2f32 }
+                    } else {
+                        2f32
+                    } * if i == 0 {
+                        unsafe { powf(1.5f32, (8 - bits + 1) as f32) }
+                    } else {
+                        1f32
+                    }) as usize;
+                    freq[i_pos] = count;
+                    freq[i_neg] = count;
+                }
+                freq[128 + end] = 0;
+
+                let name = lossless_tbl_name_from_bits(bits) as usize;
+                gen_optimal_table(&mut tbls.lossless_huff_tbl[name], &mut freq);
+                do_set_derived_tbl(
+                    &mut tbls.lossless_entropy_tbl[name],
+                    &tbls.lossless_huff_tbl[name],
+                    255,
+                );
+            };
+
+            let bits = [8, 6, 5, 4];
+
+            for bits in bits {
+                set_tbl(bits);
             }
-            gen_optimal_table(&mut tbls.lossless_huff_tbl, &mut freq);
-            do_set_derived_tbl(&mut tbls.lossless_entropy_tbl, &tbls.lossless_huff_tbl, 255);
         }
         tbls.color_conv_tbls.once();
         tbls.comp_infos_420.set_color_space_ycb_cr_420();

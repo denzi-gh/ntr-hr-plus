@@ -873,9 +873,12 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                             } else {
                                 (ptr::null(), ptr::null())
                             };
-                            let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, 8 - bb_c);
-                            (*(buf as *mut EncodeBuffer<0>))
-                                .put_bits(etbl.ehufco[in_c as usize], etbl.ehufsi[in_c as usize]);
+                            let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, bb_c);
+                            let name = lossless_tbl_name_from_bits(bb_c) as usize;
+                            (*(buf as *mut EncodeBuffer<0>)).put_bits(
+                                etbl.get_unchecked(name).ehufco[in_c as usize],
+                                etbl.get_unchecked(name).ehufsi[in_c as usize],
+                            );
                         }
                     }
                 }
@@ -891,19 +894,24 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     }
 
     #[cfg(not(feature = "o3ds"))]
-    fn pred_pixel(c: u8, t: *const u8, l: *const u8, tl: *const u8, s: u8) -> u8 {
+    fn pred_pixel(c: u8, t: *const u8, l: *const u8, tl: *const u8, b: u8) -> u8 {
         unsafe {
             let p = if t.is_null() {
-                if l.is_null() { 128 >> s } else { *l >> s }
+                if l.is_null() { 128 } else { *l }
             } else {
                 if l.is_null() {
-                    *t >> s
+                    *t
                 } else {
-                    Self::median_3(*t >> s, *l >> s, *tl >> s)
+                    Self::median_3(*t, *l, *tl)
                 }
             };
 
-            (c >> s) - p + 128
+            if b < 8 {
+                let s = 8 - b;
+                ((((c >> s) - (p >> s)) << s) as s8 >> s) as u8 + 128
+            } else {
+                c - p + 128
+            }
         }
     }
 
