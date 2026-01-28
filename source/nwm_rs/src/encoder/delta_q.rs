@@ -307,7 +307,14 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             const QOS_MAX_L_F: f32 = 0.8f32;
             const QOS_MAX_H_F: f32 = 0.64f32;
             QOS_ADJ_B * QOS_MIN_F
-                + (QOS_MAX_L_F + current_qos * ((QOS_MAX_H_F - QOS_MAX_L_F) / RP_QOS_MAX as f32)
+                + (QOS_MAX_L_F
+                    + (QOS_MAX_H_F - QOS_MAX_L_F)
+                        * unsafe {
+                            core::intrinsics::unchecked_div(
+                                current_qos,
+                                entries::thread_nwm::rp_rel_stream_max_qos() as f32,
+                            )
+                        }
                     - QOS_MIN_F)
                     * prev_delta_q as f32
                     * (QOS_ADJ_B / (DELTA_Q_COUNT - 1) as f32)
@@ -403,7 +410,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             ret + jpeg_screen.delta_q_params.m // todo
         };
 
-        {
+        let (qd_1, qd_2) = {
             let q_steps_i = jpeg_screen.delta_q_params.q_steps_i;
             let comp_d = if comp_size > 0f32 {
                 qos - comp_size
@@ -415,8 +422,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             let qd_2 = nd * q_steps_i;
 
             // clamp small values, but not too small for the powf in next step
-            const QD2_THRES: f32 = 6.4f32;
-            const QD2_MUL: f32 = 1.25f32;
+            const QD2_THRES_F: f32 = 8f32;
+            const QD2_THRES: f32 = SCALE_QD_F / QD2_THRES_F;
+            const QD2_MUL: f32 = QD2_THRES_F / (QD2_THRES_F - 1f32);
             let qd_2 = (if qd_2 < 0f32 {
                 (qd_2 + SCALE_QD_I_F * QD2_THRES).min(0f32)
             } else {
@@ -433,15 +441,16 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
             // scaled so smaller values are even less significant,
             // then give extra boost to the predicted value (likely wrong, TODO maybe)
-            const P: f32 = core::f32::consts::SQRT_2;
-            let qd1 = scale_qd(qd_1, P, P, 1f32, 1f32);
-            let qd2 = scale_qd(qd_2, P, P, 2f32, 2f32);
+            const P_1: f32 = core::f32::consts::SQRT_2;
+            const P_2: f32 = core::f32::consts::FRAC_1_SQRT_2;
+            let qd1 = scale_qd(qd_1, P_1, P_1, 1f32, 1f32);
+            let qd2 = scale_qd(qd_2, P_2, P_2, 1f32, 1f32);
 
             let qd = qd1 + qd2;
             qc.q = qc.q * 0.5f32 + qd * 0.5f32;
             if qc.q > 0f32 && qd < 0f32 || qc.q < 0f32 && qd > 0f32 {
                 qc.q = 0f32;
-            } else {
+            } else if qd.abs() > 0.5f32 {
                 let q_thres = current_qos * (1f32 / RP_QOS_MAX as f32);
                 if qc.q.abs() >= q_thres {
                     let q = (prev_delta_q as i32 + unsafe { roundf(qd) } as i32).clamp(0, qr as i32)
@@ -452,7 +461,9 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     qc.q = 0f32;
                 }
             }
-        }
+
+            (qd1, qd2)
+        };
 
         qc.qb = qos_b;
         qc.qc = qos_c;
@@ -464,8 +475,10 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             };
             ov_screen.comp_size = (comp_size * 1000f32) as s32;
             let ov_screen = &mut ov_screen.delta_q;
-            ov_screen.qb = (qos_b * 1000f32) as s32;
-            ov_screen.qc = (qos_c * 1000f32) as s32;
+            // ov_screen.qb = (qos_b * 1000f32) as s32;
+            // ov_screen.qc = (qos_c * 1000f32) as s32;
+            ov_screen.qb = (qd_1 * 1000f32) as s32;
+            ov_screen.qc = (qd_2 * 1000f32) as s32;
             ov_screen.nbits = (nbits * 1000f32) as s32;
             ov_screen.qd = qc.qd as u32;
             for i in 0..RP_DELTA_Q_COEFS_COUNT as usize {
