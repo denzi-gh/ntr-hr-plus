@@ -94,16 +94,10 @@ pub struct JpegShared {
     pub screens: [JpegScreenShared; RP_SCREEN_COUNT as usize],
     pub delta_q_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
     pub delta_q0_tbls: [[[u8; DCTSIZE2]; NUM_QUANT_TBLS]; DELTA_Q_COUNT as usize],
-    pub work_sem: RangedArray<Handle, WORK_COUNT>,
-    pub screen_sem: RangedArray<Handle, SCREEN_COUNT>,
 }
 
 #[cfg(not(feature = "o3ds"))]
 pub struct JpegSharedMut {
-    pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
-    pub work_sem_count: RangedArray<AtomicU8, WORK_COUNT>,
-    pub screen_bool: RangedArray<AtomicBool, SCREEN_COUNT>,
-    pub last_restart_interval: RangedArray<u16, SCREEN_COUNT>,
     pub delta_q: RangedArray<[u8; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
     pub work_delta_q: RangedArray<u8, WORK_COUNT>,
     pub dq_rescale_prev: RangedArray<s8, WORK_COUNT>,
@@ -138,17 +132,32 @@ pub struct EncoderShared {
     pub screens: [ScreenShared; RP_SCREEN_COUNT as usize],
     pub last_restart_range: u32,
     pub encode_tbls: EncodeTbls,
+    #[cfg(not(feature = "o3ds"))]
+    pub work_sem: RangedArray<Handle, WORK_COUNT>,
+    #[cfg(not(feature = "o3ds"))]
+    pub screen_sem: RangedArray<Handle, SCREEN_COUNT>,
+}
+
+#[cfg(not(feature = "o3ds"))]
+pub struct LosslessSharedMut {
+    pub _prev_coeffs_top: [JCoef; LOSSLESS_PREV_COEFFS_TOP_N],
+    pub _prev_coeffs_bot: [JCoef; LOSSLESS_PREV_COEFFS_BOT_N],
 }
 
 #[cfg(not(feature = "o3ds"))]
 pub union EncoderSharedMut {
     pub jpeg: mem::ManuallyDrop<JpegSharedMut>,
+    pub lossless: mem::ManuallyDrop<LosslessSharedMut>,
 }
 
 #[cfg(not(feature = "o3ds"))]
 pub struct CommonSharedMut {
     pub rand32: Rand32,
     pub compressed_size: RangedArray<[AtomicU32; DOWNSAMPLE_FACTOR], SCREEN_COUNT>,
+    pub work_inited: RangedArray<AtomicBool, WORK_COUNT>,
+    pub work_sem_count: RangedArray<AtomicU8, WORK_COUNT>,
+    pub screen_bool: RangedArray<AtomicBool, SCREEN_COUNT>,
+    pub last_restart_interval: RangedArray<u16, SCREEN_COUNT>,
 }
 
 pub struct Encoder {
@@ -169,3 +178,8 @@ const DELTA_Q_PREV_COEFFS_TOP_N: usize =
 #[cfg(not(feature = "o3ds"))]
 const DELTA_Q_PREV_COEFFS_BOT_N: usize =
     GSP_SCREEN_WIDTH as usize * GSP_SCREEN_HEIGHT_BOTTOM as usize * MAX_COMPONENTS;
+
+#[cfg(not(feature = "o3ds"))]
+const LOSSLESS_PREV_COEFFS_TOP_N: usize = DELTA_Q_PREV_COEFFS_TOP_N;
+#[cfg(not(feature = "o3ds"))]
+const LOSSLESS_PREV_COEFFS_BOT_N: usize = DELTA_Q_PREV_COEFFS_BOT_N;

@@ -37,18 +37,51 @@ impl JpegSharedMut {
 }
 
 impl EncoderShared {
+    #[named]
+    #[allow(unused_macros)]
     fn init(
         &mut self,
         downsample: [u32; RP_SCREEN_COUNT as usize],
         #[cfg(not(feature = "o3ds"))] rel_stream: bool,
         #[cfg(not(feature = "o3ds"))] delta_prog: bool,
         #[cfg(not(feature = "o3ds"))] core_count: CoreCount,
-    ) {
+    ) -> Option<()> {
         #[cfg(not(feature = "o3ds"))]
         {
             self.rel_stream = rel_stream;
             self.delta_prog = delta_prog;
             self.core_count = core_count;
+
+            for w in WorkIndex::all() {
+                let sem = self.work_sem.get_mut(&w);
+                if *sem > 0 {
+                    unsafe {
+                        let _ = svcCloseHandle(*sem);
+                    }
+                    *sem = 0;
+                }
+
+                let res = unsafe { svcCreateSemaphore(sem, 0, core_count.get() as i32 - 1) };
+                if res != 0 {
+                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
+                    return None;
+                }
+            }
+            for s in ScreenIndex::all() {
+                let sem = self.screen_sem.get_mut(&s);
+                if *sem > 0 {
+                    unsafe {
+                        let _ = svcCloseHandle(*sem);
+                    }
+                    *sem = 0;
+                }
+
+                let res = unsafe { svcCreateSemaphore(sem, 1, 1) };
+                if res != 0 {
+                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg screen_sem"), res);
+                    return None;
+                }
+            }
         }
         #[cfg(feature = "o3ds")]
         let delta_prog = false;
@@ -81,6 +114,8 @@ impl EncoderShared {
             screen.max_h_samp_factor = 1;
             screen.max_v_samp_factor = 1;
         }
+
+        Some(())
     }
 }
 
@@ -346,9 +381,20 @@ impl CommonSharedMut {
         self.rand32 = Rand32::new(get_system_tick().get() as u64);
     }
 
-    pub fn init(&mut self, delta_prog: bool) {
+    pub fn init(&mut self, delta_prog: bool, core_count: CoreCount) {
         if delta_prog {
             self.compressed_size = const_default();
+        }
+
+        for w in WorkIndex::all() {
+            self.work_inited.get_mut(&w).store(false, Ordering::Release);
+            self.work_sem_count
+                .get_mut(&w)
+                .store(core_count.get() as u8, Ordering::Release);
+        }
+        for s in ScreenIndex::all() {
+            self.screen_bool.get_mut(&s).store(false, Ordering::Release);
+            *self.last_restart_interval.get_mut(&s) = 0;
         }
     }
 }
@@ -385,10 +431,10 @@ impl Encoder {
             delta_prog,
             #[cfg(not(feature = "o3ds"))]
             core_count,
-        );
+        )?;
 
         #[cfg(not(feature = "o3ds"))]
-        self.common_shared_mut.init(delta_prog);
+        self.common_shared_mut.init(delta_prog, core_count);
 
         let shared_mut_params = self.jpeg_shared.init(quality, hq, &mut self.shared);
         #[cfg(feature = "o3ds")]
@@ -397,68 +443,17 @@ impl Encoder {
         };
         #[cfg(not(feature = "o3ds"))]
         if entries::thread_nwm::get_lossless_compression() {
+            let shared_mut = unsafe { &mut self.encoder_shared_mut.lossless };
+            unsafe {
+                ptr::write_bytes(
+                    shared_mut as *mut _ as *mut u8,
+                    0,
+                    mem::size_of_val(shared_mut),
+                );
+            }
         } else {
             let shared_mut = unsafe { &mut self.encoder_shared_mut.jpeg };
             shared_mut.init(delta_prog, shared_mut_params);
-
-            for w in WorkIndex::all() {
-                let sem = self.jpeg_shared.work_sem.get_mut(&w);
-                if *sem > 0 {
-                    unsafe {
-                        let _ = svcCloseHandle(*sem);
-                    }
-                    *sem = 0;
-                }
-
-                let res = unsafe { svcCreateSemaphore(sem, 0, core_count.get() as i32 - 1) };
-                if res != 0 {
-                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg work_sem"), res);
-                    return None;
-                }
-                shared_mut
-                    .work_inited
-                    .get_mut(&w)
-                    .store(false, Ordering::Release);
-                shared_mut
-                    .work_sem_count
-                    .get_mut(&w)
-                    .store(core_count.get() as u8, Ordering::Release);
-            }
-            for s in ScreenIndex::all() {
-                let sem = self.jpeg_shared.screen_sem.get_mut(&s);
-                if *sem > 0 {
-                    unsafe {
-                        let _ = svcCloseHandle(*sem);
-                    }
-                    *sem = 0;
-                }
-
-                let res = unsafe { svcCreateSemaphore(sem, 1, 1) };
-                if res != 0 {
-                    ns_dbg_print!(create_semaphore_failed, c_str!("jpeg screen_sem"), res);
-                    return None;
-                }
-
-                shared_mut
-                    .screen_bool
-                    .get_mut(&s)
-                    .store(false, Ordering::Release);
-                *shared_mut.last_restart_interval.get_mut(&s) = 0;
-            }
-
-            unsafe {
-                ptr::write_bytes(
-                    shared_mut.dq_prev_coeffs_top.as_mut_ptr(),
-                    0,
-                    shared_mut.dq_prev_coeffs_top.len(),
-                );
-
-                ptr::write_bytes(
-                    shared_mut.dq_prev_coeffs_bot.as_mut_ptr(),
-                    0,
-                    shared_mut.dq_prev_coeffs_bot.len(),
-                );
-            }
         }
 
         Some(())

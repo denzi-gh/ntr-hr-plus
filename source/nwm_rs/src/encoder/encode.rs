@@ -94,11 +94,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let prev = unsafe {
             if self.worker.data.shared.delta_prog {
                 if src.len() == 0 {
-                    wait_syn(
-                        cname!(),
-                        *self.worker.jpeg_shared.work_sem.get(&w),
-                        c_str!("work_sem"),
-                    )?;
+                    work_acquire(self.worker.data.shared, w)?;
                 }
 
                 let shared_mut = &mut *self.worker.jpeg_shared_mut;
@@ -331,34 +327,18 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let ret = Some(if self.worker.data.shared.delta_prog {
             JpegEncodeRet::JpegDqRet(JpegDqRet {
                 delta_q: unsafe {
-                    let shared_mut = &mut *self.worker.jpeg_shared_mut;
-                    let delta_q = *shared_mut.work_delta_q.get(&w);
+                    let jpeg_shared_mut = &mut *self.worker.jpeg_shared_mut;
+                    let delta_q = *jpeg_shared_mut.work_delta_q.get(&w);
+                    let shared_mut = &mut *self.worker.shared_mut;
+                    let shared = self.worker.data.shared;
+                    work_screen_release(
+                        shared_mut,
+                        shared,
+                        w,
+                        s,
+                        self.worker.data.shared.core_count,
+                    );
 
-                    let c = shared_mut.work_sem_count.get_mut(&w);
-
-                    if c.fetch_sub(1, Ordering::AcqRel) == 1 {
-                        c.store(
-                            self.worker.data.info.core_count.get() as u8,
-                            Ordering::Release,
-                        );
-                        shared_mut
-                            .work_inited
-                            .get_mut(&w)
-                            .store(false, Ordering::Release);
-
-                        if rp_need_core_syn!() {
-                            let b = shared_mut.screen_bool.get_mut(&s);
-                            if b.swap(true, Ordering::AcqRel) {
-                                b.store(false, Ordering::Release);
-                            } else {
-                                release_sem(
-                                    cname!(),
-                                    *self.worker.jpeg_shared.screen_sem.get(&s),
-                                    c_str!("screen_sem"),
-                                );
-                            }
-                        }
-                    }
                     delta_q
                 },
             })
@@ -424,71 +404,35 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             if self.worker.data.shared.delta_prog {
                 let s = is_top_index(self.worker.data.info.is_top);
                 let w = self.worker.data.info.work_index;
-                let shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut };
+                let jpeg_shared_mut = unsafe { &mut *self.worker.jpeg_shared_mut };
+                let shared_mut = unsafe { &mut *self.worker.shared_mut };
+                let shared = self.worker.data.shared;
 
                 if row_i == 0 && mcu_col_num == 0 {
-                    if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
-                        let last_restart_interval = shared_mut.last_restart_interval.get_mut(&s);
-
-                        if rp_need_core_syn!() {
-                            let b = shared_mut.screen_bool.get(&s);
-                            let need_sync =
-                                self.worker.data.info.restart_interval != *last_restart_interval;
-
-                            let need_sync = if !need_sync {
-                                b.swap(true, Ordering::AcqRel)
-                            } else {
-                                need_sync
+                    if !screen_acquire(
+                        shared_mut,
+                        shared,
+                        w,
+                        s,
+                        self.worker.data.info.core_count,
+                        self.worker.data.info.restart_interval,
+                        || {
+                            self.compute_dq(prev);
+                            unsafe {
+                                (*self.worker.shared_mut)
+                                    .compressed_size
+                                    .get(&s)
+                                    .get_unchecked(self.worker.data.info.even_odd as usize)
+                                    .store(0, Ordering::Release)
                             };
-
-                            if need_sync {
-                                if wait_syn(
-                                    cname!(),
-                                    *self.worker.jpeg_shared.screen_sem.get(&s),
-                                    c_str!("screen_sem"),
-                                )
-                                .is_none()
-                                {
-                                    return;
-                                }
-
-                                b.store(false, Ordering::Release);
-                                *last_restart_interval = self.worker.data.info.restart_interval;
-                            }
-                        }
-
-                        self.compute_dq(prev);
-                        unsafe {
-                            (*self.worker.shared_mut)
-                                .compressed_size
-                                .get(&s)
-                                .get_unchecked(self.worker.data.info.even_odd as usize)
-                                .store(0, Ordering::Release)
-                        };
-                        delta_cache = true;
-
-                        unsafe {
-                            release_sem_count(
-                                cname!(),
-                                *self.worker.jpeg_shared.work_sem.get(&w),
-                                c_str!("work_sem"),
-                                self.worker.data.info.core_count.get() as s32 - 1,
-                            );
-                        }
-                    } else {
-                        if wait_syn(
-                            cname!(),
-                            *self.worker.jpeg_shared.work_sem.get(&w),
-                            c_str!("work_sem"),
-                        )
-                        .is_none()
-                        {
-                            return;
-                        }
+                            delta_cache = true;
+                        },
+                    ) {
+                        return;
                     }
                 }
 
-                let dq_rescale_prev = *shared_mut.dq_rescale_prev.get(&w);
+                let dq_rescale_prev = *jpeg_shared_mut.dq_rescale_prev.get(&w);
                 let prev = unsafe { prev.add(mcu_col_num * screen.max_blocks_in_mcu) };
 
                 if dq_rescale_prev > 0 {
@@ -508,6 +452,95 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
             self.encode_mcu();
         }
     }
+}
+
+#[cfg(not(feature = "o3ds"))]
+#[named]
+fn work_screen_release(
+    shared_mut: &mut CommonSharedMut,
+    shared: &EncoderShared,
+    w: WorkIndex,
+    s: ScreenIndex,
+    core_count: CoreCount,
+) {
+    let c = shared_mut.work_sem_count.get_mut(&w);
+
+    if c.fetch_sub(1, Ordering::AcqRel) == 1 {
+        c.store(core_count.get() as u8, Ordering::Release);
+        shared_mut
+            .work_inited
+            .get_mut(&w)
+            .store(false, Ordering::Release);
+
+        if rp_need_core_syn!() {
+            let b = shared_mut.screen_bool.get_mut(&s);
+            if b.swap(true, Ordering::AcqRel) {
+                b.store(false, Ordering::Release);
+            } else {
+                unsafe { release_sem(cname!(), *shared.screen_sem.get(&s), c_str!("screen_sem")) };
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "o3ds"))]
+#[named]
+fn screen_acquire(
+    shared_mut: &mut CommonSharedMut,
+    shared: &EncoderShared,
+    w: WorkIndex,
+    s: ScreenIndex,
+    core_count: CoreCount,
+    restart_interval: u16,
+    f: impl FnOnce() -> (),
+) -> bool {
+    if !shared_mut.work_inited.get(&w).swap(true, Ordering::AcqRel) {
+        let last_restart_interval = shared_mut.last_restart_interval.get_mut(&s);
+
+        if rp_need_core_syn!() {
+            let b = shared_mut.screen_bool.get(&s);
+            let need_sync = restart_interval != *last_restart_interval;
+
+            let need_sync = if !need_sync {
+                b.swap(true, Ordering::AcqRel)
+            } else {
+                need_sync
+            };
+
+            if need_sync {
+                if wait_syn(cname!(), *shared.screen_sem.get(&s), c_str!("screen_sem")).is_none() {
+                    return false;
+                }
+
+                b.store(false, Ordering::Release);
+                *last_restart_interval = restart_interval;
+            }
+        }
+
+        f();
+
+        unsafe {
+            release_sem_count(
+                cname!(),
+                *shared.work_sem.get(&w),
+                c_str!("work_sem"),
+                core_count.get() as s32 - 1,
+            );
+        }
+    } else {
+        if wait_syn(cname!(), *shared.work_sem.get(&w), c_str!("work_sem")).is_none() {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[cfg(not(feature = "o3ds"))]
+#[named]
+fn work_acquire(shared: &EncoderShared, w: WorkIndex) -> Option<()> {
+    wait_syn(cname!(), *shared.work_sem.get(&w), c_str!("work_sem"))?;
+    Some(())
 }
 
 #[cfg(not(feature = "o3ds"))]
