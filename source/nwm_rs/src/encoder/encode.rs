@@ -94,7 +94,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
         let prev = unsafe {
             if self.worker.data.shared.delta_prog {
                 if src.len() == 0 {
-                    work_acquire(self.worker.data.shared, w)?;
+                    empty_work_acquire(self.worker.data.shared, w)?;
                 }
 
                 let shared_mut = &mut *self.worker.jpeg_shared_mut;
@@ -331,7 +331,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                     let delta_q = *jpeg_shared_mut.work_delta_q.get(&w);
                     let shared_mut = &mut *self.worker.shared_mut;
                     let shared = self.worker.data.shared;
-                    work_screen_release(
+                    screen_work_release(
                         shared_mut,
                         shared,
                         w,
@@ -409,7 +409,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
                 let shared = self.worker.data.shared;
 
                 if row_i == 0 && mcu_col_num == 0 {
-                    if !screen_acquire(
+                    if !screen_work_acquire(
                         shared_mut,
                         shared,
                         w,
@@ -456,7 +456,7 @@ impl<'a, 'b> JpegEncode<'a, 'b> {
 
 #[cfg(not(feature = "o3ds"))]
 #[named]
-fn work_screen_release(
+fn screen_work_release(
     shared_mut: &mut CommonSharedMut,
     shared: &EncoderShared,
     w: WorkIndex,
@@ -485,7 +485,7 @@ fn work_screen_release(
 
 #[cfg(not(feature = "o3ds"))]
 #[named]
-fn screen_acquire(
+fn screen_work_acquire(
     shared_mut: &mut CommonSharedMut,
     shared: &EncoderShared,
     w: WorkIndex,
@@ -538,7 +538,7 @@ fn screen_acquire(
 
 #[cfg(not(feature = "o3ds"))]
 #[named]
-fn work_acquire(shared: &EncoderShared, w: WorkIndex) -> Option<()> {
+fn empty_work_acquire(shared: &EncoderShared, w: WorkIndex) -> Option<()> {
     wait_syn(cname!(), *shared.work_sem.get(&w), c_str!("work_sem"))?;
     Some(())
 }
@@ -571,6 +571,8 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         #[cfg(not(feature = "mem3"))]
         let bpp = get_bpp_for_format(self.worker.data.info.color_space);
         let is_top = self.worker.data.info.is_top;
+        #[cfg(not(feature = "o3ds"))]
+        let w = self.worker.data.info.work_index;
         let s = is_top_index(is_top);
         let screen = s.index_into(&self.worker.data.shared.screens);
         #[cfg(not(feature = "mem3"))]
@@ -616,13 +618,58 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         };
         let b = &mut buf as *mut _;
 
+        #[cfg(not(feature = "o3ds"))]
+        let prev = unsafe {
+            if self.worker.data.shared.delta_prog {
+                if src.len() == 0 {
+                    empty_work_acquire(self.worker.data.shared, w)?;
+                }
+
+                let shared_mut = &mut *self.worker.lossless_shared_mut;
+
+                let prev = if is_top {
+                    shared_mut.prev_coeffs_top.as_mut_ptr()
+                } else {
+                    shared_mut.prev_coeffs_bot.as_mut_ptr()
+                };
+
+                let prev = match screen.downsample {
+                    RP_DOWNSAMPLE_CHECKER | RP_DOWNSAMPLE_EVEN_ODD => {
+                        let count = (if is_top {
+                            shared_mut.prev_coeffs_top.len()
+                        } else {
+                            shared_mut.prev_coeffs_bot.len()
+                        }) / 2;
+                        prev.add(count * self.worker.data.info.even_odd as usize)
+                    }
+                    RP_DOWNSAMPLE_QUARTER | _ => prev,
+                };
+
+                prev.add(
+                    self.worker.data.info.restart_interval as usize
+                        * LOSSLESS_BLOCK_SIZE
+                        * downsample_screen_width(screen.downsample)
+                        * MAX_COMPONENTS
+                        * self.worker.data.thread_index.get() as usize,
+                )
+            } else {
+                ptr::null_mut()
+            }
+        };
+
         let mut process =
             |buf: *mut EncodeBuffer<0>, f: usize, proc: fn(*mut WorkerCommon<'a>, _, _) -> ()| {
                 let n = height / f;
+                #[cfg(not(feature = "o3ds"))]
+                let p_step = f * downsample_screen_width(screen.downsample) * MAX_COMPONENTS;
                 #[allow(unused)]
                 for i in 0..n {
                     self.process(
                         buf,
+                        #[cfg(not(feature = "o3ds"))]
+                        unsafe {
+                            prev.add(i * p_step)
+                        },
                         i,
                         |this| {
                             /* Pre-process */
@@ -736,6 +783,13 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         #[cfg(not(feature = "o3ds"))]
         let bias = get_color_bias_from_format(bias, self.worker.data.info.color_space);
 
+        #[cfg(not(feature = "o3ds"))]
+        if self.worker.data.shared.delta_prog {
+            let shared_mut = unsafe { &mut *self.worker.shared_mut };
+            let shared = self.worker.data.shared;
+            screen_work_release(shared_mut, shared, w, s, self.worker.data.shared.core_count);
+        }
+
         Some(LosslessEncodeRet::LosslessRet(LosslessRet {
             #[cfg(not(feature = "o3ds"))]
             color_bias: bias,
@@ -745,6 +799,7 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     fn process<F, G>(
         &mut self,
         buf: *mut EncodeBuffer<0>,
+        #[cfg(not(feature = "o3ds"))] prev: *mut u8,
         i: usize,
         do_pre_process: F,
         do_progress: G,
@@ -757,6 +812,10 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
         }
 
         /* Compress and encode */
+        #[cfg(not(feature = "o3ds"))]
+        self.do_process(buf, prev, i);
+
+        #[cfg(feature = "o3ds")]
         self.do_process(buf, i);
 
         do_progress();
@@ -767,12 +826,31 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
     fn do_process(
         &mut self,
         #[allow(unused)] buf: *mut EncodeBuffer<0>,
+        #[cfg(not(feature = "o3ds"))] prev: *mut u8,
         #[allow(unused)] i: usize,
     ) {
         unsafe {
             #[cfg(not(feature = "o3ds"))]
             if self.worker.data.shared.rel_stream {
                 if self.worker.data.shared.delta_prog {
+                    let s = is_top_index(self.worker.data.info.is_top);
+                    let w = self.worker.data.info.work_index;
+                    let shared_mut = &mut *self.worker.shared_mut;
+                    let shared = self.worker.data.shared;
+                    if i == 0 {
+                        if !screen_work_acquire(
+                            shared_mut,
+                            shared,
+                            w,
+                            s,
+                            self.worker.data.info.core_count,
+                            self.worker.data.info.restart_interval,
+                            || {},
+                        ) {
+                            return;
+                        }
+                    }
+                    self.compressed_delta_encode(buf, prev, i);
                     return;
                 }
 

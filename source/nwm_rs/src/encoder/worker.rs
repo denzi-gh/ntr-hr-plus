@@ -180,6 +180,11 @@ impl Encoder {
                 bit_enc_state: const_default(),
             },
             lossless_shared: &self.lossless_shared,
+            #[cfg(not(feature = "o3ds"))]
+            shared_mut: &mut self.common_shared_mut,
+            #[cfg(not(feature = "o3ds"))]
+            lossless_shared_mut: unsafe { &mut self.encoder_shared_mut.lossless as *mut _ }
+                as *mut _,
         }
     }
 }
@@ -198,6 +203,10 @@ pub struct WorkerCommon<'a> {
 pub struct LosslessWorker<'a> {
     pub data: WorkerCommon<'a>,
     pub lossless_shared: &'a LosslessShared,
+    #[cfg(not(feature = "o3ds"))]
+    pub shared_mut: *mut CommonSharedMut,
+    #[cfg(not(feature = "o3ds"))]
+    pub lossless_shared_mut: *mut LosslessSharedMut,
 }
 
 impl<'a> LosslessWorker<'a> {

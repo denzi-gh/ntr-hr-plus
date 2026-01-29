@@ -140,8 +140,8 @@ pub struct EncoderShared {
 
 #[cfg(not(feature = "o3ds"))]
 pub struct LosslessSharedMut {
-    pub _prev_coeffs_top: [JCoef; LOSSLESS_PREV_COEFFS_TOP_N],
-    pub _prev_coeffs_bot: [JCoef; LOSSLESS_PREV_COEFFS_BOT_N],
+    pub prev_coeffs_top: [u8; LOSSLESS_PREV_COEFFS_TOP_N],
+    pub prev_coeffs_bot: [u8; LOSSLESS_PREV_COEFFS_BOT_N],
 }
 
 #[cfg(not(feature = "o3ds"))]

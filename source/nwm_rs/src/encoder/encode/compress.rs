@@ -844,42 +844,37 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
                 let iy = (i % 2) * bh_c as usize;
                 for by in 0..bh_c {
                     let iy = iy + by;
-                    for x in 0..if HSS { width / SAMP_FACTOR } else { width } {
-                        let ix = x * bw_c as usize;
-                        for bx in 0..bw_c {
-                            let ix = ix + bx;
-
-                            let in_c_c = in_c.add(iy * width_c + ix);
-                            let in_t_c = if by > 0 {
+                    for ix in 0..if HSS { width / SAMP_FACTOR } else { width } * bw_c {
+                        let in_c_c = in_c.add(iy * width_c + ix);
+                        let in_t_c = if by > 0 {
+                            in_c_c.sub(width_c)
+                        } else if i > 0 {
+                            if i % 2 == 0 {
+                                in_c_c.add(width_c * (bh_c * 2 - 1))
+                            } else {
                                 in_c_c.sub(width_c)
-                            } else if i > 0 {
-                                if i % 2 == 0 {
-                                    in_c_c.add(width_c * (bh_c * 2 - 1))
+                            }
+                        } else {
+                            ptr::null()
+                        };
+                        let (in_l_c, in_tl_c) = if ix > 0 {
+                            (
+                                in_c_c.sub(1),
+                                if !in_t_c.is_null() {
+                                    in_t_c.sub(1)
                                 } else {
-                                    in_c_c.sub(width_c)
-                                }
-                            } else {
-                                ptr::null()
-                            };
-                            let (in_l_c, in_tl_c) = if ix > 0 {
-                                (
-                                    in_c_c.sub(1),
-                                    if !in_t_c.is_null() {
-                                        in_t_c.sub(1)
-                                    } else {
-                                        ptr::null()
-                                    },
-                                )
-                            } else {
-                                (ptr::null(), ptr::null())
-                            };
-                            let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, bb_c);
-                            let name = lossless_tbl_name_from_bits(bb_c) as usize;
-                            (*(buf as *mut EncodeBuffer<0>)).put_bits(
-                                etbl.get_unchecked(name).ehufco[in_c as usize],
-                                etbl.get_unchecked(name).ehufsi[in_c as usize],
-                            );
-                        }
+                                    ptr::null()
+                                },
+                            )
+                        } else {
+                            (ptr::null(), ptr::null())
+                        };
+                        let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, bb_c);
+                        let name = lossless_tbl_name_from_bits(bb_c) as usize;
+                        (*(buf as *mut EncodeBuffer<0>)).put_bits(
+                            etbl.get_unchecked(name).ehufco[in_c as usize],
+                            etbl.get_unchecked(name).ehufsi[in_c as usize],
+                        );
                     }
                 }
             }
@@ -930,6 +925,169 @@ impl<'a, 'b> LosslessEncode<'a, 'b> {
             }
         } else {
             self.do_compressed_encode::<false, false>(buf, i);
+        }
+    }
+
+    #[cfg(not(feature = "o3ds"))]
+    pub fn compressed_delta_encode(&mut self, buf: *mut EncodeBuffer<0>, prev: *mut u8, i: usize) {
+        let is_top = self.worker.data.info.is_top;
+        let s = is_top_index(is_top);
+        let screen = s.index_into(&self.worker.data.shared.screens);
+        let hss = screen.max_h_samp_factor == SAMP_FACTOR;
+        let vss = screen.max_v_samp_factor == SAMP_FACTOR;
+        if hss {
+            if vss {
+                self.do_compressed_delta_encode::<true, true>(buf, prev, i);
+            } else {
+                self.do_compressed_delta_encode::<true, false>(buf, prev, i);
+            }
+        } else {
+            self.do_compressed_delta_encode::<false, false>(buf, prev, i);
+        }
+    }
+
+    #[cfg(not(feature = "o3ds"))]
+    fn do_compressed_delta_encode<const HSS: bool, const VSS: bool>(
+        &mut self,
+        buf: *mut EncodeBuffer<0>,
+        prev: *mut u8,
+        i: usize,
+    ) {
+        unsafe {
+            let is_top = self.worker.data.info.is_top;
+            let s = is_top_index(is_top);
+            let bias = *s.index_into(&self.worker.lossless_shared.color_bias);
+            let bias = get_color_bias_from_format(bias, self.worker.data.info.color_space);
+            let screen = s.index_into(&self.worker.data.shared.screens);
+            let input = &self.worker.data.bufs.prep;
+            let need_hss = |ci| {
+                HSS && if VSS {
+                    need_subsamp_ci::<true, true>(ci)
+                } else {
+                    need_subsamp_ci::<true, false>(ci)
+                }
+            };
+            let _h_samp = if HSS { SAMP_FACTOR } else { 1 };
+            let v_samp = if VSS { SAMP_FACTOR } else { 1 };
+            let i_x: [u32; 3] = core::array::from_fn(|i| i as u32);
+            let ci_x = i_x.map(|x| CompIndex::init(x));
+            let ci_hss_x = ci_x.map(|x| need_hss(x));
+            let width = downsample_screen_width(screen.downsample);
+            let width_x = ci_hss_x.map(|x| if x { width / SAMP_FACTOR } else { width });
+
+            let (bw_x, bh_x) = if HSS {
+                if VSS {
+                    ([SAMP_FACTOR, 1, 1], [SAMP_FACTOR, 1, 1])
+                } else {
+                    ([SAMP_FACTOR, 1, 1], [1, 1, 1])
+                }
+            } else {
+                ([1, 1, 1], [1, 1, 1])
+            };
+
+            let in_x = match screen.downsample {
+                RP_DOWNSAMPLE_NONE => ci_x.map(|x| input.full.get(x, HSS, VSS).as_ptr()),
+                RP_DOWNSAMPLE_EVEN_ODD => ci_x.map(|x| input.even_odd.get(x, HSS, VSS).as_ptr()),
+                RP_DOWNSAMPLE_QUARTER => ci_x.map(|x| input.quarter.buf.get(x, HSS, VSS).as_ptr()),
+                _ => todo!(),
+            };
+
+            let bb_x = match bias {
+                RP_COLOR_BIAS_NONE => [8, 8, 8],
+                RP_COLOR_BIAS_1 => [6, 5, 5],
+                RP_COLOR_BIAS_2 => [4, 4, 4],
+                _ => panic!(),
+            };
+
+            let etbl = &self.worker.data.shared.encode_tbls.lossless_entropy_tbl;
+
+            const DELTA_BLOCK_WIDTH_COUNT: usize = 30;
+            let mut pred = mem::MaybeUninit::<[u8; DELTA_BLOCK_WIDTH_COUNT]>::uninit();
+            let mut diff = mem::MaybeUninit::<[u8; DELTA_BLOCK_WIDTH_COUNT]>::uninit();
+
+            for c in CompIndex::all() {
+                let bb_c = *c.index_into(&bb_x);
+                let width_c = *c.index_into(&width_x);
+                let bw_c = *c.index_into(&bw_x) as usize;
+                let bh_c = *c.index_into(&bh_x) as usize;
+                let in_c = *c.index_into(&in_x);
+
+                let name = lossless_tbl_name_from_bits(bb_c) as usize;
+                let tbl = etbl.get_unchecked(name);
+                let prev = prev.add(v_samp * width * c.get() as usize);
+
+                let iy = (i % 2) * bh_c as usize;
+                for by in 0..bh_c {
+                    let iy = iy + by;
+                    let prev = prev.add(by * width);
+                    for ix in (0..if HSS { width / SAMP_FACTOR } else { width } * bw_c)
+                        .array_chunks::<DELTA_BLOCK_WIDTH_COUNT>()
+                    {
+                        let mut pred_len = 0;
+                        let mut diff_len = 0;
+
+                        for (ip, ix) in (0..DELTA_BLOCK_WIDTH_COUNT).zip(ix) {
+                            let in_c_c = in_c.add(iy * width_c + ix);
+                            let in_t_c = if by > 0 {
+                                in_c_c.sub(width_c)
+                            } else if i > 0 {
+                                if i % 2 == 0 {
+                                    in_c_c.add(width_c * (bh_c * 2 - 1))
+                                } else {
+                                    in_c_c.sub(width_c)
+                                }
+                            } else {
+                                ptr::null()
+                            };
+                            let (in_l_c, in_tl_c) = if ix > 0 {
+                                (
+                                    in_c_c.sub(1),
+                                    if !in_t_c.is_null() {
+                                        in_t_c.sub(1)
+                                    } else {
+                                        ptr::null()
+                                    },
+                                )
+                            } else {
+                                (ptr::null(), ptr::null())
+                            };
+                            let in_c = Self::pred_pixel(*in_c_c, in_t_c, in_l_c, in_tl_c, bb_c);
+                            *(*pred.as_mut_ptr()).get_unchecked_mut(ip) = in_c;
+                            pred_len += tbl.ehufsi[in_c as usize] as usize;
+
+                            let prev = prev.add(ix);
+                            let diff_c = if bb_c < 8 {
+                                let s = 8 - bb_c;
+                                ((((*in_c_c >> s) - (*prev >> s)) << s) as s8 >> s) as u8 + 128
+                            } else {
+                                *in_c_c - *prev + 128
+                            };
+                            *prev = *in_c_c;
+                            *(*diff.as_mut_ptr()).get_unchecked_mut(ip) = diff_c;
+                            diff_len += tbl.ehufsi[diff_c as usize] as usize;
+                        }
+
+                        let buf = &mut *(buf as *mut EncodeBuffer<0>);
+                        if diff_len < pred_len {
+                            buf.put_bits(1, 1);
+                            for in_c in diff.assume_init_ref() {
+                                buf.put_bits(
+                                    tbl.ehufco[*in_c as usize],
+                                    tbl.ehufsi[*in_c as usize],
+                                );
+                            }
+                        } else {
+                            buf.put_bits(0, 1);
+                            for in_c in pred.assume_init_ref() {
+                                buf.put_bits(
+                                    tbl.ehufco[*in_c as usize],
+                                    tbl.ehufsi[*in_c as usize],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
