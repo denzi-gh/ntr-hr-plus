@@ -54,6 +54,10 @@ Once NTR-HR is running, press X+Y on your New 3DS/New 2DS to open NTR-HR menu, w
 
 ## Recommended setup
 
+### Fix crashing on start/crashing during remote play
+
+Make sure you are on the latest Luma3DS and ideally the latest firmware. NTR-HR will crash if Luma3DS is too old. Remote play will also not function if firmware is too low.
+
 ### Connecting 3DS to your PC
 
 A dedicated WiFi AP connecting your 3DS wireless and no other wireless device, with your PC connected with Ethernet, should yield best result. An example would be a Raspberry Pi connected to PC with Ethernet, and bridged WiFi just for 3DS.
