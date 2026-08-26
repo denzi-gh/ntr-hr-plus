@@ -3,6 +3,8 @@ pub mod handle_port;
 pub mod start_up;
 #[cfg(not(feature = "o3ds"))]
 pub mod thread_aux;
+#[cfg(not(feature = "o3ds"))]
+pub mod thread_audio;
 pub mod thread_main;
 pub mod thread_nwm;
 pub mod thread_screen;

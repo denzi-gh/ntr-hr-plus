@@ -6,6 +6,7 @@ struct ThreadsStacks<'a> {
     aux2: &'a mut StackRegion<{ RP_THREAD_STACK_SIZE as usize }>,
     nwm: &'a mut StackRegion<{ STACK_SIZE as usize }>,
     screen: &'a mut StackRegion<{ STACK_SIZE as usize }>,
+    audio: &'a mut StackRegion<{ RP_THREAD_STACK_SIZE as usize }>,
 }
 
 #[cfg(not(feature = "o3ds"))]
@@ -117,6 +118,8 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
     let nwm_stack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
     #[cfg(not(feature = "o3ds"))]
     let screen_stack = request_mem_from_pool::<{ STACK_SIZE as usize }>()?;
+    #[cfg(not(feature = "o3ds"))]
+    let audio_stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
 
     #[cfg(not(feature = "o3ds"))]
     {
@@ -143,6 +146,7 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
             aux2: stack_region_from_mem_region(aux2_stack),
             nwm: stack_region_from_mem_region(nwm_stack),
             screen: stack_region_from_mem_region(screen_stack),
+            audio: stack_region_from_mem_region(audio_stack),
         },
         nwm_bufs,
     });
@@ -372,6 +376,20 @@ fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> O
             RP_THREAD_PRIO_MIN as s32,
             RP_CORE_ID_MAIN,
         )?);
+
+        // NTR-HR+ audio capture thread (opt-in via RP_CONFIG.audioEnable)
+        #[cfg(not(feature = "o3ds"))]
+        let _audio = if unsafe { RP_CONFIG.audio_enable().load(Ordering::Acquire) } != 0 {
+            Some(JoinThread::create(CreateThread::create(
+                Some(entries::thread_audio::thread_audio),
+                0,
+                s.stacks.audio,
+                RP_THREAD_PRIO_MAX as s32,
+                1,
+            )?))
+        } else {
+            None
+        };
 
         #[cfg(not(feature = "o3ds"))]
         unsafe {
