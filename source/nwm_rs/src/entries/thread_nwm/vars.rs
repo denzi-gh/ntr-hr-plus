@@ -855,6 +855,11 @@ pub unsafe fn rp_output(packet_buf: *mut u8, packet_size: usize) -> Option<()> {
     Some(())
 }
 
+// rp_output tail-calls nwmSendPacket, a call before this is true is a null jump
+pub fn nwm_send_ready() -> bool {
+    unsafe { nwmSendPacket.is_some() }
+}
+
 unsafe fn nwm_output(nwm_buf: *mut u8, packet_size: usize) {
     unsafe {
         ptr::copy_nonoverlapping(

@@ -110,10 +110,13 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
                 pcm,
                 AUDIO_FRAME_BYTES,
             );
-            let _ = entries::thread_nwm::rp_output(
-                packet_buf,
-                DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES,
-            );
+            // sending before nwmSendPacket is set would be a null jump
+            if entries::thread_nwm::nwm_send_ready() {
+                let _ = entries::thread_nwm::rp_output(
+                    packet_buf,
+                    DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES,
+                );
+            }
         }
         seq = seq.wrapping_add(1);
 
