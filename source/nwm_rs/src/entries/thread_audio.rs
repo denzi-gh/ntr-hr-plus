@@ -13,6 +13,11 @@ const AUDIO_FRAME_BYTES: usize = 640; // 160 samples * 2 ch * 2 bytes (s16 LE)
 const AUDIO_HDR_TYPE: u8 = 4; // hdr[2]: NTR-HR+ audio packet type
 const AUDIO_FMT_PCM16: u8 = 0; // hdr[3]: payload format/version
 
+// each packet carries the previous and current frame so one lost packet
+// leaves no gap; hdr[0] is the newest frame's sequence number
+const AUDIO_REDUNDANCY: usize = 2;
+const AUDIO_PAYLOAD_BYTES: usize = AUDIO_REDUNDANCY * AUDIO_FRAME_BYTES;
+
 // poll well under the ~4.888 ms dsp frame so no mix frame is missed
 const AUDIO_POLL_NS: s64 = 1_500_000;
 
@@ -31,7 +36,7 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
     }
 
     // rp_output needs NWM_HDR_SIZE bytes of headroom before packet_buf
-    const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES;
+    const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES;
     if let Some(b) = request_mem_from_pool::<BUF_SIZE>() {
         let buf = b.to_ptr() as *mut u8;
         let packet_buf = unsafe { buf.add(NWM_HDR_SIZE as usize) };
@@ -40,7 +45,10 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
             *packet_buf.add(2) = AUDIO_HDR_TYPE; // hdr[2]: audio type
             *packet_buf.add(3) = AUDIO_FMT_PCM16; // hdr[3]: format/version
         }
-        let pcm = unsafe { packet_buf.add(DATA_HDR_SIZE as usize) };
+        // zeroed so the first packet's older slot is silence
+        let payload = unsafe { packet_buf.add(DATA_HDR_SIZE as usize) };
+        unsafe { ptr::write_bytes(payload, 0, AUDIO_PAYLOAD_BYTES) };
+        let newest = unsafe { payload.add((AUDIO_REDUNDANCY - 1) * AUDIO_FRAME_BYTES) };
 
         let mut seq: u8 = 0;
         let mut last_fc: u16 = 0;
@@ -63,17 +71,23 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
             have_last = true;
 
             unsafe {
-                *packet_buf.add(0) = seq; // hdr[0]: sequence number
+                // drop the oldest frame, read the new one into the last slot
+                ptr::copy(
+                    payload.add(AUDIO_FRAME_BYTES),
+                    payload,
+                    (AUDIO_REDUNDANCY - 1) * AUDIO_FRAME_BYTES,
+                );
                 ptr::copy_nonoverlapping(
                     (src + DSP_FINAL_SAMPLES_OFF) as *const u8,
-                    pcm,
+                    newest,
                     AUDIO_FRAME_BYTES,
                 );
+                *packet_buf.add(0) = seq; // hdr[0]: newest frame's sequence number
                 // sending before nwmSendPacket is set would be a null jump
                 if entries::thread_nwm::nwm_send_ready() {
                     let _ = entries::thread_nwm::rp_output(
                         packet_buf,
-                        DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES,
+                        DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES,
                     );
                 }
             }
