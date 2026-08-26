@@ -6,9 +6,13 @@ use crate::*;
 const DSP_MEM_MIRROR: u32 = 0x80000000; // physical -> process VA, as IoBasePdc
 const DSP_REGION0: u32 = 0x1FF50000 + DSP_MEM_MIRROR; // final-mix region 0
 const DSP_REGION1: u32 = 0x1FF70000 + DSP_MEM_MIRROR; // final-mix region 1
+const DSP_REGION_SIZE: u32 = 0x8000; // each shared-memory region
 
 const DSP_FINAL_SAMPLES_OFF: u32 = 0xA80; // (0x8540 - 0x8000) DSP words * 2
 const DSP_FRAME_COUNTER_OFF: u32 = 0x7FFE; // last u16 of the 0x8000-byte region
+
+// heartbeat for on-device verification
+const AUDIO_HEARTBEAT_FRAMES: u32 = 512;
 
 const AUDIO_FRAME_BYTES: usize = 640; // 160 samples * 2 ch * 2 bytes (s16 LE)
 const AUDIO_HDR_TYPE: u8 = 4; // hdr[2]: NTR-HR+ audio packet type
@@ -26,9 +30,20 @@ fn newer_region(fc0: u16, fc1: u16) -> u32 {
     }
 }
 
+#[named]
 pub extern "C" fn thread_audio(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
+    }
+
+    // probe first so a bad mirror logs instead of faulting
+    let mapped = unsafe {
+        rtCheckMemory(DSP_REGION0, DSP_REGION_SIZE, MEMPERM_READ) == 0
+            && rtCheckMemory(DSP_REGION1, DSP_REGION_SIZE, MEMPERM_READ) == 0
+    };
+    if !mapped {
+        ns_dbg_print!(failed, c_str!("audio dsp mirror unmapped"), DSP_REGION0 as s32);
+        return;
     }
 
     // rp_output needs NWM_HDR_SIZE bytes of headroom before packet_buf
@@ -49,6 +64,7 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
     let mut seq: u8 = 0;
     let mut last_fc: u16 = 0;
     let mut have_last = false;
+    let mut sent: u32 = 0;
 
     while !reset_threads() {
         let fc0 = unsafe { ptr::read_volatile((DSP_REGION0 + DSP_FRAME_COUNTER_OFF) as *const u16) };
@@ -77,6 +93,11 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
             );
         }
         seq = seq.wrapping_add(1);
+
+        if sent % AUDIO_HEARTBEAT_FRAMES == 0 {
+            ns_dbg_print!(val, c_str!("audio fc"), fc as s32);
+        }
+        sent = sent.wrapping_add(1);
 
         unsafe { svcSleepThread(AUDIO_POLL_NS) };
     }
