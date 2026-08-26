@@ -4,15 +4,15 @@ use crate::*;
 // stream it as audio packets over the video udp flow via thread_nwm::rp_output.
 
 const DSP_MEM_MIRROR: u32 = 0x80000000; // physical -> process VA, as IoBasePdc
-const DSP_REGION0: u32 = 0x1FF50000 + DSP_MEM_MIRROR; // final-mix region 0
-const DSP_REGION1: u32 = 0x1FF70000 + DSP_MEM_MIRROR; // final-mix region 1
+const DSP_REGION0_PA: u32 = 0x1FF50000; // final-mix region 0 (physical)
+const DSP_REGION1_PA: u32 = 0x1FF70000; // final-mix region 1 (physical)
 const DSP_REGION_SIZE: u32 = 0x8000; // each shared-memory region
 
 const DSP_FINAL_SAMPLES_OFF: u32 = 0xA80; // (0x8540 - 0x8000) DSP words * 2
 const DSP_FRAME_COUNTER_OFF: u32 = 0x7FFE; // last u16 of the 0x8000-byte region
 
-// heartbeat for on-device verification
-const AUDIO_HEARTBEAT_FRAMES: u32 = 512;
+// candidate physical->va offsets, mirror first
+const DSP_MIRROR_CANDIDATES: [u32; 2] = [DSP_MEM_MIRROR, 0];
 
 const AUDIO_FRAME_BYTES: usize = 640; // 160 samples * 2 ch * 2 bytes (s16 LE)
 const AUDIO_HDR_TYPE: u8 = 4; // hdr[2]: NTR-HR+ audio packet type
@@ -21,12 +21,31 @@ const AUDIO_FMT_PCM16: u8 = 0; // hdr[3]: payload format/version
 // poll at half the ~4.888 ms dsp frame, de-dup on frame_counter
 const AUDIO_POLL_NS: s64 = 2_444_000;
 
+// heartbeat for on-device verification
+const AUDIO_HEARTBEAT_FRAMES: u32 = 512;
+
+// return the physical->va offset that exposes both regions readable
+fn resolve_dsp_mirror() -> Option<u32> {
+    for &m in &DSP_MIRROR_CANDIDATES {
+        let r0 = DSP_REGION0_PA.wrapping_add(m);
+        let r1 = DSP_REGION1_PA.wrapping_add(m);
+        let ok = unsafe {
+            rtCheckMemory(r0, DSP_REGION_SIZE, MEMPERM_READ) == 0
+                && rtCheckMemory(r1, DSP_REGION_SIZE, MEMPERM_READ) == 0
+        };
+        if ok {
+            return Some(m);
+        }
+    }
+    None
+}
+
 // fresher region by frame_counter (wrap-safe)
-fn newer_region(fc0: u16, fc1: u16) -> u32 {
+fn newer_region(region0: u32, region1: u32, fc0: u16, fc1: u16) -> u32 {
     if fc1 != fc0 && fc1.wrapping_sub(fc0) < 0x8000 {
-        DSP_REGION1
+        region1
     } else {
-        DSP_REGION0
+        region0
     }
 }
 
@@ -36,15 +55,19 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
         __system_initSyscalls();
     }
 
-    // probe first so a bad mirror logs instead of faulting
-    let mapped = unsafe {
-        rtCheckMemory(DSP_REGION0, DSP_REGION_SIZE, MEMPERM_READ) == 0
-            && rtCheckMemory(DSP_REGION1, DSP_REGION_SIZE, MEMPERM_READ) == 0
+    let mirror = match resolve_dsp_mirror() {
+        Some(m) => m,
+        None => {
+            ns_dbg_print!(failed, c_str!("audio dsp unmapped"), DSP_REGION0_PA as s32);
+            return;
+        }
     };
-    if !mapped {
-        ns_dbg_print!(failed, c_str!("audio dsp mirror unmapped"), DSP_REGION0 as s32);
-        return;
-    }
+    // 1 = +0x80000000 mirror, 2 = direct mapping.
+    let map_code = if mirror == DSP_MEM_MIRROR { 1 } else { 2 };
+    ns_dbg_print!(val, c_str!("audio dsp map"), map_code);
+
+    let region0 = DSP_REGION0_PA.wrapping_add(mirror);
+    let region1 = DSP_REGION1_PA.wrapping_add(mirror);
 
     // rp_output needs NWM_HDR_SIZE bytes of headroom before packet_buf
     const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES;
@@ -67,10 +90,10 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
     let mut sent: u32 = 0;
 
     while !reset_threads() {
-        let fc0 = unsafe { ptr::read_volatile((DSP_REGION0 + DSP_FRAME_COUNTER_OFF) as *const u16) };
-        let fc1 = unsafe { ptr::read_volatile((DSP_REGION1 + DSP_FRAME_COUNTER_OFF) as *const u16) };
-        let src = newer_region(fc0, fc1);
-        let fc = if src == DSP_REGION1 { fc1 } else { fc0 };
+        let fc0 = unsafe { ptr::read_volatile((region0 + DSP_FRAME_COUNTER_OFF) as *const u16) };
+        let fc1 = unsafe { ptr::read_volatile((region1 + DSP_FRAME_COUNTER_OFF) as *const u16) };
+        let src = newer_region(region0, region1, fc0, fc1);
+        let fc = if src == region1 { fc1 } else { fc0 };
 
         // skip if the mix hasn't advanced
         if have_last && fc == last_fc {
@@ -95,7 +118,14 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
         seq = seq.wrapping_add(1);
 
         if sent % AUDIO_HEARTBEAT_FRAMES == 0 {
+            // level = sum |first 32 samples|
+            let mut lvl: i32 = 0;
+            for i in 0..32 {
+                let s = unsafe { ptr::read_volatile((pcm as *const i16).add(i)) };
+                lvl = lvl.wrapping_add((s as i32).abs());
+            }
             ns_dbg_print!(val, c_str!("audio fc"), fc as s32);
+            ns_dbg_print!(val, c_str!("audio lvl"), lvl);
         }
         sent = sent.wrapping_add(1);
 
