@@ -13,7 +13,7 @@ jobs:
           ln -s /root/.rustup ~/.rustup
       - name: Clone repos
         run: |
-          git clone --recurse-submodules --depth=1 https://github.com/${{ github.repository }}
+          git clone --recurse-submodules --depth=1 https://github.com/${{ github.repository }} ntr-hr
           git clone --recurse-submodules --depth=1 https://github.com/xzn/BootNTR.git
           ln -s BootNTR BootNTR-Bins
       - name: Compile NTR-HR
