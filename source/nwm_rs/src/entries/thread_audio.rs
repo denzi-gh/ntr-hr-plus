@@ -13,8 +13,8 @@ const AUDIO_FRAME_BYTES: usize = 640; // 160 samples * 2 ch * 2 bytes (s16 LE)
 const AUDIO_HDR_TYPE: u8 = 4; // hdr[2]: NTR-HR+ audio packet type
 const AUDIO_FMT_PCM16: u8 = 0; // hdr[3]: payload format/version
 
-// poll at half the ~4.888 ms dsp frame, de-dup on frame_counter
-const AUDIO_POLL_NS: s64 = 2_444_000;
+// poll well under the ~4.888 ms dsp frame so no mix frame is missed
+const AUDIO_POLL_NS: s64 = 1_500_000;
 
 // fresher region by frame_counter (wrap-safe)
 fn newer_region(fc0: u16, fc1: u16) -> u32 {
