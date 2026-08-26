@@ -335,8 +335,10 @@ static void nsHandleRemotePlay(void) {
 	config.mode = pac->args[0];
 	config.quality = pac->args[1];
 	config.qos = pac->args[2];
-	if (pac->args[3] == 1404036572) /* guarding magic */
+	if (pac->args[3] == 1404036572) /* guarding magic */ {
 		config.dstPort = pac->args[4];
+		config.audioEnable = pac->args[5]; // NTR-HR+ audio (0 on stock clients)
+	}
 
 	config.threadPriority = rpConfig->threadPriority;
 	config.coreCount = rpConfig->coreCount;

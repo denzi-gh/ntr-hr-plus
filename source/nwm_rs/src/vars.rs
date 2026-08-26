@@ -111,6 +111,10 @@ impl RpConfig {
         rp_config_field!(separateScreenConfig)
     }
 
+    pub fn audio_enable(&self) -> &mut AtomicU32 {
+        rp_config_field!(audioEnable)
+    }
+
     pub fn chroma_ss(&self, s: ScreenIndex) -> &mut AtomicU32 {
         rp_config_screen_field!(chromaSs, s)
     }
