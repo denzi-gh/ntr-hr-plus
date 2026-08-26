@@ -24,6 +24,9 @@ const AUDIO_POLL_NS: s64 = 2_444_000;
 // heartbeat for on-device verification
 const AUDIO_HEARTBEAT_FRAMES: u32 = 512;
 
+// temp: send disabled while isolating a crash
+const AUDIO_SEND_ENABLED: bool = false;
+
 // return the physical->va offset that exposes both regions readable
 fn resolve_dsp_mirror() -> Option<u32> {
     for &m in &DSP_MIRROR_CANDIDATES {
@@ -65,6 +68,8 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
     // 1 = +0x80000000 mirror, 2 = direct mapping.
     let map_code = if mirror == DSP_MEM_MIRROR { 1 } else { 2 };
     ns_dbg_print!(val, c_str!("audio dsp map"), map_code);
+    // runtime address, maps a crash lr back to the elf
+    ns_dbg_print!(val, c_str!("audio base"), thread_audio as *const () as u32 as s32);
 
     let region0 = DSP_REGION0_PA.wrapping_add(mirror);
     let region1 = DSP_REGION1_PA.wrapping_add(mirror);
@@ -110,8 +115,7 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
                 pcm,
                 AUDIO_FRAME_BYTES,
             );
-            // sending before nwmSendPacket is set would be a null jump
-            if entries::thread_nwm::nwm_send_ready() {
+            if AUDIO_SEND_ENABLED && entries::thread_nwm::nwm_send_ready() {
                 let _ = entries::thread_nwm::rp_output(
                     packet_buf,
                     DATA_HDR_SIZE as usize + AUDIO_FRAME_BYTES,
