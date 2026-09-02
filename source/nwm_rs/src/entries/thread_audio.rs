@@ -9,6 +9,8 @@ const DSP_REGION1: u32 = 0x1FF70000 + 0x80000000; // final-mix region 1 (mirror 
 const DSP_FINAL_SAMPLES_OFF: u32 = 0xA80; // (0x8540 - 0x8000) DSP words * 2
 const DSP_FRAME_COUNTER_OFF: u32 = 0x7FFE; // last u16 of the 0x8000-byte region
 
+const AUDIO_SAMPLE_RATE: u32 = 32728; // dsp final-mix rate
+const AUDIO_FRAME_SAMPLES: u32 = 160; // samples per dsp mix frame
 const AUDIO_FRAME_BYTES: usize = 640; // 160 samples * 2 ch * 2 bytes (s16 LE)
 const AUDIO_HDR_TYPE: u8 = 4; // hdr[2]: NTR-HR+ audio packet type
 const AUDIO_FMT_PCM16: u8 = 0; // hdr[3]: payload format/version
@@ -20,6 +22,11 @@ const AUDIO_PAYLOAD_BYTES: usize = AUDIO_REDUNDANCY * AUDIO_FRAME_BYTES;
 
 // poll well under the ~4.888 ms dsp frame so no mix frame is missed
 const AUDIO_POLL_NS: s64 = 1_500_000;
+
+// bytes/s this stream adds to the radio; reserved from the video pacer qos so
+// the viewer's bandwidth limit governs combined a/v instead of video alone
+pub const AUDIO_QOS_BUDGET: u32 =
+    (AUDIO_SAMPLE_RATE / AUDIO_FRAME_SAMPLES) * (DATA_HDR_SIZE as u32 + AUDIO_PAYLOAD_BYTES as u32);
 
 // fresher region by frame_counter (wrap-safe)
 fn newer_region(fc0: u16, fc1: u16) -> u32 {
@@ -96,8 +103,11 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
                     AUDIO_FRAME_BYTES,
                 );
                 *packet_buf.add(0) = seq; // hdr[0]: newest frame's sequence number
-                // sending before nwmSendPacket is set would be a null jump
-                if entries::thread_nwm::nwm_send_ready() {
+                // sending before nwmSendPacket is set would be a null jump;
+                // and stop once the session is dead so we don't blast forever
+                if entries::thread_nwm::nwm_send_ready()
+                    && entries::thread_nwm::nwm_session_alive()
+                {
                     let _ = entries::thread_nwm::rp_output(
                         packet_buf,
                         DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES,

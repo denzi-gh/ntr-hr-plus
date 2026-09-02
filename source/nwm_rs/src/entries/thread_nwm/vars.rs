@@ -860,6 +860,19 @@ pub fn nwm_send_ready() -> bool {
     unsafe { nwmSendPacket.is_some() }
 }
 
+// advisory liveness gate for the audio thread; plain udp has no session so it
+// stays true, kcp reports its handshake state (an unlocked single-field read)
+#[cfg(not(feature = "o3ds"))]
+pub fn nwm_session_alive() -> bool {
+    match get_reliable_stream() {
+        ReliableStream::None => true,
+        ReliableStream::KCP => unsafe {
+            RELIABLE_STREAM_CB_INITED.load(Ordering::Acquire)
+                && (*RELIABLE_STREAM_CB).locked.ikcp.session_established
+        },
+    }
+}
+
 // serializes nwmSendPacket: the audio thread (core 1) and the nwm thread
 // (core 2) both reach here, and the internal nwm send is not reentrant
 static mut NWM_OUTPUT_LOCK: AtomicBool = const_default();
@@ -989,10 +1002,29 @@ unsafe fn init_lossless_compression(flags: u32) {
 static mut MIN_SEND_INTERVAL_TICK: u32 = const_default();
 static mut MIN_SEND_INTERVAL_NS: DurationNs = const_default();
 
+// reserve a fixed slice of the qos budget for the audio stream, which sends
+// outside this pacer; keep at least a quarter of the budget for video
+#[cfg(not(feature = "o3ds"))]
+fn pacer_qos(qos: u32) -> u32 {
+    if unsafe { RP_CONFIG.audio_enable().load(Ordering::Acquire) } != 0 {
+        qos.saturating_sub(entries::thread_audio::AUDIO_QOS_BUDGET)
+            .max(qos / 4)
+            .max(1)
+    } else {
+        qos
+    }
+}
+
+#[cfg(feature = "o3ds")]
+fn pacer_qos(qos: u32) -> u32 {
+    qos
+}
+
 unsafe fn init_min_send_interval(qos: u32) {
     unsafe {
         (*config_consts::OV_STATS).kcp_qos = qos;
         CURRENT_QOS.store(qos, Ordering::Release);
+        let qos = pacer_qos(qos);
         let tick = (SYSCLOCK_ARM11 as u64 * PACKET_SIZE as u64) / qos as u64;
         MIN_SEND_INTERVAL_TICK = tick as u32;
         MIN_SEND_INTERVAL_NS = DurationTick::init(tick as s64).get_ns();
