@@ -383,15 +383,17 @@ fn main(_impl_: Impl, #[cfg(not(feature = "o3ds"))] s: &mut ThreadsStorage) -> O
 
         // NTR-HR+ audio capture thread (opt-in via RP_CONFIG.audioEnable),
         // high priority so every dsp frame is captured
+        // audio is optional: a failed create must not kill remote play
         #[cfg(not(feature = "o3ds"))]
         let _audio = if unsafe { RP_CONFIG.audio_enable().load(Ordering::Acquire) } != 0 {
-            Some(JoinThread::create(CreateThread::create(
+            CreateThread::create(
                 Some(entries::thread_audio::thread_audio),
                 0,
                 s.stacks.audio,
                 RP_THREAD_PRIO_MIN as s32,
                 1,
-            )?))
+            )
+            .map(JoinThread::create)
         } else {
             None
         };
