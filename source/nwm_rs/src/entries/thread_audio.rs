@@ -1,4 +1,5 @@
 use crate::*;
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 // NTR-HR+ game-audio capture (new-3ds only): read the dsp final mix through
 // the physical+0x80000000 mirror and stream it as audio packets via rp_output.
@@ -44,6 +45,16 @@ const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_P
 // every session restart, so allocating there leaks BUF_SIZE per reconnect
 pub static mut AUDIO_BUF: *mut u8 = ptr::null_mut();
 
+// spsc ring: the audio thread (core 1) produces packets, the nwm thread
+// (core 2) drains and sends them, so nwmSendPacket stays single-threaded and
+// no cross-core send lock is needed. length must stay a power of two.
+const AUDIO_Q_LEN: usize = 4;
+const AUDIO_PKT_SIZE: usize = DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES;
+static AUDIO_RING: [AtomicPtr<u8>; AUDIO_Q_LEN] =
+    [const { AtomicPtr::new(ptr::null_mut()) }; AUDIO_Q_LEN];
+static AUDIO_Q_HEAD: AtomicU32 = AtomicU32::new(0); // consumer index (nwm thread)
+static AUDIO_Q_TAIL: AtomicU32 = AtomicU32::new(0); // producer index (audio thread)
+
 pub fn once_audio() {
     if let Some(b) = request_mem_from_pool::<BUF_SIZE>() {
         let buf = b.to_ptr() as *mut u8;
@@ -54,6 +65,49 @@ pub fn once_audio() {
             *packet_buf.add(3) = AUDIO_FMT_PCM16; // hdr[3]: format/version
         }
         unsafe { AUDIO_BUF = buf };
+    }
+
+    // send-ring slots, drained by the nwm thread
+    for slot in AUDIO_RING.iter() {
+        if let Some(b) = request_mem_from_pool::<BUF_SIZE>() {
+            slot.store(b.to_ptr() as *mut u8, Ordering::Relaxed);
+        }
+    }
+}
+
+// hand the assembled packet to the nwm thread; drop if the ring is full
+// (audio is best-effort, the viewer fills gaps from the redundant frame)
+unsafe fn audio_enqueue(pkt: *const u8) {
+    let head = AUDIO_Q_HEAD.load(Ordering::Acquire);
+    let tail = AUDIO_Q_TAIL.load(Ordering::Relaxed);
+    if tail.wrapping_sub(head) as usize >= AUDIO_Q_LEN {
+        return;
+    }
+    let slot = AUDIO_RING[tail as usize & (AUDIO_Q_LEN - 1)].load(Ordering::Relaxed);
+    if slot.is_null() {
+        return;
+    }
+    unsafe { ptr::copy_nonoverlapping(pkt, slot.add(NWM_HDR_SIZE as usize), AUDIO_PKT_SIZE) };
+    AUDIO_Q_TAIL.store(tail.wrapping_add(1), Ordering::Release);
+}
+
+// drained by the nwm thread each loop iteration, so only it calls nwmSendPacket;
+// a dead session drains without sending so the ring cannot back up forever
+pub fn drain_audio() {
+    let ready =
+        entries::thread_nwm::nwm_send_ready() && entries::thread_nwm::nwm_session_alive();
+    loop {
+        let tail = AUDIO_Q_TAIL.load(Ordering::Acquire);
+        let head = AUDIO_Q_HEAD.load(Ordering::Relaxed);
+        if head == tail {
+            break;
+        }
+        let slot = AUDIO_RING[head as usize & (AUDIO_Q_LEN - 1)].load(Ordering::Relaxed);
+        if ready && !slot.is_null() {
+            let packet_buf = unsafe { slot.add(NWM_HDR_SIZE as usize) };
+            let _ = unsafe { entries::thread_nwm::rp_output(packet_buf, AUDIO_PKT_SIZE) };
+        }
+        AUDIO_Q_HEAD.store(head.wrapping_add(1), Ordering::Release);
     }
 }
 
@@ -69,6 +123,9 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
         let payload = unsafe { packet_buf.add(DATA_HDR_SIZE as usize) };
         unsafe { ptr::write_bytes(payload, 0, AUDIO_PAYLOAD_BYTES) };
         let newest = unsafe { payload.add((AUDIO_REDUNDANCY - 1) * AUDIO_FRAME_BYTES) };
+
+        // start this session with an empty send ring
+        AUDIO_Q_HEAD.store(AUDIO_Q_TAIL.load(Ordering::Acquire), Ordering::Release);
 
         let mut seq: u8 = 0;
         let mut last_fc: u16 = 0;
@@ -103,16 +160,8 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
                     AUDIO_FRAME_BYTES,
                 );
                 *packet_buf.add(0) = seq; // hdr[0]: newest frame's sequence number
-                // sending before nwmSendPacket is set would be a null jump;
-                // and stop once the session is dead so we don't blast forever
-                if entries::thread_nwm::nwm_send_ready()
-                    && entries::thread_nwm::nwm_session_alive()
-                {
-                    let _ = entries::thread_nwm::rp_output(
-                        packet_buf,
-                        DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES,
-                    );
-                }
+                // hand off to the nwm thread; it owns every nwmSendPacket call
+                audio_enqueue(packet_buf);
             }
             seq = seq.wrapping_add(1);
 
