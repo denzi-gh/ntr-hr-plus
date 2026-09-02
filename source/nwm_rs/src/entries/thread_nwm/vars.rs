@@ -860,7 +860,14 @@ pub fn nwm_send_ready() -> bool {
     unsafe { nwmSendPacket.is_some() }
 }
 
+// serializes nwmSendPacket: the audio thread (core 1) and the nwm thread
+// (core 2) both reach here, and the internal nwm send is not reentrant
+static mut NWM_OUTPUT_LOCK: AtomicBool = const_default();
+
 unsafe fn nwm_output(nwm_buf: *mut u8, packet_size: usize) {
+    while unsafe { NWM_OUTPUT_LOCK.swap(true, Ordering::Acquire) } {
+        core::hint::spin_loop();
+    }
     unsafe {
         ptr::copy_nonoverlapping(
             get_current_nwm_hdr().as_mut_ptr(),
@@ -870,6 +877,7 @@ unsafe fn nwm_output(nwm_buf: *mut u8, packet_size: usize) {
         let nwm_size = init_udp_packet(nwm_buf, packet_size as u32);
         nwmSendPacket.unwrap_unchecked()(nwm_buf, nwm_size);
     }
+    unsafe { NWM_OUTPUT_LOCK.store(false, Ordering::Release) };
 }
 
 unsafe fn init_udp_packet(nwm_buf: *mut u8, mut len: u32) -> u32 {
