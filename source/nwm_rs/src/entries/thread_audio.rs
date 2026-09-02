@@ -48,7 +48,7 @@ pub static mut AUDIO_BUF: *mut u8 = ptr::null_mut();
 // spsc ring: the audio thread (core 1) produces packets, the nwm thread
 // (core 2) drains and sends them, so nwmSendPacket stays single-threaded and
 // no cross-core send lock is needed. length must stay a power of two.
-const AUDIO_Q_LEN: usize = 4;
+const AUDIO_Q_LEN: usize = 8;
 const AUDIO_PKT_SIZE: usize = DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES;
 static AUDIO_RING: [AtomicPtr<u8>; AUDIO_Q_LEN] =
     [const { AtomicPtr::new(ptr::null_mut()) }; AUDIO_Q_LEN];

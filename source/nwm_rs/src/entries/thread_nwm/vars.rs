@@ -393,6 +393,7 @@ unsafe fn do_kcp_thread_nwm() -> bool {
         let mut has_dst = false;
 
         while !reset_threads() {
+            entries::thread_audio::drain_audio();
             let next_send_tick = unsafe { RP_OUTPUT_NEXT_TICK };
 
             if (get_system_tick().get() as u32 - next_send_tick) as s32 >= RP_KCP_TIMEOUT_TICK {
@@ -591,12 +592,7 @@ unsafe fn do_kcp_thread_nwm() -> bool {
 pub extern "C" fn kcp_thread_nwm(_: *mut c_void) {
     unsafe {
         __system_initSyscalls();
-        while !reset_threads() {
-            entries::thread_audio::drain_audio();
-            if !do_kcp_thread_nwm() {
-                break;
-            }
-        }
+        while !reset_threads() && do_kcp_thread_nwm() {}
         svcExitThread()
     }
 }
