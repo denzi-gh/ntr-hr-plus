@@ -121,6 +121,10 @@ fn once<'a>() -> Option<ThreadsStorage<'a>> {
     #[cfg(not(feature = "o3ds"))]
     let audio_stack = request_mem_from_pool::<{ RP_THREAD_STACK_SIZE as usize }>()?;
 
+    // audio packet buffer allocated once (optional feature, failure is non-fatal)
+    #[cfg(not(feature = "o3ds"))]
+    entries::thread_audio::once_audio();
+
     #[cfg(not(feature = "o3ds"))]
     {
         let mut svc_thread: Handle = 0;

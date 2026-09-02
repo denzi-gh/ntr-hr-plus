@@ -30,13 +30,14 @@ fn newer_region(fc0: u16, fc1: u16) -> u32 {
     }
 }
 
-pub extern "C" fn thread_audio(_: *mut c_void) {
-    unsafe {
-        __system_initSyscalls();
-    }
+// rp_output needs NWM_HDR_SIZE bytes of headroom before packet_buf
+const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES;
 
-    // rp_output needs NWM_HDR_SIZE bytes of headroom before packet_buf
-    const BUF_SIZE: usize = NWM_HDR_SIZE as usize + DATA_HDR_SIZE as usize + AUDIO_PAYLOAD_BYTES;
+// allocated once: the bump pool has no free, but the thread entry reruns on
+// every session restart, so allocating there leaks BUF_SIZE per reconnect
+pub static mut AUDIO_BUF: *mut u8 = ptr::null_mut();
+
+pub fn once_audio() {
     if let Some(b) = request_mem_from_pool::<BUF_SIZE>() {
         let buf = b.to_ptr() as *mut u8;
         let packet_buf = unsafe { buf.add(NWM_HDR_SIZE as usize) };
@@ -45,6 +46,18 @@ pub extern "C" fn thread_audio(_: *mut c_void) {
             *packet_buf.add(2) = AUDIO_HDR_TYPE; // hdr[2]: audio type
             *packet_buf.add(3) = AUDIO_FMT_PCM16; // hdr[3]: format/version
         }
+        unsafe { AUDIO_BUF = buf };
+    }
+}
+
+pub extern "C" fn thread_audio(_: *mut c_void) {
+    unsafe {
+        __system_initSyscalls();
+    }
+
+    let buf = unsafe { AUDIO_BUF };
+    if !buf.is_null() {
+        let packet_buf = unsafe { buf.add(NWM_HDR_SIZE as usize) };
         // zeroed so the first packet's older slot is silence
         let payload = unsafe { packet_buf.add(DATA_HDR_SIZE as usize) };
         unsafe { ptr::write_bytes(payload, 0, AUDIO_PAYLOAD_BYTES) };
